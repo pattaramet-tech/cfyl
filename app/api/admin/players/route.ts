@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { verifyAdminAuth } from '@/lib/admin-middleware';
 import { createClient } from '@supabase/supabase-js';
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -15,6 +16,15 @@ export const dynamic = 'force-dynamic';
 export async function GET(request: NextRequest) {
   try {
     console.log('[PLAYERS_GET] Request received');
+
+    // Verify admin is authenticated
+    const authResult = await verifyAdminAuth(request);
+    if (!authResult.authenticated) {
+      console.warn('[PLAYERS_GET] Auth failed:', authResult.error);
+      return NextResponse.json({ error: authResult.error || 'Unauthorized' }, { status: 401 });
+    }
+
+    console.log('[PLAYERS_GET] Authenticated user:', authResult.profile?.email);
 
     // Get query params
     const { searchParams } = new URL(request.url);
