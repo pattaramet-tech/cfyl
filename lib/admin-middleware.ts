@@ -88,7 +88,9 @@ export async function verifyAdminAuth(request: NextRequest) {
       active: adminProfile.active,
     });
 
-    if (!adminProfile.active) {
+    // Check active status (default to true if not set, allow true or undefined)
+    const isActive = adminProfile.active !== false;
+    if (!isActive) {
       console.warn(`[MIDDLEWARE] Admin account is inactive: ${adminProfile.email}`);
       return {
         authenticated: false,

@@ -80,7 +80,9 @@ export async function POST(request: NextRequest) {
       active: adminProfile.active,
     });
 
-    if (!adminProfile.active) {
+    // Check active status (default to true if not set)
+    const isActive = adminProfile.active !== false; // Allow true or undefined
+    if (!isActive) {
       console.warn(`[LOGIN] Admin account inactive: ${adminProfile.email}`);
       return NextResponse.json(
         { error: 'Admin account is inactive' },
