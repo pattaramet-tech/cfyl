@@ -163,6 +163,8 @@ export default function AdminSuspensionsPage() {
   const [isLoadingSeasons, setIsLoadingSeasons] = useState(true);
   const [isLoadingAgeGroups, setIsLoadingAgeGroups] = useState(false);
   const [isLoadingSuspensions, setIsLoadingSuspensions] = useState(false);
+  const [isRecalculating, setIsRecalculating] = useState(false);
+  const [recalcMessage, setRecalcMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -216,6 +218,38 @@ export default function AdminSuspensionsPage() {
       .finally(() => setIsLoadingSuspensions(false));
   }, [selectedSeason, selectedAgeGroup]);
 
+  const recalculateAll = async () => {
+    if (!selectedSeason || !selectedAgeGroup) return;
+    setIsRecalculating(true);
+    setRecalcMessage(null);
+    setError(null);
+    try {
+      const token = localStorage.getItem('admin_token');
+      const res = await fetch('/api/admin/suspensions/recalculate', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ seasonId: selectedSeason, ageGroupId: selectedAgeGroup }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Recalculate failed');
+      setRecalcMessage(data.message);
+      // Reload suspensions after recalculate
+      const token2 = localStorage.getItem('admin_token');
+      const res2 = await fetch(
+        `/api/admin/suspensions?seasonId=${selectedSeason}&ageGroupId=${selectedAgeGroup}`,
+        { headers: token2 ? { Authorization: `Bearer ${token2}` } : {} }
+      );
+      if (res2.ok) setSuspensions(await res2.json());
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Recalculate failed');
+    } finally {
+      setIsRecalculating(false);
+    }
+  };
+
   const bannedCount = suspensions.filter((s) => s.ban_matches > 0 && (s.suspension_details?.suspended_matches?.length ?? 0) > 0).length;
   const warningCount = suspensions.filter((s) => s.ban_matches === 0 && s.total_points > 0).length;
   const noScheduleCount = suspensions.filter((s) => s.ban_matches > 0 && (s.suspension_details?.suspended_matches?.length ?? 0) === 0).length;
@@ -223,10 +257,34 @@ export default function AdminSuspensionsPage() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div>
-        <h1 className="text-2xl md:text-3xl font-bold text-gray-800">🚨 Suspension Management</h1>
-        <p className="text-gray-600 mt-1 text-sm">ระบบคำนวณอัตโนมัติ — Admin ดูข้อมูลได้เท่านั้น ไม่สามารถแก้ไขได้</p>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="text-2xl md:text-3xl font-bold text-gray-800">🚨 Suspension Management</h1>
+          <p className="text-gray-600 mt-1 text-sm">ระบบคำนวณอัตโนมัติ — Admin ดูข้อมูลได้เท่านั้น ไม่สามารถแก้ไขได้</p>
+        </div>
+        {selectedSeason && selectedAgeGroup && (
+          <button
+            onClick={recalculateAll}
+            disabled={isRecalculating || isLoadingSuspensions}
+            className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white rounded-lg font-semibold text-sm transition"
+          >
+            {isRecalculating ? (
+              <>
+                <span className="animate-spin inline-block w-4 h-4 border-2 border-white border-t-transparent rounded-full"></span>
+                กำลังคำนวณ...
+              </>
+            ) : (
+              '🔄 คำนวณใหม่ทั้งหมด'
+            )}
+          </button>
+        )}
       </div>
+
+      {recalcMessage && (
+        <div className="p-3 bg-green-50 border border-green-200 rounded-lg text-green-700 text-sm">
+          ✅ {recalcMessage}
+        </div>
+      )}
 
       {error && (
         <div className="p-4 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">{error}</div>

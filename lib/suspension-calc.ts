@@ -49,6 +49,18 @@ export interface SuspensionDetails {
 }
 
 /**
+ * Parse matchday number from any format:
+ * "MatchDay 2" → 2, "MD2" → 2, 2 → 2, "2" → 2
+ */
+export function parseMatchdayNumber(val: string | number | null | undefined): number {
+  if (val == null) return 0;
+  if (typeof val === 'number') return isNaN(val) ? 0 : val;
+  const str = String(val).trim();
+  const m = str.match(/(\d+)/);
+  return m ? parseInt(m[1], 10) : 0;
+}
+
+/**
  * CFYL Point Scoring per match:
  * - 1 yellow = 2 pts
  * - 2 yellows (or 1 second_yellow) = 4 pts
@@ -96,8 +108,9 @@ function getTriggerEventText(reason: string, points: number): string {
 }
 
 /**
- * Get all cards for a player in a season/age_group, sorted by matchday ascending.
- * OPTIMIZED: 2 queries instead of N+1
+ * Get all cards for a player in a season/age_group.
+ * Sorted by match_date ASC → match_time ASC → matchday number ASC.
+ * OPTIMIZED: 2 queries instead of N+1.
  */
 export async function getSeasonCards(
   playerId: string,
@@ -106,6 +119,8 @@ export async function getSeasonCards(
 ): Promise<Array<{
   match_id: string;
   matchday: number;
+  match_date: string | null;
+  match_time: string | null;
   points: number;
   cards: CardCount;
   reason: string;
@@ -126,10 +141,10 @@ export async function getSeasonCards(
       return [];
     }
 
-    // Query 2: get all cards for this player in those matches
+    // Query 2: get all cards for this player in those matches (including match_date/time for sorting)
     const { data: allCards, error } = await supabaseAdmin
       .from('cards')
-      .select(`match_id, card_type, match:match_id(matchday)`)
+      .select(`match_id, card_type, match:match_id(matchday, match_date, match_time)`)
       .eq('player_id', playerId)
       .in('match_id', matchRows.map((m) => m.id));
 
@@ -139,18 +154,36 @@ export async function getSeasonCards(
     }
 
     // Group cards by match_id
-    const matchCardMap: Record<string, { cards: Array<{ card_type: string }>; matchday: number }> = {};
+    const matchCardMap: Record<string, {
+      cards: Array<{ card_type: string }>;
+      matchday: number;
+      match_date: string | null;
+      match_time: string | null;
+    }> = {};
 
     (allCards || []).forEach((card: any) => {
       const matchId = card.match_id;
       if (!matchCardMap[matchId]) {
-        matchCardMap[matchId] = { cards: [], matchday: Number(card.match?.matchday) || 0 };
+        matchCardMap[matchId] = {
+          cards: [],
+          matchday: parseMatchdayNumber(card.match?.matchday),
+          match_date: card.match?.match_date || null,
+          match_time: card.match?.match_time || null,
+        };
       }
       matchCardMap[matchId].cards.push(card);
     });
 
     // Calculate points per match
-    const result: Array<{ match_id: string; matchday: number; points: number; cards: CardCount; reason: string }> = [];
+    const result: Array<{
+      match_id: string;
+      matchday: number;
+      match_date: string | null;
+      match_time: string | null;
+      points: number;
+      cards: CardCount;
+      reason: string;
+    }> = [];
 
     for (const [matchId, matchData] of Object.entries(matchCardMap)) {
       const count = { yellow: 0, red: 0, second_yellow: 0 };
@@ -168,12 +201,30 @@ export async function getSeasonCards(
             ? totalYellows > 0 ? `${totalYellows}Y + ${count.red}R` : `${count.red}R`
             : totalYellows >= 2 ? `${totalYellows}Y` : '1Y';
 
-        result.push({ match_id: matchId, matchday: matchData.matchday, points, cards: count, reason });
+        result.push({
+          match_id: matchId,
+          matchday: matchData.matchday,
+          match_date: matchData.match_date,
+          match_time: matchData.match_time,
+          points,
+          cards: count,
+          reason,
+        });
       }
     }
 
-    // CRITICAL: sort by matchday ascending for correct threshold detection
-    result.sort((a, b) => a.matchday - b.matchday);
+    // CRITICAL: sort by match_date ASC → match_time ASC → matchday number ASC
+    result.sort((a, b) => {
+      if (a.match_date && b.match_date) {
+        const dateCmp = a.match_date.localeCompare(b.match_date);
+        if (dateCmp !== 0) return dateCmp;
+        const aTime = a.match_time || '00:00:00';
+        const bTime = b.match_time || '00:00:00';
+        const timeCmp = aTime.localeCompare(bTime);
+        if (timeCmp !== 0) return timeCmp;
+      }
+      return a.matchday - b.matchday;
+    });
 
     console.timeEnd(timer);
     return result;
@@ -184,17 +235,43 @@ export async function getSeasonCards(
 }
 
 /**
- * Find the next N matches for a team after a trigger matchday.
- * FIXED: Use .or() for home_team_id / away_team_id filter (was .in() which is wrong)
+ * Find the next N matches for a team after a trigger match.
+ * Uses date-based ordering (match_date ASC → match_time ASC → matchday ASC).
+ * Falls back to matchday number comparison when dates are absent.
  */
 export async function findNextMatchesForSuspension(
   teamId: string,
   seasonId: string,
   ageGroupId: string,
-  triggerMatchday: number,
+  triggerMatchId: string,
   count: number
 ): Promise<SuspendedMatchDetail[]> {
-  const { data: matches, error } = await supabaseAdmin
+  console.log(
+    `[SUSPENSION_CALC] findNextMatchesForSuspension: teamId=${teamId} triggerMatchId=${triggerMatchId} count=${count}`
+  );
+
+  // Step 1: Fetch trigger match date/time/matchday for comparison
+  const { data: triggerMatch, error: triggerError } = await supabaseAdmin
+    .from('matches')
+    .select('id, matchday, match_date, match_time')
+    .eq('id', triggerMatchId)
+    .single();
+
+  if (triggerError || !triggerMatch) {
+    console.error('[SUSPENSION_CALC] Failed to fetch trigger match:', triggerError);
+    return [];
+  }
+
+  const triggerMatchdayNum = parseMatchdayNumber(triggerMatch.matchday);
+  const triggerDate = (triggerMatch.match_date as string | null) || null;
+  const triggerTime = (triggerMatch.match_time as string | null) || '23:59:59';
+
+  console.log(
+    `[SUSPENSION_CALC] Trigger match: matchday_raw="${triggerMatch.matchday}" matchday_num=${triggerMatchdayNum} date=${triggerDate} time=${triggerTime}`
+  );
+
+  // Step 2: Fetch all team matches in this season/age_group (excluding trigger match)
+  const { data: allMatches, error } = await supabaseAdmin
     .from('matches')
     .select(`
       id, matchday, match_date, match_time, match_code,
@@ -205,28 +282,64 @@ export async function findNextMatchesForSuspension(
     .eq('season_id', seasonId)
     .eq('age_group_id', ageGroupId)
     .or(`home_team_id.eq.${teamId},away_team_id.eq.${teamId}`)
-    .gt('matchday', triggerMatchday)
-    .order('matchday', { ascending: true })
-    .limit(count);
+    .neq('id', triggerMatchId);
 
   if (error) {
-    console.error('[SUSPENSION_CALC] Error finding next matches:', error);
+    console.error('[SUSPENSION_CALC] Error fetching team matches:', error);
     return [];
   }
 
-  return (matches || []).map((m: any) => ({
+  console.log(`[SUSPENSION_CALC] Total team matches found (excl. trigger): ${(allMatches || []).length}`);
+
+  // Step 3: Filter matches that come after the trigger
+  const candidates = (allMatches || []).filter((m: any) => {
+    const mMatchdayNum = parseMatchdayNumber(m.matchday);
+    const mDate = (m.match_date as string | null) || null;
+    const mTime = (m.match_time as string | null) || '23:59:59';
+
+    if (triggerDate && mDate) {
+      // Both have dates — use date comparison
+      if (mDate > triggerDate) return true;
+      if (mDate === triggerDate) return mTime > triggerTime;
+      return false;
+    }
+    // Fallback: matchday number comparison
+    return mMatchdayNum > triggerMatchdayNum;
+  });
+
+  // Step 4: Sort by match_date ASC → match_time ASC → matchday number ASC
+  candidates.sort((a: any, b: any) => {
+    const aDate = (a.match_date as string | null) || '';
+    const bDate = (b.match_date as string | null) || '';
+    if (aDate !== bDate) return aDate.localeCompare(bDate);
+    const aTime = (a.match_time as string | null) || '00:00:00';
+    const bTime = (b.match_time as string | null) || '00:00:00';
+    if (aTime !== bTime) return aTime.localeCompare(bTime);
+    return parseMatchdayNumber(a.matchday) - parseMatchdayNumber(b.matchday);
+  });
+
+  // Step 5: Take first `count` matches
+  const result = candidates.slice(0, count).map((m: any) => ({
     match_id: m.id,
-    matchday: Number(m.matchday),
+    matchday: parseMatchdayNumber(m.matchday),
     match_date: m.match_date,
     match_time: m.match_time,
     match_code: m.match_code,
-    opponent_name: m.home_team_id === teamId
-      ? (m.away_team?.name || 'ไม่ทราบทีม')
-      : (m.home_team?.name || 'ไม่ทราบทีม'),
+    opponent_name:
+      m.home_team_id === teamId
+        ? (m.away_team?.name || 'ไม่ทราบทีม')
+        : (m.home_team?.name || 'ไม่ทราบทีม'),
     opponent_id: m.home_team_id === teamId ? m.away_team_id : m.home_team_id,
     is_home: m.home_team_id === teamId,
     status: m.status,
   }));
+
+  console.log(
+    `[SUSPENSION_CALC] Next matches found (${result.length}):`,
+    result.map((m) => `MD${m.matchday}(${m.match_date})`).join(', ') || 'none'
+  );
+
+  return result;
 }
 
 /**
@@ -243,9 +356,11 @@ export async function recalculatePlayerSuspension(
   console.time(timerTotal);
 
   try {
-    console.log(`[SUSPENSION_CALC] Recalculating player=${playerId} season=${seasonId} age_group=${ageGroupId}`);
+    console.log(
+      `[SUSPENSION_CALC] Recalculating player=${playerId} team=${teamId} season=${seasonId} age_group=${ageGroupId}`
+    );
 
-    // Get all cards sorted by matchday ascending
+    // Get all cards sorted by match_date → match_time → matchday
     const seasonCards = await getSeasonCards(playerId, seasonId, ageGroupId);
 
     // Calculate total points and build point_sources with cumulative tracking
@@ -266,6 +381,10 @@ export async function recalculatePlayerSuspension(
     const totalPoints = cumulativePoints;
     const banMatches = calculateBanMatches(totalPoints);
 
+    console.log(
+      `[SUSPENSION_CALC] totalPoints=${totalPoints} banMatches=${banMatches} pointSources=${pointSources.length}`
+    );
+
     // Build suspension_details when there's a ban
     let suspensionDetails: SuspensionDetails | null = null;
     let suspendedFromMatchId: string | null = null;
@@ -274,7 +393,7 @@ export async function recalculatePlayerSuspension(
     if (banMatches > 0 && pointSources.length > 0) {
       const thresholdCrossed = getThresholdCrossed(totalPoints);
 
-      // Find trigger match: first match that pushed cumulative over the current threshold
+      // Find trigger match: first match where cumulative crossed the threshold
       let triggerSource: PointSource | null = null;
       for (const src of pointSources) {
         if (src.points_before < thresholdCrossed && src.points_after >= thresholdCrossed) {
@@ -282,21 +401,30 @@ export async function recalculatePlayerSuspension(
           break;
         }
       }
-      // Fallback to last card if threshold detection misses edge cases
+      // Fallback to last card
       if (!triggerSource) {
         triggerSource = pointSources[pointSources.length - 1];
       }
+
+      console.log(
+        `[SUSPENSION_CALC] Trigger source: match_id=${triggerSource.match_id} matchday=${triggerSource.matchday} ` +
+        `points_before=${triggerSource.points_before} → points_after=${triggerSource.points_after} threshold=${thresholdCrossed}`
+      );
 
       const triggerCardData = seasonCards.find((c) => c.match_id === triggerSource!.match_id);
       const triggerEvent = triggerCardData
         ? getTriggerEventText(triggerCardData.reason, triggerCardData.points)
         : 'สะสมคะแนนครบเกณฑ์';
 
-      // Find next banMatches matches for this team
+      // Find next banMatches matches for this team (date-based, pass triggerMatchId)
       const timerNextMatch = `[SUSPENSION_CALC] findNextMatches`;
       console.time(timerNextMatch);
       const suspendedMatches = await findNextMatchesForSuspension(
-        teamId, seasonId, ageGroupId, triggerSource.matchday, banMatches
+        teamId,
+        seasonId,
+        ageGroupId,
+        triggerSource.match_id,
+        banMatches
       );
       console.timeEnd(timerNextMatch);
 
@@ -357,6 +485,69 @@ export async function recalculatePlayerSuspension(
     console.error('[SUSPENSION_CALC] Error:', error);
     throw error;
   }
+}
+
+/**
+ * Recalculate all player suspensions for a season/age_group.
+ * Finds all players with cards and re-runs recalculatePlayerSuspension for each.
+ */
+export async function recalculateSeasonSuspensions(
+  seasonId: string,
+  ageGroupId: string
+): Promise<{ processed: number; success: number; failed: number }> {
+  console.log(
+    `[SUSPENSION_CALC] recalculateSeasonSuspensions season=${seasonId} age_group=${ageGroupId}`
+  );
+
+  // Get all match IDs for this season/age_group
+  const { data: matchRows, error: matchError } = await supabaseAdmin
+    .from('matches')
+    .select('id')
+    .eq('season_id', seasonId)
+    .eq('age_group_id', ageGroupId);
+
+  if (matchError) throw matchError;
+  const matchIds = (matchRows || []).map((m: any) => m.id);
+
+  if (matchIds.length === 0) {
+    console.log('[SUSPENSION_CALC] No matches found for this season/age_group');
+    return { processed: 0, success: 0, failed: 0 };
+  }
+
+  // Get distinct (player_id, team_id) from cards in those matches
+  const { data: cardRows, error: cardError } = await supabaseAdmin
+    .from('cards')
+    .select('player_id, team_id')
+    .in('match_id', matchIds);
+
+  if (cardError) throw cardError;
+
+  const playerTeamMap = new Map<string, { playerId: string; teamId: string }>();
+  for (const row of cardRows || []) {
+    if (!row.player_id || !row.team_id) continue;
+    const key = `${row.player_id}:${row.team_id}`;
+    if (!playerTeamMap.has(key)) {
+      playerTeamMap.set(key, { playerId: row.player_id, teamId: row.team_id });
+    }
+  }
+
+  const players = Array.from(playerTeamMap.values());
+  console.log(`[SUSPENSION_CALC] Recalculating ${players.length} unique player+team combos`);
+
+  let success = 0;
+  let failed = 0;
+  for (const { playerId, teamId } of players) {
+    try {
+      await recalculatePlayerSuspension(playerId, seasonId, ageGroupId, teamId);
+      success++;
+    } catch (err) {
+      console.error(`[SUSPENSION_CALC] Failed player=${playerId} team=${teamId}:`, err);
+      failed++;
+    }
+  }
+
+  console.log(`[SUSPENSION_CALC] recalculateSeasonSuspensions done: ${success} success, ${failed} failed`);
+  return { processed: players.length, success, failed };
 }
 
 /**

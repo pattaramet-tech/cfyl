@@ -1,7 +1,7 @@
 # 📊 PROJECT_STATUS.md
 
-**Last Updated**: 2026-06-18 (Phase 2e Complete)  
-**Current Phase**: Phase 2b ✅ COMPLETE | Phase 2c ✅ COMPLETE | Phase 2d ✅ COMPLETE | Phase 2e ✅ COMPLETE
+**Last Updated**: 2026-06-18 (Phase 3A + Bug Fix)  
+**Current Phase**: Phase 2e ✅ COMPLETE | Phase 3A ✅ COMPLETE (Bug Fixed)
 
 ---
 
@@ -90,11 +90,31 @@
 - [x] npm run build: ✅ PASSED (28 routes)
 - [x] Performance: suspension calculation N+1 fix (50-150ms)
 
-### Phase 3: Advanced Features 🔴 NOT STARTED
-- [ ] Suspension management
-- [ ] Player registration
-- [ ] Team management
-- [ ] Season management
+### Phase 3A: Suspension Management ✅ COMPLETE (Bug Fixed 2026-06-18)
+- [x] `suspension_details` JSONB column (migration: scripts/migration-phase3a-suspension-details.sql)
+- [x] `lib/suspension-calc.ts` — full rewrite with rich details
+  - [x] `parseMatchdayNumber()` helper: handles "MatchDay 2", "MD2", 2, "2" → number
+  - [x] `getSeasonCards()` — sorts by match_date ASC → match_time ASC → matchday ASC
+  - [x] `findNextMatchesForSuspension()` — date-based filtering with matchday fallback
+  - [x] `recalculatePlayerSuspension()` — builds SuspensionDetails, passes match_id (not matchday) to findNextMatches
+  - [x] `recalculateSeasonSuspensions()` — recalcs all players in a season/age_group
+- [x] Bug fix: findNextMatchesForSuspension used invalid `.in()` → fixed to `.or()`
+- [x] Bug fix: matchday stored as "MatchDay N" text — added `parseMatchdayNumber()`, now uses date-based ordering
+- [x] Bug fix: was passing `triggerMatchday` (number) → now passes `triggerMatchId` for accurate date comparison
+- [x] `/api/admin/suspensions` — auth-required read API
+- [x] `/api/admin/suspensions/recalculate` — POST endpoint to recalculate all players
+- [x] `/admin/suspensions` — read-only admin page with expandable detail rows
+  - [x] "🔄 คำนวณใหม่ทั้งหมด" button triggers recalculate + auto-refreshes table
+  - [x] Summary cards: banned / no-schedule / accumulating / normal
+  - [x] Expandable rows: trigger event, banned matches, point history
+- [x] Status logic per CFYL rules (ban=0 → สะสมคะแนน, not 6-11 pts threshold)
+- [x] `/discipline` public page — Next Match(es) column + Status column
+- [x] `AdminNav` — 🚨 Suspensions link added
+- [x] npm run build: ✅ PASSED (32 routes)
+
+### Phase 3B: Player Management 🔴 NOT STARTED
+### Phase 3C: Team Management 🔴 NOT STARTED
+### Phase 3D: Season Management 🔴 NOT STARTED
 
 ### Phase 4: Integrations 🔴 NOT STARTED
 - [ ] Reports & analytics
