@@ -15,6 +15,53 @@ Each entry contains:
 
 ---
 
+## 2026-06-18 - Phase 2c Preparation: Schema & Plan
+
+### Preparation: Phase 2c Goal Management
+
+**Schema Changes**:
+- Removed `UNIQUE(match_id, player_id)` constraint from goals table
+- Allows multiple goal entries per player per match
+- Each goal entry is independent row (supports 2+ goals per player)
+
+**Files Added**:
+- `scripts/migration-remove-goals-unique.sql` - Rerun-safe migration for production
+- `SETUP_GOALS.md` - Step-by-step guide to run migration
+- `PHASE_2C_PLAN.md` - Complete implementation plan
+
+**Schema Before (Phase 2b)**:
+```sql
+UNIQUE(match_id, player_id)  -- Only 1 record per player per match
+```
+
+**Schema After (Phase 2c)**:
+```sql
+-- No unique constraint - supports multiple goals
+```
+
+**Data Model**:
+- Player scores 3 goals in match → 3 separate rows in goals table
+- Or single row with goals=3 (implementation choice)
+- API: SUM(goals) calculates total per player
+
+**Migration Required**:
+Must run in Supabase before deploying Phase 2c code:
+```sql
+-- scripts/migration-remove-goals-unique.sql
+ALTER TABLE goals DROP CONSTRAINT "goals_match_id_player_id_key";
+```
+
+**Next Steps**:
+1. Run migration in Supabase SQL Editor
+2. Deploy Phase 2c code (pages, components, APIs)
+3. Test goal management
+4. Verify /top-scorers auto-updates
+
+**Build Status**: ✅ PASSED (21 routes, no changes to existing)
+**Commit**: 88ffdfe
+
+---
+
 ## 2026-06-18 - Phase 2b: Fixed Edit Match Route
 
 ### Fix: Edit Match Page Returns 404

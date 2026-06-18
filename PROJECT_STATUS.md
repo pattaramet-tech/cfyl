@@ -1,7 +1,7 @@
 # 📊 PROJECT_STATUS.md
 
-**Last Updated**: 2026-06-18 (Phase 2b Route Fix)  
-**Current Phase**: Phase 2b ✅ COMPLETE | 🔧 Edit Match Route Fixed | ⏳ Ready for Phase 2c
+**Last Updated**: 2026-06-18 (Phase 2c Preparation)  
+**Current Phase**: Phase 2b ✅ COMPLETE | Phase 2c 🟡 PREPARATION → Ready to Build
 
 ---
 
@@ -45,10 +45,14 @@
 - [x] RLS policy recursion fixed
 - [x] Admin login working on production
 
-### Phase 2c: Goal Management 🔴 PENDING
-- [ ] Goal list by match
-- [ ] Add/edit/delete goals
-- [ ] Player selector dropdown
+### Phase 2c: Goal Management 🟡 READY TO BUILD
+- [x] Schema updated: removed unique constraint (supports multiple goals per player)
+- [x] Migration script created: `scripts/migration-remove-goals-unique.sql`
+- [x] Implementation plan: `PHASE_2C_PLAN.md`
+- [x] Setup guide: `SETUP_GOALS.md`
+- [ ] Goal list by match (page: app/admin/goals/page.tsx)
+- [ ] Add/edit/delete goals (APIs)
+- [ ] Player selector dropdown (component)
 - [ ] API: POST/PUT/DELETE /api/admin/goals
 
 ### Phase 2d: Card Management 🔴 PENDING
