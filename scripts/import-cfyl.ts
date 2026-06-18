@@ -288,8 +288,8 @@ async function importData() {
           match_time: parseTaiTime(m.Time),
           home_team_id: teamMap[m.TeamA],
           away_team_id: teamMap[m.TeamB],
-          home_score: m.ScoreA || null,
-          away_score: m.ScoreB || null,
+          home_score: m.ScoreA != null ? m.ScoreA : null,
+          away_score: m.ScoreB != null ? m.ScoreB : null,
           status: m.ScoreA !== undefined && m.ScoreB !== undefined ? 'finished' : 'scheduled',
         };
       });
