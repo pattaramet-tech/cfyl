@@ -15,6 +15,31 @@ Each entry contains:
 
 ---
 
+## 2026-06-18 - Admin Auth: Fixed RLS Policy Recursion
+
+### Fix: Infinite Recursion in admin_profiles RLS Policy
+
+**Problem**: "Superadmins can read all profiles" policy queries admin_profiles
+- Policy: `SELECT id FROM admin_profiles WHERE role = 'superadmin'`
+- Running this policy triggers the same policy → infinite recursion
+- Error: "infinite recursion detected in policy for relation admin_profiles"
+
+**Solution**: 
+1. Remove recursive policy ("Superadmins can read all profiles")
+2. Keep only simple policy ("Authenticated users can read their own profile")
+3. Change login API to use service role key (bypasses RLS)
+4. Update migration to fix existing databases
+
+**Files Modified**:
+- `scripts/admin-schema.sql` - Removed recursive policy, documented workaround
+- `scripts/migration-add-active-column.sql` - Now includes policy fix
+- `app/api/admin/auth/login/route.ts` - Use service role for admin_profiles queries
+
+**Build Status**: ✅ PASSED (21 routes)
+**Commit**: 47ad7bc
+
+---
+
 ## 2026-06-18 - Admin Login: Fixed Public Access
 
 ### Fix: /admin/login Page Displayed "Authentication error"

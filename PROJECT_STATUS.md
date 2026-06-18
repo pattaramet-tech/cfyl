@@ -1,7 +1,7 @@
 # 📊 PROJECT_STATUS.md
 
-**Last Updated**: 2026-06-18 (Admin Login Fix)  
-**Current Phase**: Phase 2b ✅ COMPLETE | 🔧 Admin Login Fixed | ⏳ Production Testing | Phase 2c Blocked
+**Last Updated**: 2026-06-18 (RLS Policy Fix)  
+**Current Phase**: Phase 2b ✅ COMPLETE | 🔧 RLS Recursion Fixed | ⏳ Production Testing | Phase 2c Blocked
 
 ---
 
@@ -178,10 +178,13 @@ NEXT_PUBLIC_APP_URL               = http://localhost:3000
 - ✅ Comprehensive SETUP_ADMIN.md guide
 - ✅ Detailed logging for troubleshooting
 
-**Recent Fix (Commit 1a7b9d8)**:
-- Removed auth guard from /admin/login
-- Uses usePathname to skip auth check for login page
-- Login page now renders immediately without "Authentication error"
+**Recent Fixes**:
+- Commit 1a7b9d8: Removed auth guard from /admin/login
+- Commit 47ad7bc: Fixed RLS policy recursion:
+  * Removed recursive "Superadmins can read all profiles" policy
+  * Created simple "Authenticated users can read their own profile" policy
+  * Changed login API to use service role key (bypasses RLS)
+  * Now queries admin_profiles without recursion
 
 **Next Steps**:
 1. Wait for Vercel redeploy (commit 1a7b9d8)

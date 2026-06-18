@@ -14,11 +14,21 @@ Complete step-by-step guide to set up admin users for production.
 
 ## Step 1: Run Database Migration
 
+**IMPORTANT**: This migration fixes RLS policy recursion issue.
+
 **In Supabase SQL Editor** (https://app.supabase.com → SQL Editor):
 
+Copy and run the complete script from: `scripts/migration-add-active-column.sql`
+
+Or paste this:
+
 ```sql
--- Add active column to admin_profiles if it doesn't exist
--- This script is rerun-safe (idempotent)
+-- Migration: Add active column and fix RLS policies (rerun-safe)
+-- This script:
+-- 1. Adds active column if missing
+-- 2. Drops problematic recursive RLS policy
+-- 3. Creates simple non-recursive policy
+-- 4. Safe to run multiple times
 
 DO $$
 BEGIN
@@ -28,24 +38,49 @@ BEGIN
   ) THEN
     ALTER TABLE admin_profiles
     ADD COLUMN active BOOLEAN DEFAULT true;
-
     RAISE NOTICE 'Added active column to admin_profiles';
   ELSE
     RAISE NOTICE 'Column active already exists in admin_profiles';
   END IF;
 END $$;
 
--- Create index if not exists
 CREATE INDEX IF NOT EXISTS idx_admin_profiles_active
 ON admin_profiles(active);
 
--- Mark all existing profiles as active
 UPDATE admin_profiles
 SET active = true
 WHERE active IS NULL;
+
+-- Drop recursive policy that caused errors
+DO $$
+BEGIN
+  DROP POLICY IF EXISTS "Superadmins can read all profiles" ON admin_profiles;
+  RAISE NOTICE 'Dropped recursive RLS policy';
+EXCEPTION WHEN UNDEFINED_OBJECT THEN
+  RAISE NOTICE 'Recursive policy not found (OK)';
+END $$;
+
+-- Create simple non-recursive policy
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE tablename = 'admin_profiles'
+    AND policyname = 'Authenticated users can read their own profile'
+  ) THEN
+    CREATE POLICY "Authenticated users can read their own profile"
+      ON admin_profiles FOR SELECT
+      USING (auth.uid() = id);
+    RAISE NOTICE 'Created non-recursive RLS policy';
+  ELSE
+    RAISE NOTICE 'Non-recursive policy already exists';
+  END IF;
+END $$;
+
+RAISE NOTICE 'Migration complete';
 ```
 
-**Status**: ✅ Migration complete when you see the NOTICE messages.
+**Status**: ✅ Migration complete when you see all NOTICE messages (no errors)
 
 ---
 
