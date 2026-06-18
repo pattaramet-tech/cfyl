@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, usePathname } from 'next/navigation';
 import { AdminNav, AdminNavContent } from '@/components/AdminNav';
 import type { AdminProfile } from '@/lib/admin-auth';
 
@@ -11,12 +11,22 @@ export default function AdminLayout({
   children: React.ReactNode;
 }) {
   const router = useRouter();
+  const pathname = usePathname();
   const [isLoading, setIsLoading] = useState(true);
   const [adminProfile, setAdminProfile] = useState<Partial<AdminProfile> | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  // Login page is public - no auth required
+  const isLoginPage = pathname === '/admin/login';
+
   useEffect(() => {
     const checkAuth = async () => {
+      // Skip auth check for login page
+      if (isLoginPage) {
+        setIsLoading(false);
+        return;
+      }
+
       try {
         const token = localStorage.getItem('admin_token');
 
@@ -56,8 +66,14 @@ export default function AdminLayout({
     };
 
     checkAuth();
-  }, [router]);
+  }, [router, isLoginPage]);
 
+  // Login page: render without sidebar (public page)
+  if (isLoginPage) {
+    return <>{children}</>;
+  }
+
+  // Protected pages: show loading
   if (isLoading) {
     return (
       <div className="flex items-center justify-center min-h-screen bg-gray-50">
@@ -69,6 +85,7 @@ export default function AdminLayout({
     );
   }
 
+  // Protected pages: show error or not authenticated
   if (error || !adminProfile) {
     return (
       <div className="flex items-center justify-center min-h-screen bg-gray-50">
@@ -82,6 +99,7 @@ export default function AdminLayout({
     );
   }
 
+  // Protected pages: render with sidebar and auth check passed
   return (
     <div className="flex h-screen bg-gray-100">
       <AdminNav
