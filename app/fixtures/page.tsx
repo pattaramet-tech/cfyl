@@ -37,8 +37,12 @@ export default function FixturesPage() {
       setMatches(data);
 
       // Extract unique matchdays
-      const days = [...new Set(data.map((m: Match) => m.matchday))];
-      setMatchdays(days as string[]);
+      const days = Array.from(
+        new Set(matches.map((m) => String(m.matchday)).filter(Boolean))
+      );
+
+      setMatchdays(days);
+
       if (days.length > 0) {
         setSelectedMatchday(days[0]);
       }

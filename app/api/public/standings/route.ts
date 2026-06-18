@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { calculateStandings } from '@/lib/calculations';
 import type { Match, Standing } from '@/types/db';
 
-export const revalidate = 600; // Cache for 10 minutes
+export const dynamic = 'force-dynamic';
 
 export async function GET(request: NextRequest) {
   try {
@@ -42,14 +42,21 @@ export async function GET(request: NextRequest) {
     // Calculate standings for each team
     const standings: Standing[] = teams!.map(team => {
       const stats = calculateStandings(matches as Match[], team.id);
-      return {
-        season_id: seasonId,
-        age_group_id: ageGroupId,
-        division_id: divisionId,
-        team_id: team.id,
-        team_name: team.name,
-        ...stats,
-      };
+        return {
+          season_id: seasonId,
+          age_group_id: ageGroupId,
+          division_id: divisionId,
+          team_id: team.id,
+          team_name: team.name,
+          played: stats.played,
+          wins: stats.wins,
+          draws: stats.draws,
+          losses: stats.losses,
+          goals_for: stats.goalsFor,
+          goals_against: stats.goalsAgainst,
+          goal_diff: stats.goalDiff,
+          points: stats.points,
+        };
     });
 
     // Sort by points (desc), goal_diff (desc), goals_for (desc)

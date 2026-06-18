@@ -2,6 +2,8 @@ import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 
+export const dynamic = 'force-dynamic';
+
 const geistSans = Geist({
   variable: "--font-geist-sans",
   subsets: ["latin"],
@@ -15,7 +17,6 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "Chonburi Futsal Youth League 2026",
   description: "ลีกฟุตซอลเยาวชนจังหวัดชลบุรี 2026",
-  charset: "utf-8",
 };
 
 export default function RootLayout({

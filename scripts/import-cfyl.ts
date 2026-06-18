@@ -6,7 +6,7 @@
 import XLSX from 'xlsx';
 import path from 'path';
 import { createClient } from '@supabase/supabase-js';
-import { excelDateToISO, parseTaiTime, extractDivisionNumber } from '../lib/calculations.ts';
+import { excelDateToISO, parseTaiTime, extractDivisionNumber } from '../lib/calculations';
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -193,13 +193,33 @@ async function importData() {
     // 6. Create Players
     console.log('👥 Importing Players...');
     const playerMap: { [key: string]: string } = {};
+    const seenPlayerKeys = new Set<string>(); // Track unique (season_id, player_code) combinations
+    let duplicateCount = 0;
 
     const playerChunks = chunkArray(players, 100);
     let playerCount = 0;
 
     for (const chunk of playerChunks) {
       const playersToInsert = chunk
-        .filter(p => teamMap[p.Team])
+        .filter(p => {
+          // 1. Check if team exists
+          if (!teamMap[p.Team]) {
+            return false;
+          }
+
+          // 2. Deduplicate by (season_id, player_code)
+          const playerKey = `${seasonId}|${String(p.PlayerID)}`;
+          if (seenPlayerKeys.has(playerKey)) {
+            console.log(
+              `  ⚠️  Duplicate player skipped: ${p.PlayerID} (${p.PlayerName}) - ${p.Team}`
+            );
+            duplicateCount++;
+            return false;
+          }
+
+          seenPlayerKeys.add(playerKey);
+          return true;
+        })
         .map(p => {
           const ageCode = p['Age Group'] === 14 ? 'U14' : 'U17';
           const ageGroupId = ageGroupMap[ageCode];
@@ -220,12 +240,14 @@ async function importData() {
           };
         });
 
-      const { data, error } = await supabase.from('players').upsert(playersToInsert, {
-        onConflict: 'season_id,player_code',
-      });
+      if (playersToInsert.length > 0) {
+        const { data, error } = await supabase.from('players').upsert(playersToInsert, {
+          onConflict: 'season_id,player_code',
+        });
 
-      if (error) throw error;
-      playerCount += playersToInsert.length;
+        if (error) throw error;
+        playerCount += playersToInsert.length;
+      }
     }
 
     // Build playerMap for goals and cards
@@ -236,6 +258,9 @@ async function importData() {
       });
     }
 
+    if (duplicateCount > 0) {
+      console.log(`⚠️  Skipped ${duplicateCount} duplicate players\n`);
+    }
     console.log(`✓ Created ${playerCount} players\n`);
 
     // 7. Create Matches
@@ -289,8 +314,25 @@ async function importData() {
 
     // 8. Import Goals
     console.log('⚡ Importing Goals...');
+    const seenGoalKeys = new Set<string>();
+    let goalDuplicates = 0;
+
     const goalsToInsert = scorers
-      .filter(s => matchMap[s.MatchID] && playerMap[s.PlayerID])
+      .filter(s => {
+        if (!matchMap[s.MatchID] || !playerMap[s.PlayerID]) {
+          return false;
+        }
+
+        const goalKey = `${matchMap[s.MatchID]}|${playerMap[s.PlayerID]}`;
+        if (seenGoalKeys.has(goalKey)) {
+          console.log(`  ⚠️  Duplicate goal skipped: Match ${s.MatchID} - Player ${s.PlayerID}`);
+          goalDuplicates++;
+          return false;
+        }
+
+        seenGoalKeys.add(goalKey);
+        return true;
+      })
       .map(s => ({
         match_id: matchMap[s.MatchID],
         player_id: playerMap[s.PlayerID],
@@ -306,12 +348,34 @@ async function importData() {
       if (error) throw error;
     }
 
+    if (goalDuplicates > 0) {
+      console.log(`  ⚠️  Skipped ${goalDuplicates} duplicate goal records`);
+    }
     console.log(`✓ Created ${goalsToInsert.length} goal records\n`);
 
     // 9. Import Cards
     console.log('🟨 Importing Cards...');
+    const seenCardKeys = new Set<string>();
+    let cardDuplicates = 0;
+
     const cardsToInsert = cards
-      .filter(c => matchMap[c.MatchID] && playerMap[c.PlayerID])
+      .filter(c => {
+        if (!matchMap[c.MatchID] || !playerMap[c.PlayerID]) {
+          return false;
+        }
+
+        const cardKey = `${matchMap[c.MatchID]}|${playerMap[c.PlayerID]}`;
+        if (seenCardKeys.has(cardKey)) {
+          console.log(
+            `  ⚠️  Duplicate card skipped: Match ${c.MatchID} - Player ${c.PlayerID} - ${c.CardType}`
+          );
+          cardDuplicates++;
+          return false;
+        }
+
+        seenCardKeys.add(cardKey);
+        return true;
+      })
       .map(c => ({
         match_id: matchMap[c.MatchID],
         player_id: playerMap[c.PlayerID],
@@ -328,6 +392,9 @@ async function importData() {
       if (error) throw error;
     }
 
+    if (cardDuplicates > 0) {
+      console.log(`  ⚠️  Skipped ${cardDuplicates} duplicate card records`);
+    }
     console.log(`✓ Created ${cardsToInsert.length} card records\n`);
 
     console.log('✅ Import completed successfully!');

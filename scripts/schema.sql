@@ -46,7 +46,8 @@ CREATE TABLE teams (
   logo_url TEXT,
   active BOOLEAN DEFAULT true,
   created_at TIMESTAMP DEFAULT now(),
-  updated_at TIMESTAMP DEFAULT now()
+  updated_at TIMESTAMP DEFAULT now(),
+  UNIQUE(season_id, age_group_id, division_id, name)
 );
 
 -- 5. Players table
@@ -97,7 +98,8 @@ CREATE TABLE goals (
   team_id UUID NOT NULL REFERENCES teams(id),
   goals INT NOT NULL DEFAULT 1,
   created_at TIMESTAMP DEFAULT now(),
-  updated_at TIMESTAMP DEFAULT now()
+  updated_at TIMESTAMP DEFAULT now(),
+  UNIQUE(match_id, player_id)
 );
 
 -- 8. Cards table (Discipline data)
@@ -110,7 +112,8 @@ CREATE TABLE cards (
   unit INT DEFAULT 1,
   note TEXT,
   created_at TIMESTAMP DEFAULT now(),
-  updated_at TIMESTAMP DEFAULT now()
+  updated_at TIMESTAMP DEFAULT now(),
+  UNIQUE(match_id, player_id)
 );
 
 -- 9. Suspensions table (Ban records)

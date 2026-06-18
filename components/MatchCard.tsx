@@ -4,6 +4,7 @@ interface MatchCardProps {
   match: Match & {
     home_team?: { name: string; short_name?: string; logo_url?: string };
     away_team?: { name: string; short_name?: string; logo_url?: string };
+    division?: { name: string };
   };
 }
 
