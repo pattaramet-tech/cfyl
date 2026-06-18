@@ -21,28 +21,45 @@ export default function AdminDashboardPage() {
     const fetchStats = async () => {
       try {
         const token = localStorage.getItem('admin_token');
+        console.log('[DASHBOARD] Token exists:', !!token);
 
         if (!token) {
-          setError('Not authenticated');
+          console.error('[DASHBOARD] No token found in localStorage');
+          setError('Not authenticated - redirecting to login');
+          // Redirect to login after 2 seconds
+          setTimeout(() => window.location.href = '/admin/login', 2000);
           return;
         }
 
+        console.log('[DASHBOARD] Fetching stats with token...');
         const response = await fetch('/api/admin/stats', {
           headers: {
             'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json',
           },
         });
 
+        console.log('[DASHBOARD] Stats response status:', response.status);
+
         if (!response.ok) {
-          setError('Failed to fetch stats');
+          const data = await response.json();
+          console.error('[DASHBOARD] Stats API error:', {
+            status: response.status,
+            error: data.error,
+          });
+          setError(
+            data.error ||
+            `Failed to fetch stats (${response.status}). Check console for details.`
+          );
           return;
         }
 
         const data = await response.json();
+        console.log('[DASHBOARD] Stats loaded:', data);
         setStats(data.stats);
       } catch (error) {
-        console.error('Stats error:', error);
-        setError('Error loading statistics');
+        console.error('[DASHBOARD] Stats error:', error);
+        setError(`Error loading statistics: ${error instanceof Error ? error.message : 'unknown error'}`);
       } finally {
         setIsLoading(false);
       }

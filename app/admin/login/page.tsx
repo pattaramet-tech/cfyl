@@ -27,6 +27,7 @@ export default function AdminLoginPage() {
     setIsLoading(true);
 
     try {
+      console.log('[LOGIN_PAGE] Submitting login for:', email);
       const response = await fetch('/api/admin/auth/login', {
         method: 'POST',
         headers: {
@@ -35,25 +36,37 @@ export default function AdminLoginPage() {
         body: JSON.stringify({ email, password }),
       });
 
+      console.log('[LOGIN_PAGE] Response status:', response.status);
       const data = await response.json();
+      console.log('[LOGIN_PAGE] Response data:', {
+        success: data.success,
+        error: data.error,
+        hasToken: !!data.token,
+      });
 
       if (!response.ok) {
-        setError(data.error || 'Login failed');
+        const errorMsg = data.error || 'Login failed';
+        console.error('[LOGIN_PAGE] Login error:', errorMsg);
+        setError(errorMsg);
         return;
       }
 
       if (data.success && data.token) {
+        console.log('[LOGIN_PAGE] Login successful, storing token...');
         // Store token
         localStorage.setItem('admin_token', data.token);
+        console.log('[LOGIN_PAGE] Token stored, redirecting to dashboard...');
 
         // Redirect to dashboard
         router.push('/admin/dashboard');
       } else {
-        setError('Login failed');
+        console.error('[LOGIN_PAGE] Login response invalid:', data);
+        setError('Login failed - invalid response');
       }
     } catch (error) {
-      console.error('Login error:', error);
-      setError('An error occurred. Please try again.');
+      console.error('[LOGIN_PAGE] Login error:', error);
+      const errorMsg = error instanceof Error ? error.message : 'An error occurred';
+      setError(`Error: ${errorMsg}. Please try again.`);
     } finally {
       setIsLoading(false);
     }

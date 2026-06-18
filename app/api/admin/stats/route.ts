@@ -15,15 +15,20 @@ export const dynamic = 'force-dynamic';
 
 export async function GET(request: NextRequest) {
   try {
+    console.log('[STATS] GET request received');
+
     // Verify admin is authenticated
     const authResult = await verifyAdminAuth(request);
 
     if (!authResult.authenticated) {
+      console.error('[STATS] Auth failed:', authResult.error);
       return NextResponse.json(
-        { error: 'Unauthorized' },
+        { error: authResult.error || 'Unauthorized' },
         { status: 401 }
       );
     }
+
+    console.log('[STATS] Authenticated user:', authResult.profile?.email);
 
     // Get total matches
     const { count: totalMatches, error: matchError } = await supabaseAdmin
@@ -82,9 +87,10 @@ export async function GET(request: NextRequest) {
       { status: 200 }
     );
   } catch (error) {
-    console.error('Stats error:', error);
+    const errorMsg = error instanceof Error ? error.message : String(error);
+    console.error('[STATS] Error:', errorMsg, error);
     return NextResponse.json(
-      { error: 'Failed to fetch stats' },
+      { error: `Failed to fetch stats: ${errorMsg}` },
       { status: 500 }
     );
   }

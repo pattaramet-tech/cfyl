@@ -46,20 +46,42 @@ export async function POST(request: NextRequest) {
     }
 
     // Verify admin profile exists
+    const userId = data.user.id;
+    console.log(`[LOGIN] Auth successful for user: ${userId}`);
+
     const { data: adminProfile, error: profileError } = await supabase
       .from('admin_profiles')
-      .select('id, email, full_name, active')
-      .eq('id', data.user.id)
+      .select('id, email, full_name, active, role, can_edit_matches, can_edit_goals, can_edit_cards')
+      .eq('id', userId)
       .single();
 
-    if (profileError || !adminProfile) {
+    if (profileError) {
+      console.error(`[LOGIN] Profile query error for ${userId}:`, profileError);
       return NextResponse.json(
-        { error: 'Admin profile not found' },
+        { error: `Admin profile not found (DB error: ${profileError.message})` },
         { status: 401 }
       );
     }
 
+    if (!adminProfile) {
+      console.error(`[LOGIN] No admin profile found for user: ${userId}`);
+      console.log(`[LOGIN] User ID from auth: ${userId}`);
+      console.log(`[LOGIN] User email from auth: ${data.user.email}`);
+      return NextResponse.json(
+        { error: 'Admin profile not found - user is not registered as admin' },
+        { status: 401 }
+      );
+    }
+
+    console.log(`[LOGIN] Admin profile found:`, {
+      id: adminProfile.id,
+      email: adminProfile.email,
+      role: adminProfile.role,
+      active: adminProfile.active,
+    });
+
     if (!adminProfile.active) {
+      console.warn(`[LOGIN] Admin account inactive: ${adminProfile.email}`);
       return NextResponse.json(
         { error: 'Admin account is inactive' },
         { status: 401 }
@@ -67,10 +89,14 @@ export async function POST(request: NextRequest) {
     }
 
     // Return success with token and user info
+    const token = data.session.access_token;
+    console.log(`[LOGIN] Login successful for ${adminProfile.email}, token generated`);
+    console.log(`[LOGIN] Token (first 50 chars): ${token.substring(0, 50)}...`);
+
     return NextResponse.json(
       {
         success: true,
-        token: data.session.access_token,
+        token: token,
         user: {
           id: data.user.id,
           email: data.user.email,

@@ -26,6 +26,7 @@ export async function verifyAdminAuth(request: NextRequest) {
     // Get JWT token from Authorization header
     const authHeader = request.headers.get('authorization');
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      console.warn('[MIDDLEWARE] Missing Authorization header');
       return {
         authenticated: false,
         error: 'Missing or invalid Authorization header',
@@ -33,11 +34,21 @@ export async function verifyAdminAuth(request: NextRequest) {
     }
 
     const token = authHeader.slice(7); // Remove "Bearer " prefix
+    console.log('[MIDDLEWARE] Verifying token...');
 
     // Verify token with Supabase
     const { data, error } = await supabaseAdmin.auth.getUser(token);
 
-    if (error || !data.user) {
+    if (error) {
+      console.error('[MIDDLEWARE] Token verification error:', error);
+      return {
+        authenticated: false,
+        error: `Invalid token: ${error.message}`,
+      };
+    }
+
+    if (!data.user) {
+      console.error('[MIDDLEWARE] No user returned from token verification');
       return {
         authenticated: false,
         error: 'Invalid or expired token',
@@ -45,6 +56,7 @@ export async function verifyAdminAuth(request: NextRequest) {
     }
 
     const userId = data.user.id;
+    console.log(`[MIDDLEWARE] Token valid for user: ${userId}`);
 
     // Get admin profile to check permissions
     const { data: profile, error: profileError } = await supabaseAdmin
@@ -53,32 +65,48 @@ export async function verifyAdminAuth(request: NextRequest) {
       .eq('id', userId)
       .single();
 
-    if (profileError || !profile) {
+    if (profileError) {
+      console.error(`[MIDDLEWARE] Profile query error for ${userId}:`, profileError);
       return {
         authenticated: false,
-        error: 'Admin profile not found',
+        error: `Admin profile query failed: ${profileError.message}`,
+      };
+    }
+
+    if (!profile) {
+      console.error(`[MIDDLEWARE] No admin profile found for verified user: ${userId}`);
+      return {
+        authenticated: false,
+        error: 'Admin profile not found in database',
       };
     }
 
     const adminProfile = profile as AdminProfile;
+    console.log(`[MIDDLEWARE] Admin profile loaded:`, {
+      id: adminProfile.id,
+      email: adminProfile.email,
+      active: adminProfile.active,
+    });
 
     if (!adminProfile.active) {
+      console.warn(`[MIDDLEWARE] Admin account is inactive: ${adminProfile.email}`);
       return {
         authenticated: false,
         error: 'Admin account is inactive',
       };
     }
 
+    console.log(`[MIDDLEWARE] Auth verified successfully for: ${adminProfile.email}`);
     return {
       authenticated: true,
       userId,
       profile: adminProfile,
     };
   } catch (error) {
-    console.error('Auth verification error:', error);
+    console.error('[MIDDLEWARE] Auth verification error:', error);
     return {
       authenticated: false,
-      error: 'Internal server error',
+      error: `Internal server error: ${error instanceof Error ? error.message : 'unknown'}`,
     };
   }
 }
