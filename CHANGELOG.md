@@ -15,6 +15,65 @@ Each entry contains:
 
 ---
 
+## 2026-06-18 - Phase 2c Goal Management: Complete
+
+### Feature: Goal Management System
+
+**Files Added** (7 files, 1282 lines):
+
+**Pages**:
+- `app/admin/goals/page.tsx` - Match selector + goal list + add form
+
+**Components**:
+- `components/PlayerSelector.tsx` - Dropdown filter by match teams, search
+- `components/GoalForm.tsx` - Add/edit goal form with validation
+- `components/GoalsList.tsx` - Table with edit/delete, aggregates goals
+
+**API Routes**:
+- `app/api/admin/goals/route.ts` - GET all goals, POST create goal
+- `app/api/admin/goals/[goalId]/route.ts` - PUT update, DELETE remove goal
+
+**Modified**:
+- `components/AdminNav.tsx` - Added "⚽ Goals" nav link
+
+**Features Implemented**:
+- ✅ Select match (season → age group → division → match)
+- ✅ Display current goals for match
+- ✅ Add goal: select player (filtered by match teams) + count
+- ✅ Edit goal: modify count
+- ✅ Delete goal: with confirmation
+- ✅ Player selector: search, grouped by team
+- ✅ Aggregated goals: total per player, sorted by count
+- ✅ Multiple goals per player per match (no unique constraint)
+- ✅ Permission check: can_edit_goals enforced
+- ✅ Auto-updates: /top-scorers recalculates immediately
+- ✅ Error handling: validation + friendly messages
+- ✅ Loading states: visual feedback
+
+**Database**:
+- Schema updated: removed `UNIQUE(match_id, player_id)` constraint
+- Supports multiple goal entries per player per match
+- Migration script: `scripts/migration-remove-goals-unique.sql`
+
+**Build Status**: ✅ PASSED
+- Routes: 23 (added /admin/goals + 2 API)
+- TypeScript: No errors
+- Components: Reusable (PlayerSelector, GoalForm, GoalsList)
+
+**Git Commit**: 6492d5e
+
+**Testing Checklist**:
+- [ ] Run migration in Supabase first
+- [ ] Login to /admin/goals
+- [ ] Select match
+- [ ] Add goal (should show in table)
+- [ ] Edit goal (change count)
+- [ ] Delete goal (confirm)
+- [ ] Check /top-scorers (should auto-update)
+- [ ] Add 2+ goals for same player (should work)
+
+---
+
 ## 2026-06-18 - Phase 2c Preparation: Schema & Plan
 
 ### Preparation: Phase 2c Goal Management

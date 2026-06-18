@@ -1,7 +1,7 @@
 # 📊 PROJECT_STATUS.md
 
-**Last Updated**: 2026-06-18 (Phase 2c Preparation)  
-**Current Phase**: Phase 2b ✅ COMPLETE | Phase 2c 🟡 PREPARATION → Ready to Build
+**Last Updated**: 2026-06-18 (Phase 2c Complete)  
+**Current Phase**: Phase 2b ✅ COMPLETE | Phase 2c ✅ COMPLETE | Phase 2d NEXT
 
 ---
 
@@ -45,15 +45,17 @@
 - [x] RLS policy recursion fixed
 - [x] Admin login working on production
 
-### Phase 2c: Goal Management 🟡 READY TO BUILD
+### Phase 2c: Goal Management ✅ COMPLETE
 - [x] Schema updated: removed unique constraint (supports multiple goals per player)
-- [x] Migration script created: `scripts/migration-remove-goals-unique.sql`
-- [x] Implementation plan: `PHASE_2C_PLAN.md`
-- [x] Setup guide: `SETUP_GOALS.md`
-- [ ] Goal list by match (page: app/admin/goals/page.tsx)
-- [ ] Add/edit/delete goals (APIs)
-- [ ] Player selector dropdown (component)
-- [ ] API: POST/PUT/DELETE /api/admin/goals
+- [x] Migration script: `scripts/migration-remove-goals-unique.sql`
+- [x] Goal list by match (page: `/admin/goals`)
+- [x] Add/edit/delete goals (APIs: POST/PUT/DELETE)
+- [x] Player selector component (filtered by match teams)
+- [x] Goal form component (add/edit)
+- [x] Goals list component (table + actions)
+- [x] can_edit_goals permission enforced
+- [x] /top-scorers auto-updates
+- [x] Support multiple goals per player per match
 
 ### Phase 2d: Card Management 🔴 PENDING
 - [ ] Card list by match
@@ -267,28 +269,30 @@ After debugging and fixing auth:
 
 ---
 
-## 🚀 Next Recommended Task
+## 🚀 Next Phase: Phase 2d Card Management
 
-### Immediate Action
-Deploy Phase 2b hotfix to Vercel, then:
-1. Run migration SQL in Supabase
-2. Create admin user in Supabase Auth
-3. Insert admin_profiles record
-4. Test `/admin/login` and `/admin/dashboard`
+### Pre-Deployment for Phase 2c
+Before going live, must run migration in Supabase:
+```sql
+-- Run in Supabase SQL Editor:
+-- scripts/migration-remove-goals-unique.sql
+```
 
-### After Verification (Phase 2c - Goal Management)
-1. Create goals by match page
-2. Implement goal add/edit/delete forms
-3. Create player selector component
-4. Add POST/PUT/DELETE /api/admin/goals endpoints
-5. Test goal management
-6. Verify standings still calculate correctly
+### Completed Phases
+- Phase 2b: ✅ COMPLETE (Match Editing)
+- Phase 2c: ✅ COMPLETE (Goal Management)
 
 ### Timeline
-- Phase 2b: ✅ COMPLETE + Hotfixed
-- Phase 2c: 1-2 days (Goal management) ← NEXT
-- Phase 2d: 1-2 days (Card management)
+- Phase 2c: ✅ COMPLETE (7 files, 1282 LOC)
+- Phase 2d: 1-2 days (Card management) ← NEXT
 - Phase 2e: 1 day (Polish & testing)
+
+### After Phase 2c Deployed
+1. Run migration in Supabase
+2. Test /admin/goals page
+3. Add goal to match
+4. Verify /top-scorers auto-updates
+5. Start Phase 2d (Card Management)
 
 ---
 
