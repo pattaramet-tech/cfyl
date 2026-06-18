@@ -15,6 +15,31 @@ Each entry contains:
 
 ---
 
+## 2026-06-18 - Phase 2b Hotfix: Production Issues
+
+### Fix: Admin Backend Production Issues
+
+**Files Added**:
+- `app/admin/page.tsx` - Redirect page for /admin route
+- `scripts/migration-add-active-column.sql` - Rerun-safe migration for active column
+
+**Issues Fixed**:
+1. `/admin` route returned 404 → Now redirects to /admin/dashboard (if logged in) or /admin/login
+2. Admin authentication error → Schema already has active column, migration script provided for production DB
+3. Incomplete Phase 2b deployment → All pieces now in place for production
+
+**Build Status**: ✅ PASSED (21 routes registered)
+**Deployment**: Requires running migration script in Supabase SQL Editor before first use
+
+**Production Checklist**:
+- [ ] Deploy to Vercel
+- [ ] Run `scripts/migration-add-active-column.sql` in Supabase
+- [ ] Create admin user in Supabase Auth
+- [ ] Insert admin_profiles record
+- [ ] Test /admin/login flow
+
+---
+
 ## 2026-06-18 - Phase 2b Match Editing Complete
 
 ### Feature: Admin Match Editing

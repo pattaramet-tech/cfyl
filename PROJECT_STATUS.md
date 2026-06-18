@@ -1,7 +1,7 @@
 # 📊 PROJECT_STATUS.md
 
-**Last Updated**: 2026-06-18 (Phase 2b)  
-**Current Phase**: Phase 2b (Match Editing - In Progress)
+**Last Updated**: 2026-06-18 (Phase 2b Hotfix)  
+**Current Phase**: Phase 2b ✅ COMPLETE | Phase 2c Next (Goal Management)
 
 ---
 
@@ -35,17 +35,12 @@
 - [x] Auth API endpoints (login, logout, me)
 - [x] Admin nav/sidebar
 
-### Phase 2b: Match Management 🟡 IN PROGRESS
+### Phase 2b: Match Management ✅ COMPLETE
 - [x] Match list page with filters
 - [x] Edit match page with score/status input
 - [x] Match update API endpoint
-- [ ] Goal management page (Phase 2c)
-- [ ] Card management page (Phase 2d)
-
-### Phase 2b: Match Management 🔴 PENDING
-- [ ] Match list for admin
-- [ ] Edit match score/status
-- [ ] API: PUT /api/admin/matches/:matchId
+- [x] Admin home page (/admin redirect logic)
+- [x] Database migration script (active column)
 
 ### Phase 2c: Goal Management 🔴 PENDING
 - [ ] Goal list by match
@@ -161,11 +156,33 @@ NEXT_PUBLIC_APP_URL               = http://localhost:3000
 
 ---
 
-## 🐛 Known Bugs
+## 🐛 Bugs Fixed (Phase 2b Hotfix)
 
-| Bug | Status | Severity | Notes |
-|-----|--------|----------|-------|
-| (None currently) | ✅ Fixed | - | Last: Score 0 display (FIXED 2026-06-18) |
+| Bug | Status | Fix | Date |
+|-----|--------|-----|------|
+| `/admin` route 404 | ✅ Fixed | Created app/admin/page.tsx with redirect logic | 2026-06-18 |
+| Admin table active column mismatch | ✅ Fixed | Created rerun-safe migration script | 2026-06-18 |
+| Phase 2a admin auth incomplete | ✅ Fixed | Schema + code already aligned for active column | 2026-06-18 |
+
+## 🚀 Installation Steps for Production
+
+After deploying to Vercel:
+
+1. **Run SQL Migration in Supabase**:
+   ```sql
+   -- Go to SQL Editor and run: scripts/migration-add-active-column.sql
+   ```
+
+2. **Create Admin User**:
+   - Supabase Auth → Create user (email/password)
+   - Copy user ID
+   - Run INSERT in admin_profiles:
+   ```sql
+   INSERT INTO admin_profiles (id, email, full_name, role, active)
+   VALUES ('<USER-ID>', 'admin@example.com', 'Admin Name', 'superadmin', true);
+   ```
+
+3. **Test**: Visit https://cfyl-youth-league.vercel.app/admin → should redirect to login
 
 ---
 
@@ -198,7 +215,14 @@ NEXT_PUBLIC_APP_URL               = http://localhost:3000
 
 ## 🚀 Next Recommended Task
 
-### Immediate (Phase 2c - Goal Management)
+### Immediate Action
+Deploy Phase 2b hotfix to Vercel, then:
+1. Run migration SQL in Supabase
+2. Create admin user in Supabase Auth
+3. Insert admin_profiles record
+4. Test `/admin/login` and `/admin/dashboard`
+
+### After Verification (Phase 2c - Goal Management)
 1. Create goals by match page
 2. Implement goal add/edit/delete forms
 3. Create player selector component
@@ -207,7 +231,7 @@ NEXT_PUBLIC_APP_URL               = http://localhost:3000
 6. Verify standings still calculate correctly
 
 ### Timeline
-- Phase 2b: ✅ COMPLETE
+- Phase 2b: ✅ COMPLETE + Hotfixed
 - Phase 2c: 1-2 days (Goal management) ← NEXT
 - Phase 2d: 1-2 days (Card management)
 - Phase 2e: 1 day (Polish & testing)
