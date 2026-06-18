@@ -267,10 +267,12 @@ export default function GoalsPage() {
                     {match.home_team?.name} vs {match.away_team?.name}
                   </p>
                   <p className="text-sm text-gray-600 mt-1">
-                    {new Date(match.match_date).toLocaleDateString('th-TH')}
-                    {match.match_time && ` ${match.match_time}`}
+                    [{match.match_code}] | MD{match.matchday}
+                    {match.match_time && ` | ${match.match_time.substring(0, 5)}`}
                   </p>
-                  <p className="text-xs text-gray-500 mt-1">{match.matchday}</p>
+                  <p className="text-xs text-gray-500 mt-1">
+                    {new Date(match.match_date).toLocaleDateString('th-TH')}
+                  </p>
                 </button>
               ))}
             </div>

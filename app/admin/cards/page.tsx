@@ -22,7 +22,9 @@ interface Division {
 
 interface Match {
   id: string;
+  match_code?: string;
   matchday: number;
+  match_time?: string;
   home_team_id: string;
   away_team_id: string;
   home_team?: { name: string; short_name: string };
@@ -378,12 +380,18 @@ export default function CardsPage() {
             className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-600 disabled:bg-gray-100"
           >
             <option value="">Select match...</option>
-            {matches.map((m) => (
-              <option key={m.id} value={m.id}>
-                MD{m.matchday}: {m.home_team?.short_name || '?'} vs{' '}
-                {m.away_team?.short_name || '?'}
-              </option>
-            ))}
+            {matches.map((m) => {
+              const matchCode = m.match_code || m.id.substring(0, 8);
+              const matchTime = m.match_time || '';
+              const homeTeam = m.home_team?.name || m.home_team?.short_name || 'ไม่พบทีม';
+              const awayTeam = m.away_team?.name || m.away_team?.short_name || 'ไม่พบทีม';
+              const displayTime = matchTime ? matchTime.substring(0, 5) : '--:--';
+              return (
+                <option key={m.id} value={m.id}>
+                  [{matchCode}] | MD{m.matchday} | {displayTime} | {homeTeam} vs {awayTeam}
+                </option>
+              );
+            })}
           </select>
         </div>
       </div>
