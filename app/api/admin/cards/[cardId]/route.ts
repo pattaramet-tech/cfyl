@@ -18,12 +18,19 @@ export async function PUT(
   request: NextRequest,
   { params }: { params: Promise<{ cardId: string }> }
 ) {
+  const timerTotal = `[CARDS_PUT] Total request time`;
+  console.time(timerTotal);
+
   try {
     const { cardId } = await params;
     console.log('[CARDS_PUT] Request for card:', cardId);
 
     // Verify admin is authenticated
+    const timerAuth = `[CARDS_PUT] Auth check`;
+    console.time(timerAuth);
     const authResult = await verifyAdminAuth(request);
+    console.timeEnd(timerAuth);
+
     if (!authResult.authenticated) {
       console.warn('[CARDS_PUT] Auth failed:', authResult.error);
       return NextResponse.json(
@@ -129,9 +136,9 @@ export async function PUT(
       newTeamId = newPlayer.team_id;
     }
 
-    console.log('[CARDS_PUT] Updating card');
-
     // Update card
+    const timerUpdate = `[CARDS_PUT] Card update`;
+    console.time(timerUpdate);
     const { data: updatedCard, error: updateError } = await supabaseAdmin
       .from('cards')
       .update({
@@ -144,6 +151,7 @@ export async function PUT(
       .eq('id', cardId)
       .select()
       .single();
+    console.timeEnd(timerUpdate);
 
     if (updateError) {
       console.error('[CARDS_PUT] Update error:', updateError);
@@ -153,9 +161,9 @@ export async function PUT(
       );
     }
 
-    console.log('[CARDS_PUT] Card updated:', cardId);
-
     // Recalculate suspensions
+    const timerSuspension = `[CARDS_PUT] Suspension recalculation`;
+    console.time(timerSuspension);
     try {
       const match = await getMatchDetails(existingCard.match_id);
 
@@ -214,9 +222,12 @@ export async function PUT(
     } catch (calcError) {
       console.error('[CARDS_PUT] Suspension calculation error:', calcError);
     }
+    console.timeEnd(timerSuspension);
 
+    console.timeEnd(timerTotal);
     return NextResponse.json(updatedCard, { status: 200 });
   } catch (error) {
+    console.timeEnd(timerTotal);
     const errorMsg = error instanceof Error ? error.message : String(error);
     console.error('[CARDS_PUT] Error:', errorMsg);
     return NextResponse.json(

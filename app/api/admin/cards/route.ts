@@ -79,11 +79,18 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
+  const timerTotal = `[CARDS_POST] Total request time`;
+  console.time(timerTotal);
+
   try {
     console.log('[CARDS_POST] Request received');
 
     // Verify admin is authenticated
+    const timerAuth = `[CARDS_POST] Auth check`;
+    console.time(timerAuth);
     const authResult = await verifyAdminAuth(request);
+    console.timeEnd(timerAuth);
+
     if (!authResult.authenticated) {
       console.warn('[CARDS_POST] Auth failed:', authResult.error);
       return NextResponse.json(
@@ -126,14 +133,15 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    console.log('[CARDS_POST] Validating match exists:', matchId);
-
     // Verify match exists
+    const timerMatch = `[CARDS_POST] Match validation`;
+    console.time(timerMatch);
     const { data: match, error: matchError } = await supabaseAdmin
       .from('matches')
       .select('id, season_id, age_group_id, home_team_id, away_team_id')
       .eq('id', matchId)
       .single();
+    console.timeEnd(timerMatch);
 
     if (matchError || !match) {
       return NextResponse.json(
@@ -142,14 +150,15 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    console.log('[CARDS_POST] Validating player exists:', playerId);
-
     // Verify player exists
+    const timerPlayer = `[CARDS_POST] Player validation`;
+    console.time(timerPlayer);
     const { data: player, error: playerError } = await supabaseAdmin
       .from('players')
       .select('id, team_id')
       .eq('id', playerId)
       .single();
+    console.timeEnd(timerPlayer);
 
     if (playerError || !player) {
       return NextResponse.json(
@@ -170,9 +179,9 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    console.log('[CARDS_POST] Creating card');
-
     // Create card
+    const timerInsert = `[CARDS_POST] Card insert`;
+    console.time(timerInsert);
     const { data: card, error: createError } = await supabaseAdmin
       .from('cards')
       .insert({
@@ -185,6 +194,7 @@ export async function POST(request: NextRequest) {
       })
       .select()
       .single();
+    console.timeEnd(timerInsert);
 
     if (createError) {
       console.error('[CARDS_POST] Insert error:', createError);
@@ -194,10 +204,9 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    console.log('[CARDS_POST] Card created:', card.id);
-
     // Recalculate suspension for this player
-    console.log('[CARDS_POST] Recalculating suspension for player:', playerId);
+    const timerSuspension = `[CARDS_POST] Suspension recalculation`;
+    console.time(timerSuspension);
     try {
       await recalculatePlayerSuspension(
         playerId,
@@ -205,13 +214,17 @@ export async function POST(request: NextRequest) {
         match.age_group_id,
         playerTeamId
       );
+      console.timeEnd(timerSuspension);
     } catch (calcError) {
+      console.timeEnd(timerSuspension);
       console.error('[CARDS_POST] Suspension calculation error:', calcError);
       // Don't fail the request if suspension calc fails
     }
 
+    console.timeEnd(timerTotal);
     return NextResponse.json(card, { status: 201 });
   } catch (error) {
+    console.timeEnd(timerTotal);
     const errorMsg = error instanceof Error ? error.message : String(error);
     console.error('[CARDS_POST] Error:', errorMsg);
     return NextResponse.json(

@@ -109,6 +109,7 @@ export async function getMatchCards(
 /**
  * Get all matches cards for a player in a season/age_group
  * Used for accumulating total points
+ * OPTIMIZED: Single query for all cards instead of N+1 queries
  */
 export async function getSeasonCards(
   playerId: string,
@@ -123,71 +124,102 @@ export async function getSeasonCards(
     reason: string;
   }>
 > {
-  // Get all matches for this season and age_group
-  const { data: matches, error: matchError } = await supabaseAdmin
-    .from('matches')
-    .select('id, matchday')
-    .eq('season_id', seasonId)
-    .eq('age_group_id', ageGroupId)
-    .order('matchday', { ascending: true });
+  const timer = `[SUSPENSION_CALC] getSeasonCards for ${playerId}`;
+  console.time(timer);
 
-  if (matchError) {
-    console.error('[SUSPENSION_CALC] Error fetching matches:', matchError);
-    throw matchError;
-  }
-
-  const result = [];
-
-  // For each match, get cards for this player
-  for (const match of matches || []) {
-    const { data: cards, error: cardError } = await supabaseAdmin
+  try {
+    // Get all cards for this player in season+age_group (single query)
+    // Join with matches to get matchday
+    const { data: allCards, error } = await supabaseAdmin
       .from('cards')
-      .select('card_type')
-      .eq('match_id', match.id)
-      .eq('player_id', playerId);
+      .select(
+        `
+        match_id,
+        card_type,
+        match:match_id(matchday)
+      `
+      )
+      .eq('player_id', playerId)
+      .in(
+        'match_id',
+        // Subquery: get all match IDs for this season+age_group
+        (
+          await supabaseAdmin
+            .from('matches')
+            .select('id')
+            .eq('season_id', seasonId)
+            .eq('age_group_id', ageGroupId)
+        ).data?.map((m) => m.id) || []
+      );
 
-    if (cardError) {
-      console.error('[SUSPENSION_CALC] Error fetching cards:', cardError);
-      continue;
+    if (error) {
+      console.error('[SUSPENSION_CALC] Error fetching cards:', error);
+      throw error;
     }
 
-    if (!cards || cards.length === 0) continue;
+    // Group cards by match_id
+    const matchCardMap: Record<
+      string,
+      {
+        cards: Array<{ card_type: string }>;
+        matchday: number;
+      }
+    > = {};
 
-    const count = {
-      yellow: 0,
-      red: 0,
-      second_yellow: 0,
-    };
-
-    cards.forEach((card) => {
-      if (card.card_type === 'yellow') count.yellow++;
-      if (card.card_type === 'red') count.red++;
-      if (card.card_type === 'second_yellow') count.second_yellow++;
+    (allCards || []).forEach((card: any) => {
+      const matchId = card.match_id;
+      if (!matchCardMap[matchId]) {
+        matchCardMap[matchId] = {
+          cards: [],
+          matchday: card.match?.matchday || 0,
+        };
+      }
+      matchCardMap[matchId].cards.push(card);
     });
 
-    const points = calculateMatchPoints(count);
-    if (points > 0) {
-      const totalYellows = count.yellow + count.second_yellow;
-      const reason =
-        count.red > 0
-          ? totalYellows > 0
-            ? `${totalYellows}Y + ${count.red}R`
-            : `${count.red}R`
-          : totalYellows >= 2
-            ? `${totalYellows}Y`
-            : '1Y';
+    // Calculate points per match
+    const result = [];
+    for (const [matchId, matchData] of Object.entries(matchCardMap)) {
+      const count = {
+        yellow: 0,
+        red: 0,
+        second_yellow: 0,
+      };
 
-      result.push({
-        match_id: match.id,
-        matchday: match.matchday,
-        points,
-        cards: count,
-        reason,
+      matchData.cards.forEach((card: any) => {
+        if (card.card_type === 'yellow') count.yellow++;
+        if (card.card_type === 'red') count.red++;
+        if (card.card_type === 'second_yellow') count.second_yellow++;
       });
-    }
-  }
 
-  return result;
+      const points = calculateMatchPoints(count);
+      if (points > 0) {
+        const totalYellows = count.yellow + count.second_yellow;
+        const reason =
+          count.red > 0
+            ? totalYellows > 0
+              ? `${totalYellows}Y + ${count.red}R`
+              : `${count.red}R`
+            : totalYellows >= 2
+              ? `${totalYellows}Y`
+              : '1Y';
+
+        result.push({
+          match_id: matchId,
+          matchday: matchData.matchday,
+          points,
+          cards: count,
+          reason,
+        });
+      }
+    }
+
+    console.timeEnd(timer);
+    return result;
+  } catch (error) {
+    console.timeEnd(timer);
+    throw error;
+  }
 }
 
 /**
@@ -228,6 +260,9 @@ export async function recalculatePlayerSuspension(
   ageGroupId: string,
   teamId: string
 ): Promise<any> {
+  const timerTotal = `[SUSPENSION_CALC] recalculatePlayerSuspension`;
+  console.time(timerTotal);
+
   try {
     console.log(
       `[SUSPENSION_CALC] Recalculating for player ${playerId}, season ${seasonId}, age_group ${ageGroupId}, team ${teamId}`
@@ -247,12 +282,15 @@ export async function recalculatePlayerSuspension(
     if (banMatches > 0 && seasonCards.length > 0) {
       // Get the last card's match to find next match from there
       const lastCard = seasonCards[seasonCards.length - 1];
+      const timerNextMatch = `[SUSPENSION_CALC] findNextMatch`;
+      console.time(timerNextMatch);
       suspendedFromMatchId = await findNextMatchForSuspension(
         teamId,
         seasonId,
         ageGroupId,
         lastCard.matchday
       );
+      console.timeEnd(timerNextMatch);
     }
 
     // Build point sources
@@ -299,8 +337,10 @@ export async function recalculatePlayerSuspension(
       `[SUSPENSION_CALC] Updated suspension: ${suspension.id}, points: ${totalPoints}, ban: ${banMatches} matches`
     );
 
+    console.timeEnd(timerTotal);
     return suspension;
   } catch (error) {
+    console.timeEnd(timerTotal);
     console.error('[SUSPENSION_CALC] Error in recalculation:', error);
     throw error;
   }

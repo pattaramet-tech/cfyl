@@ -41,11 +41,11 @@ export default function RootLayout({
                 <p className="text-blue-100 text-sm">Chonburi Futsal Youth League</p>
               </div>
               <div className="flex gap-4">
-                <a href="/" className="hover:text-blue-200 transition">Home</a>
-                <a href="/fixtures" className="hover:text-blue-200 transition">Fixtures</a>
-                <a href="/standings" className="hover:text-blue-200 transition">Standings</a>
-                <a href="/top-scorers" className="hover:text-blue-200 transition">Top Scorers</a>
-                <a href="/discipline" className="hover:text-blue-200 transition">Discipline</a>
+                <a href="/" className="hover:text-blue-200 transition">หน้าหลัก</a>
+                <a href="/fixtures" className="hover:text-blue-200 transition">โปรแกรมแข่งขัน</a>
+                <a href="/standings" className="hover:text-blue-200 transition">ตารางคะแนน</a>
+                <a href="/top-scorers" className="hover:text-blue-200 transition">ดาวซัลโว</a>
+                <a href="/discipline" className="hover:text-blue-200 transition">ระเบียบวินัย</a>
               </div>
             </div>
           </nav>
