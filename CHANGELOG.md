@@ -15,6 +15,30 @@ Each entry contains:
 
 ---
 
+## 2026-06-18 - Phase 2b: Fixed Edit Match Route
+
+### Fix: Edit Match Page Returns 404
+
+**Problem**: Clicking "Edit" on match list showed 404 error
+
+**Root Cause**: Dynamic route folder was named incorrectly
+- Was: `app/admin/matches/[matchId/]/page.tsx` (extra slash)
+- Should: `app/admin/matches/[matchId]/page.tsx` (no slash)
+
+**Solution**: Renamed folder from `[matchId/]` to `[matchId]`
+
+**Result**:
+- ✅ Edit Match page now accessible
+- ✅ Route `/admin/matches/{matchId}` works
+- ✅ Can edit match scores and status
+- ✅ Can save changes to database
+- ✅ Public standings update when match edited
+
+**Build Status**: ✅ PASSED (21 routes + `/admin/matches/[matchId]` fixed)
+**Commit**: 828b427
+
+---
+
 ## 2026-06-18 - Admin Auth: Fixed RLS Policy Recursion
 
 ### Fix: Infinite Recursion in admin_profiles RLS Policy

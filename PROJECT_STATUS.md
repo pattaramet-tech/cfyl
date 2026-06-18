@@ -1,7 +1,7 @@
 # 📊 PROJECT_STATUS.md
 
-**Last Updated**: 2026-06-18 (RLS Policy Fix)  
-**Current Phase**: Phase 2b ✅ COMPLETE | 🔧 RLS Recursion Fixed | ⏳ Production Testing | Phase 2c Blocked
+**Last Updated**: 2026-06-18 (Phase 2b Route Fix)  
+**Current Phase**: Phase 2b ✅ COMPLETE | 🔧 Edit Match Route Fixed | ⏳ Ready for Phase 2c
 
 ---
 
@@ -36,11 +36,14 @@
 - [x] Admin nav/sidebar
 
 ### Phase 2b: Match Management ✅ COMPLETE
-- [x] Match list page with filters
-- [x] Edit match page with score/status input
-- [x] Match update API endpoint
+- [x] Match list page with filters (/admin/matches)
+- [x] Edit match page with score/status input (/admin/matches/[matchId])
+- [x] Match update API endpoint (/api/admin/matches/[matchId])
 - [x] Admin home page (/admin redirect logic)
 - [x] Database migration script (active column)
+- [x] Route folder naming fixed ([matchId] not [matchId/])
+- [x] RLS policy recursion fixed
+- [x] Admin login working on production
 
 ### Phase 2c: Goal Management 🔴 PENDING
 - [ ] Goal list by match
