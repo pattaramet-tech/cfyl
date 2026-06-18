@@ -1,42 +1,46 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { verifyAdminAuth } from '@/lib/admin-middleware';
 import { createClient } from '@supabase/supabase-js';
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-if (!supabaseUrl || !supabaseAnonKey) {
+if (!supabaseUrl || !supabaseServiceKey) {
   throw new Error('Missing Supabase environment variables');
 }
 
-const supabaseAnon = createClient(supabaseUrl, supabaseAnonKey);
+const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey);
 
 export const dynamic = 'force-dynamic';
 
 export async function GET(request: NextRequest) {
   try {
-    console.log('[SUSPENSIONS_GET] Request received');
+    console.log('[ADMIN_SUSPENSIONS_GET] Request received');
 
-    // Get query params
+    // Require admin auth
+    const authResult = await verifyAdminAuth(request);
+    if (!authResult.authenticated) {
+      console.warn('[ADMIN_SUSPENSIONS_GET] Auth failed:', authResult.error);
+      return NextResponse.json(
+        { error: authResult.error || 'Unauthorized' },
+        { status: 401 }
+      );
+    }
+
     const { searchParams } = new URL(request.url);
     const seasonId = searchParams.get('seasonId');
     const ageGroupId = searchParams.get('ageGroupId');
 
     if (!seasonId || !ageGroupId) {
       return NextResponse.json(
-        { error: 'seasonId and ageGroupId parameters required' },
+        { error: 'seasonId and ageGroupId are required' },
         { status: 400 }
       );
     }
 
-    console.log(
-      '[SUSPENSIONS_GET] Fetching suspensions for season:',
-      seasonId,
-      'age_group:',
-      ageGroupId
-    );
+    console.log('[ADMIN_SUSPENSIONS_GET] Fetching for season:', seasonId, 'age_group:', ageGroupId);
 
-    // Get suspensions with relations
-    const { data: suspensions, error } = await supabaseAnon
+    const { data: suspensions, error } = await supabaseAdmin
       .from('suspensions')
       .select(`
         id,
@@ -45,13 +49,13 @@ export async function GET(request: NextRequest) {
         player_id,
         team_id,
         total_points,
-        point_sources,
         ban_matches,
         suspended_from_match_id,
         suspension_reason,
         suspension_details,
-        created_at,
-        player:player_id(id, full_name, shirt_no),
+        point_sources,
+        updated_at,
+        player:player_id(id, full_name, shirt_no, player_code),
         team:team_id(id, name, short_name)
       `)
       .eq('season_id', seasonId)
@@ -59,21 +63,20 @@ export async function GET(request: NextRequest) {
       .order('total_points', { ascending: false });
 
     if (error) {
-      console.error('[SUSPENSIONS_GET] Query error:', error);
+      console.error('[ADMIN_SUSPENSIONS_GET] Query error:', error);
       return NextResponse.json(
         { error: `Failed to fetch suspensions: ${error.message}` },
         { status: 500 }
       );
     }
 
-    console.log('[SUSPENSIONS_GET] Fetched', suspensions?.length || 0, 'suspensions');
-
+    console.log('[ADMIN_SUSPENSIONS_GET] Fetched', suspensions?.length || 0, 'records');
     return NextResponse.json(suspensions || [], { status: 200 });
   } catch (error) {
-    const errorMsg = error instanceof Error ? error.message : String(error);
-    console.error('[SUSPENSIONS_GET] Error:', errorMsg);
+    const msg = error instanceof Error ? error.message : String(error);
+    console.error('[ADMIN_SUSPENSIONS_GET] Error:', msg);
     return NextResponse.json(
-      { error: `Failed to fetch suspensions: ${errorMsg}` },
+      { error: `Failed to fetch suspensions: ${msg}` },
       { status: 500 }
     );
   }

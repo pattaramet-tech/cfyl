@@ -21,6 +21,7 @@ interface Suspension {
   ban_matches: number;
   point_sources: PointSource[];
   suspension_reason: string | null;
+  suspension_details?: any | null;
 }
 
 export default function DisciplinePage() {
@@ -69,7 +70,7 @@ export default function DisciplinePage() {
       );
       const data = await res.json();
 
-      // Map suspension records to include team name (format for display)
+      // Map suspension records to include team name and rich details
       const mapped = data.map((s: any) => ({
         player_id: s.player_id,
         full_name: s.player?.full_name || 'Unknown',
@@ -79,6 +80,7 @@ export default function DisciplinePage() {
         ban_matches: s.ban_matches,
         point_sources: s.point_sources || [],
         suspension_reason: s.suspension_reason,
+        suspension_details: s.suspension_details || null,
       }));
 
       setSuspensions(mapped);

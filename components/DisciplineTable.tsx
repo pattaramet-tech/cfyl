@@ -1,8 +1,4 @@
-interface PointSource {
-  match_id: string;
-  points: number;
-  reason: string;
-}
+import type { SuspensionDetails, SuspendedMatchDetail } from '@/lib/suspension-calc';
 
 interface Suspension {
   player_id: string;
@@ -11,12 +7,32 @@ interface Suspension {
   shirt_no?: number;
   total_points: number;
   ban_matches: number;
-  point_sources: PointSource[];
   suspension_reason: string | null;
+  suspension_details?: SuspensionDetails | null;
 }
 
 interface DisciplineTableProps {
   records: Suspension[];
+}
+
+function getStatus(record: Suspension): { label: string; color: string; emoji: string } {
+  const { total_points, ban_matches, suspension_details } = record;
+  if (total_points === 0) return { label: 'ปกติ', color: 'bg-green-100 text-green-800', emoji: '🟢' };
+  if (ban_matches === 0) return { label: 'สะสมคะแนน / เฝ้าระวัง', color: 'bg-yellow-100 text-yellow-800', emoji: '🟡' };
+  const hasNextMatch = (suspension_details?.suspended_matches?.length ?? 0) > 0;
+  if (!hasNextMatch) return { label: 'ไม่พบโปรแกรมแข่งขันนัดถัดไป', color: 'bg-gray-100 text-gray-600', emoji: '⚪' };
+  return { label: 'ติดโทษแบน', color: 'bg-red-100 text-red-800', emoji: '🔴' };
+}
+
+function NextMatchBadge({ match, is_home }: { match: SuspendedMatchDetail; is_home: boolean }) {
+  return (
+    <span className="inline-flex items-center gap-1 text-xs">
+      <span className="font-bold text-red-700">MD{match.matchday}</span>
+      <span className="text-gray-500">vs</span>
+      <span className="font-semibold text-gray-700">{match.opponent_name}</span>
+      <span className="text-gray-400">({is_home ? 'เหย้า' : 'เยือน'})</span>
+    </span>
+  );
 }
 
 export function DisciplineTable({ records }: DisciplineTableProps) {
@@ -29,97 +45,91 @@ export function DisciplineTable({ records }: DisciplineTableProps) {
   }
 
   return (
-    <div className="overflow-x-auto space-y-6">
+    <div className="overflow-x-auto space-y-4">
       {/* Legend */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
         <div className="flex items-center gap-2">
-          <span className="inline-block w-4 h-4 bg-green-200 rounded"></span>
-          <span>0-5 คะแนน</span>
+          <span className="inline-block w-3 h-3 bg-green-400 rounded-full"></span>
+          <span>0 คะแนน — ปกติ</span>
         </div>
         <div className="flex items-center gap-2">
-          <span className="inline-block w-4 h-4 bg-yellow-200 rounded"></span>
-          <span>6-11 คะแนน (แบน 1 นัด)</span>
+          <span className="inline-block w-3 h-3 bg-yellow-400 rounded-full"></span>
+          <span>2-4 คะแนน — เฝ้าระวัง</span>
         </div>
         <div className="flex items-center gap-2">
-          <span className="inline-block w-4 h-4 bg-orange-300 rounded"></span>
-          <span>12+ คะแนน (แบน 2 นัด)</span>
+          <span className="inline-block w-3 h-3 bg-red-500 rounded-full"></span>
+          <span>6+ คะแนน — ติดโทษแบน</span>
         </div>
         <div className="flex items-center gap-2">
-          <span className="inline-block w-4 h-4 bg-red-500 rounded"></span>
-          <span>ไม่พบแมตช์ถัดไป</span>
+          <span className="inline-block w-3 h-3 bg-gray-300 rounded-full"></span>
+          <span>ไม่พบโปรแกรมแข่งขันนัดถัดไป</span>
         </div>
       </div>
 
       {/* Table */}
       <table className="w-full text-sm border-collapse">
         <thead>
-          <tr className="bg-red-600 text-white">
-            <th className="px-4 py-3 text-left font-semibold">ชื่อนักกีฬา</th>
-            <th className="px-4 py-3 text-left font-semibold">ทีม</th>
-            <th className="px-4 py-3 text-center font-semibold w-16">เบอร์</th>
-            <th className="px-4 py-3 text-center font-semibold">คะแนนโทษ</th>
-            <th className="px-4 py-3 text-center font-semibold">แบน (นัด)</th>
-            <th className="px-4 py-3 text-left font-semibold">สถานะ</th>
+          <tr className="bg-red-700 text-white text-xs">
+            <th className="px-3 py-3 text-left font-semibold">ชื่อนักกีฬา</th>
+            <th className="px-3 py-3 text-left font-semibold">ทีม</th>
+            <th className="px-3 py-3 text-center font-semibold w-12">เบอร์</th>
+            <th className="px-3 py-3 text-center font-semibold">คะแนน</th>
+            <th className="px-3 py-3 text-center font-semibold">แบน</th>
+            <th className="px-3 py-3 text-left font-semibold">นัดที่ถูกแบน</th>
+            <th className="px-3 py-3 text-center font-semibold">สถานะ</th>
           </tr>
         </thead>
         <tbody>
           {records.map((record, index) => {
-            let bgColor = 'bg-white';
-            if (record.ban_matches === 0) {
-              bgColor = 'bg-green-50';
-            } else if (record.ban_matches === 1) {
-              bgColor = 'bg-yellow-50';
-            } else if (record.total_points >= 12) {
-              bgColor = 'bg-orange-50';
-            }
+            const status = getStatus(record);
+            const suspendedMatches = record.suspension_details?.suspended_matches || [];
 
-            const statusBgColor =
-              record.total_points >= 24
-                ? 'bg-red-500'
-                : record.total_points >= 12
-                  ? 'bg-orange-400'
-                  : record.total_points >= 6
-                    ? 'bg-yellow-400'
-                    : 'bg-green-400';
+            const pointColor =
+              record.total_points >= 12 ? 'bg-red-600' :
+              record.total_points >= 6  ? 'bg-orange-500' :
+              record.total_points > 0   ? 'bg-yellow-500' : 'bg-gray-300';
 
             return (
               <tr
                 key={record.player_id}
-                className={`border-b border-gray-200 ${
-                  index % 2 === 0 ? bgColor : 'bg-gray-50'
-                } hover:bg-gray-100 transition`}
+                className={`border-b border-gray-200 transition hover:bg-gray-50 ${
+                  index % 2 === 0 ? 'bg-white' : 'bg-gray-50/50'
+                }`}
               >
-                <td className="px-4 py-3 font-semibold text-gray-800">
-                  {record.full_name}
-                </td>
-                <td className="px-4 py-3 text-gray-700">{record.team_name}</td>
-                <td className="px-4 py-3 text-center text-gray-600">
-                  {record.shirt_no || '-'}
-                </td>
-                <td className="px-4 py-3 text-center">
-                  <span
-                    className={`inline-block ${statusBgColor} text-white rounded-full px-3 py-1 font-bold text-sm`}
-                  >
+                <td className="px-3 py-3 font-semibold text-gray-800">{record.full_name}</td>
+                <td className="px-3 py-3 text-gray-600 text-xs">{record.team_name}</td>
+                <td className="px-3 py-3 text-center text-gray-500">{record.shirt_no || '—'}</td>
+                <td className="px-3 py-3 text-center">
+                  <span className={`inline-block ${pointColor} text-white rounded-full px-2.5 py-0.5 font-bold text-xs`}>
                     {record.total_points} pts
                   </span>
                 </td>
-                <td className="px-4 py-3 text-center">
+                <td className="px-3 py-3 text-center">
                   {record.ban_matches > 0 ? (
-                    <span className="inline-block bg-red-600 text-white rounded-full px-3 py-1 font-semibold text-xs">
+                    <span className="inline-block bg-red-600 text-white rounded-full px-2.5 py-0.5 font-semibold text-xs">
                       {record.ban_matches} นัด
                     </span>
                   ) : (
-                    <span className="text-gray-400">-</span>
+                    <span className="text-gray-300">—</span>
                   )}
                 </td>
-                <td className="px-4 py-3 text-sm">
-                  {record.suspension_reason ? (
-                    <span className="text-gray-700">
-                      {record.suspension_reason}
-                    </span>
+                <td className="px-3 py-3">
+                  {suspendedMatches.length > 0 ? (
+                    <div className="space-y-0.5">
+                      {suspendedMatches.map((m) => (
+                        <NextMatchBadge key={m.match_id} match={m} is_home={m.is_home} />
+                      ))}
+                    </div>
+                  ) : record.ban_matches > 0 ? (
+                    <span className="text-xs text-gray-400 italic">ไม่พบโปรแกรมแข่งขันนัดถัดไป</span>
                   ) : (
-                    <span className="text-gray-400">ปกติ</span>
+                    <span className="text-gray-300">—</span>
                   )}
+                </td>
+                <td className="px-3 py-3 text-center">
+                  <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-semibold ${status.color}`}>
+                    {status.emoji} {status.label}
+                  </span>
                 </td>
               </tr>
             );
