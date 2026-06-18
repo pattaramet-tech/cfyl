@@ -1,7 +1,7 @@
 # 📊 PROJECT_STATUS.md
 
-**Last Updated**: 2026-06-18 (Phase 2c Complete)  
-**Current Phase**: Phase 2b ✅ COMPLETE | Phase 2c ✅ COMPLETE | Phase 2d NEXT
+**Last Updated**: 2026-06-18 (Phase 2d Complete)  
+**Current Phase**: Phase 2b ✅ COMPLETE | Phase 2c ✅ COMPLETE | Phase 2d ✅ COMPLETE | Phase 2e NEXT
 
 ---
 
@@ -59,11 +59,22 @@
 - [x] Support multiple goals per player per match
 - [x] Bug fix: Added missing /api/admin/players endpoint
 
-### Phase 2d: Card Management 🔴 PENDING
-- [ ] Card list by match
-- [ ] Add/edit/delete cards
-- [ ] Card type selector
-- [ ] API: POST/PUT/DELETE /api/admin/cards
+### Phase 2d: Card Management ✅ COMPLETE
+- [x] Card list by match page (/admin/cards)
+- [x] Add/edit/delete cards UI
+- [x] Card type selector (yellow, red, second_yellow)
+- [x] API: GET /api/admin/cards (fetch cards for match)
+- [x] API: POST /api/admin/cards (add card with team_id)
+- [x] API: PUT /api/admin/cards/[cardId] (edit card + player change)
+- [x] API: DELETE /api/admin/cards/[cardId] (delete card)
+- [x] CFYL Custom Suspension System
+  - [x] Suspension calculation library (lib/suspension-calc.ts)
+  - [x] Card point scoring: Y=2, YY=4, R=6, Y+R=8
+  - [x] Auto-calculate suspension thresholds (6=1ban, 12+=2bans)
+  - [x] Auto-find next match for suspension
+  - [x] Suspensions table with RLS policies
+- [x] Public API: GET /api/public/suspensions
+- [x] Updated /discipline page to show CFYL suspension points
 
 ### Phase 3: Advanced Features 🔴 NOT STARTED
 - [ ] Suspension management
@@ -91,7 +102,7 @@
 | matches | 224 | ✅ | 2026-06-18 |
 | goals | 89 | ✅ | 2026-06-18 |
 | cards | 38 | ✅ | 2026-06-18 |
-| suspensions | 0 | ⚪ Empty | 2026-06-18 |
+| suspensions | Auto | ✅ | 2026-06-18 (after migration) |
 | admin_profiles | 0 | ⚪ Pending | Setup needed |
 
 ---
@@ -107,6 +118,7 @@ GET    /api/public/matches              → Matches (with filters)
 GET    /api/public/standings            → Calculated standings
 GET    /api/public/top-scorers          → Top scorers list
 GET    /api/public/discipline           → Cards & discipline info
+GET    /api/public/suspensions          → Player suspensions (Phase 2d)
 ```
 
 ### Admin API (Auth required)
@@ -119,6 +131,7 @@ PUT    /api/admin/matches/:matchId      → Update score/status (Phase 2b)
 POST   /api/admin/goals                 → Add goal (Phase 2c)
 PUT    /api/admin/goals/:goalId         → Edit goal (Phase 2c)
 DELETE /api/admin/goals/:goalId         → Delete goal (Phase 2c)
+GET    /api/admin/cards                 → List cards by match (Phase 2d)
 POST   /api/admin/cards                 → Add card (Phase 2d)
 PUT    /api/admin/cards/:cardId         → Edit card (Phase 2d)
 DELETE /api/admin/cards/:cardId         → Delete card (Phase 2d)
@@ -143,6 +156,8 @@ DELETE /api/admin/cards/:cardId         → Delete card (Phase 2d)
 /admin/dashboard       → Stats & quick actions
 /admin/matches         → Match management (Phase 2b)
 /admin/matches/:id     → Edit specific match (Phase 2b)
+/admin/goals           → Goal management (Phase 2c)
+/admin/cards           → Card management (Phase 2d)
 /admin/teams           → Team management (Phase 3)
 /admin/settings        → Admin settings (Phase 3)
 ```
@@ -271,30 +286,31 @@ After debugging and fixing auth:
 
 ---
 
-## 🚀 Next Phase: Phase 2d Card Management
+## 🚀 Next Phase: Phase 2e Polish & Testing
 
-### Pre-Deployment for Phase 2c
-Before going live, must run migration in Supabase:
-```sql
--- Run in Supabase SQL Editor:
--- scripts/migration-remove-goals-unique.sql
-```
+### Pre-Deployment for Phase 2d
+Must run TWO migrations in Supabase (in order):
+1. `scripts/migration-remove-goals-unique.sql` (Phase 2c)
+2. `scripts/migration-add-suspensions-table.sql` (Phase 2d)
 
 ### Completed Phases
 - Phase 2b: ✅ COMPLETE (Match Editing)
 - Phase 2c: ✅ COMPLETE (Goal Management)
+- Phase 2d: ✅ COMPLETE (Card Management with CFYL Suspensions)
 
 ### Timeline
-- Phase 2c: ✅ COMPLETE (7 files, 1282 LOC)
-- Phase 2d: 1-2 days (Card management) ← NEXT
-- Phase 2e: 1 day (Polish & testing)
+- Phase 2b: ✅ COMPLETE
+- Phase 2c: ✅ COMPLETE
+- Phase 2d: ✅ COMPLETE (14 files, 1905 LOC + fixes)
+- Phase 2e: ~1 day (Polish & testing) ← NEXT
 
-### After Phase 2c Deployed
-1. Run migration in Supabase
-2. Test /admin/goals page
-3. Add goal to match
-4. Verify /top-scorers auto-updates
-5. Start Phase 2d (Card Management)
+### After Phase 2d Deployed
+1. Run both migrations in Supabase
+2. Test /admin/cards page (add/edit/delete cards)
+3. Verify /discipline shows CFYL suspension points
+4. Add card for same player in same match, verify point calculation
+5. Check auto-suspension works (6pts = 1 ban, 12+pts = 2 bans)
+6. Start Phase 2e (Polish & testing)
 
 ---
 

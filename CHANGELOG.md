@@ -48,6 +48,129 @@ GET /api/admin/players?teamIds=team1,team2
 - ✅ Proper API design
 
 **Build Status**: ✅ PASSED (24 routes, +1 API)
+
+---
+
+## 2026-06-18 - Phase 2d Card Management: Initial Implementation
+
+### Feature: Complete Card Management System with CFYL Custom Suspension Logic
+
+**Overview**: Added full card (yellow/red) management with auto-calculated player suspensions based on CFYL's custom point-scoring system.
+
+**Files Added**:
+- `scripts/migration-add-suspensions-table.sql` - Suspensions table schema with RLS
+- `lib/suspension-calc.ts` - Card point calculation & suspension auto-logic
+- `app/api/admin/cards/route.ts` - Card CRUD API (GET/POST)
+- `app/api/admin/cards/[cardId]/route.ts` - Card update/delete (PUT/DELETE)
+- `app/api/public/suspensions/route.ts` - Public suspensions endpoint
+- `app/admin/cards/page.tsx` - Card management UI with selectors
+- `app/admin/cards/layout.tsx` - Dynamic routing config
+- `components/CardForm.tsx` - Add/edit card form
+- `components/CardsList.tsx` - Cards table with edit/delete actions
+- `components/CardTypeSelect.tsx` - Yellow/Red/Second Yellow selector
+
+**Files Modified**:
+- `components/AdminNav.tsx` - Added "🟨 Cards" navigation link
+- `components/DisciplineTable.tsx` - Show CFYL suspension points & status
+- `app/discipline/page.tsx` - Fetch suspensions instead of old discipline data
+
+**CFYL Suspension System**:
+```
+Card Types:
+├── yellow (🟡)
+├── red (🔴)
+└── second_yellow (🟨🟨)
+
+Point Calculation (per match):
+├── 1 Yellow = 2 pts
+├── 2 Yellows (or 1 second_yellow) = 4 pts
+├── 1 Red = 6 pts
+└── 1 Yellow + 1 Red = 8 pts
+
+Suspension Thresholds (cumulative per season per age_group per team):
+├── 6 points = 1 match ban
+├── 12-23 points = 2 matches ban
+└── 24+ points = 2 matches ban
+
+Auto-Logic:
+├── Groups cards by match before calculating
+├── Finds next match for player's team
+├── Shows "Match #X" or "No upcoming matches" status
+└── Recalculates on every card add/edit/delete
+```
+
+**APIs**:
+```
+GET  /api/admin/cards?matchId={id}
+├── Auth: JWT + can_edit_cards
+└── Returns: card list with player/team relations
+
+POST /api/admin/cards
+├── Auth: JWT + can_edit_cards
+├── Body: {matchId, playerId, cardType, minute}
+├── team_id: auto-derived from player.team_id
+└── Returns: created card
+
+PUT  /api/admin/cards/{cardId}
+├── Auth: JWT + can_edit_cards
+├── Body: {cardType?, minute?, playerId?}
+├── Supports player change with validation
+└── Updates suspensions for old & new player
+
+DELETE /api/admin/cards/{cardId}
+├── Auth: JWT + can_edit_cards
+└── Recalculates suspensions after deletion
+
+GET  /api/public/suspensions?seasonId={id}&ageGroupId={id}
+├── No auth required (public read)
+└── Returns: player suspension list with points
+```
+
+**Security**:
+- ✅ All admin endpoints: JWT auth + can_edit_cards permission
+- ✅ team_id: auto-derived from player, never from client
+- ✅ Player validation: must belong to match teams
+- ✅ RLS policies: public read-only on suspensions
+
+**Build Status**: ✅ PASSED (28 routes)
+**Lines of Code**: 1905 added (10 files new)
+
+---
+
+## 2026-06-18 - Phase 2d Cards API: Bug Fix
+
+### Fix: Missing team_id in Card Insert
+
+**Problem**: Cards API POST didn't include team_id in INSERT statement
+- Cards table requires team_id (NOT NULL)
+- API only sent: match_id, player_id, card_type, minute
+- Result: Error "null value in column team_id violates not-null constraint"
+
+**Solution**: 
+- POST: Extract player.team_id and include in INSERT
+- PUT: Support optional playerId with team validation & update
+- Both: Recalculate suspensions for affected players
+
+**Files Modified**:
+- `app/api/admin/cards/route.ts` - POST: Add team_id from player
+- `app/api/admin/cards/[cardId]/route.ts` - PUT: Handle player change with team update
+
+**Details**:
+```
+POST /api/admin/cards now:
+├── Fetches player from players table
+├── Extracts player.team_id
+├── Validates player in match teams
+└── INSERTs with team_id
+
+PUT /api/admin/cards/{cardId} now:
+├── Accepts optional playerId in body
+├── Validates new player in match teams
+├── Updates both player_id and team_id
+└── Recalculates suspensions for both players
+```
+
+**Build Status**: ✅ PASSED (28 routes, 0 TypeScript errors)
 **Git Commit**: 3def4ba
 
 ---
