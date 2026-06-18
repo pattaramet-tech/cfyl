@@ -1,7 +1,7 @@
 # 📊 PROJECT_STATUS.md
 
-**Last Updated**: 2026-06-18 (Admin Auth Production Setup)  
-**Current Phase**: Phase 2b ✅ COMPLETE | ⏳ Waiting for Production Verification | Phase 2c Blocked
+**Last Updated**: 2026-06-18 (Admin Login Fix)  
+**Current Phase**: Phase 2b ✅ COMPLETE | 🔧 Admin Login Fixed | ⏳ Production Testing | Phase 2c Blocked
 
 ---
 
@@ -166,23 +166,33 @@ NEXT_PUBLIC_APP_URL               = http://localhost:3000
 
 ## ✅ Admin Authentication: Production Ready
 
-**Status**: Code updated for production (2026-06-18)
+**Status**: All fixes deployed (2026-06-18)
 
 **What's Fixed**:
 - ✅ Safe active column handling (undefined defaults to true)
 - ✅ Migration script is rerun-safe
+- ✅ /admin/login page no longer protected by auth guard
+- ✅ /admin/login displays login form (public page)
+- ✅ Protected pages (/dashboard, /matches) require auth
+- ✅ /admin redirect logic (token → dashboard, no token → login)
 - ✅ Comprehensive SETUP_ADMIN.md guide
 - ✅ Detailed logging for troubleshooting
-- ✅ /admin/page.tsx redirect logic
+
+**Recent Fix (Commit 1a7b9d8)**:
+- Removed auth guard from /admin/login
+- Uses usePathname to skip auth check for login page
+- Login page now renders immediately without "Authentication error"
 
 **Next Steps**:
-1. Wait for Vercel redeploy (commit e629e6a)
+1. Wait for Vercel redeploy (commit 1a7b9d8)
 2. Follow SETUP_ADMIN.md step-by-step:
    - Run migration in Supabase
    - Create admin user in Auth
    - Insert admin_profiles record
-3. Test login on production
-4. Report success/errors
+3. Test production URLs:
+   - /admin/login → should show login form
+   - Login → should redirect to /admin/dashboard
+4. Report results
 
 ## 🚀 Setup Steps (Blocked Until Auth Fixed)
 

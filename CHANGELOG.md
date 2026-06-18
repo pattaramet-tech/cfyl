@@ -15,6 +15,36 @@ Each entry contains:
 
 ---
 
+## 2026-06-18 - Admin Login: Fixed Public Access
+
+### Fix: /admin/login Page Displayed "Authentication error"
+
+**Problem**: /admin/login was protected by AdminLayout auth guard
+- User goes to /admin/login
+- AdminLayout checks for auth token (doesn't exist yet)
+- Redirects to /admin/login → creates redirect loop
+- Shows "Authentication error" instead of login form
+
+**Solution**: Skip auth check for /admin/login in AdminLayout
+
+**Files Modified**:
+- `app/admin/layout.tsx`
+  * Added usePathname hook
+  * Check if pathname === "/admin/login"
+  * For login page: render without auth check or sidebar
+  * For other pages: keep auth requirement
+
+**Result**:
+- ✅ /admin/login displays login form immediately
+- ✅ No "Authentication error" message
+- ✅ Protected pages still require auth
+- ✅ Redirect flow: no token → login, has token → dashboard
+
+**Build Status**: ✅ PASSED (21 routes)
+**Commit**: 1a7b9d8
+
+---
+
 ## 2026-06-18 - Admin Auth: Production Setup Ready
 
 ### Fix: Production-Ready Admin Authentication
