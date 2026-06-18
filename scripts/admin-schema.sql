@@ -24,19 +24,16 @@ ALTER TABLE admin_profiles ENABLE ROW LEVEL SECURITY;
 -- ============================================================================
 -- 2. RLS POLICIES FOR admin_profiles
 -- ============================================================================
+-- NOTE: admin_profiles queries only via service role (server-side)
+-- RLS policies are minimal to avoid recursion
 
-CREATE POLICY "Admins can read own profile"
+CREATE POLICY "Authenticated users can read their own profile"
   ON admin_profiles FOR SELECT
   USING (auth.uid() = id);
 
-CREATE POLICY "Superadmins can read all profiles"
-  ON admin_profiles FOR SELECT
-  USING (
-    auth.uid() IN (
-      SELECT id FROM admin_profiles
-      WHERE role = 'superadmin' AND active = true
-    )
-  );
+-- DISABLED: Superadmin policy caused infinite recursion
+-- (queries admin_profiles from within admin_profiles policy)
+-- Instead: Server-side code uses service role to bypass RLS
 
 -- ============================================================================
 -- 3. RLS POLICIES FOR EXISTING TABLES (matches, goals, cards)

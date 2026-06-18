@@ -3,12 +3,17 @@ import { createClient } from '@supabase/supabase-js';
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-if (!supabaseUrl || !supabaseAnonKey) {
+if (!supabaseUrl || !supabaseAnonKey || !supabaseServiceKey) {
   throw new Error('Missing Supabase environment variables');
 }
 
+// Use anon key for auth (Supabase Auth API)
 const supabase = createClient(supabaseUrl, supabaseAnonKey);
+
+// Use service role key for admin_profiles queries (bypasses RLS)
+const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey);
 
 export const dynamic = 'force-dynamic';
 
@@ -45,11 +50,11 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Verify admin profile exists
+    // Verify admin profile exists (use service role to bypass RLS)
     const userId = data.user.id;
     console.log(`[LOGIN] Auth successful for user: ${userId}`);
 
-    const { data: adminProfile, error: profileError } = await supabase
+    const { data: adminProfile, error: profileError } = await supabaseAdmin
       .from('admin_profiles')
       .select('id, email, full_name, active, role, can_edit_matches, can_edit_goals, can_edit_cards')
       .eq('id', userId)
