@@ -15,6 +15,30 @@ Each entry contains:
 
 ---
 
+## 2026-06-18 - Admin Auth Debug: Comprehensive Logging
+
+### Fix: Add Detailed Logging to Auth Flow
+
+**Files Modified**:
+- `app/api/admin/auth/login/route.ts` - Log auth steps, profile lookup, active status
+- `lib/admin-middleware.ts` - Log token verification, profile queries, errors
+- `app/admin/dashboard/page.tsx` - Log token check, API requests, error details
+- `app/api/admin/stats/route.ts` - Log request received, auth result, errors
+- `app/admin/login/page.tsx` - Log submission, response, token storage, redirects
+
+**Purpose**: Enable debugging production auth issues via console logs (Vercel Logs)
+
+**Build Status**: ✅ PASSED
+
+**Next Steps**:
+1. Deploy to Vercel
+2. Try login, check Vercel Logs for [LOGIN], [MIDDLEWARE], [DASHBOARD] messages
+3. Verify admin_profiles record exists with correct UUID
+4. If "Admin profile not found" - UUID mismatch (fix in DB)
+5. If JWT error - token issue (check Supabase auth)
+
+---
+
 ## 2026-06-18 - Phase 2b Hotfix: Production Issues
 
 ### Fix: Admin Backend Production Issues

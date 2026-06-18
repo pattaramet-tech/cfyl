@@ -1,7 +1,7 @@
 # 📊 PROJECT_STATUS.md
 
-**Last Updated**: 2026-06-18 (Phase 2b Hotfix)  
-**Current Phase**: Phase 2b ✅ COMPLETE | Phase 2c Next (Goal Management)
+**Last Updated**: 2026-06-18 (Admin Auth Debug)  
+**Current Phase**: Phase 2b ✅ COMPLETE | 🔴 DEBUGGING Admin Authentication | Phase 2c Blocked
 
 ---
 
@@ -164,25 +164,72 @@ NEXT_PUBLIC_APP_URL               = http://localhost:3000
 | Admin table active column mismatch | ✅ Fixed | Created rerun-safe migration script | 2026-06-18 |
 | Phase 2a admin auth incomplete | ✅ Fixed | Schema + code already aligned for active column | 2026-06-18 |
 
-## 🚀 Installation Steps for Production
+## 🔴 CURRENT ISSUE: Admin Authentication Failing
 
-After deploying to Vercel:
+**Status**: Investigation in progress (2026-06-18)
+
+**Symptoms**:
+- ✅ /admin/login loads (200 OK)
+- ✅ Vercel deployment ready
+- ❌ /admin returns 404 in production (but works locally)
+- ❌ Login shows "Authentication error"
+- ❌ Dashboard shows "Admin profile not found"
+
+**Root Cause Analysis Needed**:
+1. **Check Supabase Console**:
+   - Verify admin_profiles table has records
+   - Confirm user UUID from Auth matches admin_profiles.id
+   - Check active column = true
+
+2. **Check Vercel Logs**:
+   - Look for [LOGIN], [MIDDLEWARE], [DASHBOARD] console logs
+   - Check for "Admin profile not found" or JWT errors
+   - Verify database queries are working
+
+3. **Database Requirements** (must exist):
+   ```sql
+   -- Run this in Supabase SQL Editor:
+   -- scripts/migration-add-active-column.sql
+   
+   -- Then verify admin user exists:
+   SELECT id, email, active, role FROM admin_profiles;
+   
+   -- The user UUID must match Supabase Auth user ID
+   ```
+
+## 🚀 Setup Steps (Blocked Until Auth Fixed)
+
+After debugging and fixing auth:
 
 1. **Run SQL Migration in Supabase**:
    ```sql
    -- Go to SQL Editor and run: scripts/migration-add-active-column.sql
    ```
 
-2. **Create Admin User**:
-   - Supabase Auth → Create user (email/password)
-   - Copy user ID
-   - Run INSERT in admin_profiles:
+2. **Create Admin User in Supabase Auth**:
+   - Go to Supabase Dashboard → Authentication
+   - Create new user (email/password)
+   - Copy the user UUID
+
+3. **Insert Admin Profile**:
    ```sql
    INSERT INTO admin_profiles (id, email, full_name, role, active)
-   VALUES ('<USER-ID>', 'admin@example.com', 'Admin Name', 'superadmin', true);
+   VALUES (
+     '<PASTE-UUID-FROM-STEP-2>',
+     'admin@example.com',
+     'Admin Name',
+     'superadmin',
+     true
+   );
    ```
+   
+   **CRITICAL**: The `id` must exactly match the UUID from Supabase Auth
 
-3. **Test**: Visit https://cfyl-youth-league.vercel.app/admin → should redirect to login
+4. **Test**:
+   - Visit https://cfyl-youth-league.vercel.app/admin/login
+   - Login with email/password
+   - Should redirect to /admin/dashboard
+   - Check browser console for debug logs
 
 ---
 
