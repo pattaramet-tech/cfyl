@@ -2,6 +2,19 @@
 
 All notable changes to CFYL Youth League system are documented here.
 
+## [Phase 3C] - 2026-06-18 ✅ COMPLETE
+
+### Team Management
+- `/admin/teams` CRUD page: add, edit, toggle active, delete (soft/hard)
+- New `team_color` field (hex color picker) — requires migration-phase3c-team-color.sql
+- `logo_url` text input with live preview
+- Color swatch / logo thumbnail shown in team table
+- Name uniqueness validated per season+ageGroup+division on create and edit
+- Delete blocked (409) if team has players, matches, goals, cards, or suspensions
+- Player count badge shown per team row (2-query approach, no N+1)
+- New admin APIs: `/api/admin/teams` (GET/POST), `/api/admin/teams/[teamId]` (GET/PUT/DELETE)
+- Public pages (standings, fixtures) unaffected — they query by divisionId, not active status
+
 ## [Phase 3B] - 2026-06-18 ✅ COMPLETE
 
 ### Player Management

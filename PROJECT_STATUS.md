@@ -1,7 +1,7 @@
 # 📊 PROJECT_STATUS.md
 
-**Last Updated**: 2026-06-18 (Phase 3B Complete)  
-**Current Phase**: Phase 2e ✅ COMPLETE | Phase 3A ✅ COMPLETE | Phase 3B ✅ COMPLETE
+**Last Updated**: 2026-06-18 (Phase 3C Complete)  
+**Current Phase**: Phase 2e ✅ COMPLETE | Phase 3A ✅ COMPLETE | Phase 3B ✅ COMPLETE | Phase 3C ✅ COMPLETE
 
 ---
 
@@ -130,7 +130,26 @@
 - [x] AdminNav: 👤 Players link added
 - [x] npm run build: ✅ PASSED (36 routes)
 
-### Phase 3C: Team Management 🔴 NOT STARTED
+### Phase 3C: Team Management ✅ COMPLETE (2026-06-18)
+- [x] Migration: `scripts/migration-phase3c-team-color.sql` — adds `team_color TEXT` column
+- [x] `/admin/teams` — CRUD team management page
+  - [x] Cascading selectors: Season → Age Group → Division filter
+  - [x] Client-side search: name, short_name
+  - [x] Color swatch / logo preview in table
+  - [x] Color picker (checkbox to enable, `<input type="color">`)
+  - [x] Logo URL text input with live preview + error handling
+  - [x] Toggle active/inactive per team
+  - [x] 🗑️ Delete only for inactive teams; blocked (409) if has players/matches/goals/cards/suspensions
+  - [x] Player count badge per team row
+- [x] `GET /api/admin/teams` — list teams with division join + player counts
+- [x] `POST /api/admin/teams` — create with name uniqueness check per season/ageGroup/division
+- [x] `GET /api/admin/teams/[teamId]` — single team + full usage counts (5 tables)
+- [x] `PUT /api/admin/teams/[teamId]` — update all fields; name uniqueness re-checked on change
+- [x] `DELETE /api/admin/teams/[teamId]` — hard delete iff no records; 409 with counts if has any
+- [x] Public pages unaffected (standings/fixtures query by divisionId, not active status)
+- [x] AdminNav 👥 Teams link already existed — now has a working page
+- [x] npm run build: ✅ PASSED (39 routes)
+
 ### Phase 3D: Season Management 🔴 NOT STARTED
 
 ### Phase 4: Integrations 🔴 NOT STARTED
