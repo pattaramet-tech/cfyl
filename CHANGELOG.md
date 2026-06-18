@@ -15,6 +15,43 @@ Each entry contains:
 
 ---
 
+## 2026-06-18 - Admin Auth: Production Setup Ready
+
+### Fix: Production-Ready Admin Authentication
+
+**Files Modified**:
+- `app/api/admin/auth/login/route.ts` - Safe active column check
+- `lib/admin-middleware.ts` - Safe active column check
+
+**Files Added**:
+- `SETUP_ADMIN.md` - Complete setup guide (5-step process)
+
+**Changes**:
+1. Active column checks now safe: `active !== false` instead of `!active`
+   - Allows undefined values (treats as true)
+   - Can run migration after deployment
+   - No downtime needed
+
+2. Complete SETUP_ADMIN.md guide:
+   - Step 1: Run migration script (rerun-safe)
+   - Step 2: Verify database schema
+   - Step 3: Create admin user in Supabase Auth
+   - Step 4: Insert admin_profiles record
+   - Step 5: Test login
+   - Troubleshooting section with SQL fixes
+
+3. Migration script is idempotent:
+   - Check if active column exists
+   - Only add if missing
+   - Create index if not exists
+   - Safe to run multiple times
+
+**Build Status**: ✅ PASSED (21 routes)
+**Commit**: e629e6a
+**Timeline**: Ready for production setup (no downtime needed)
+
+---
+
 ## 2026-06-18 - Admin Auth Debug: Comprehensive Logging
 
 ### Fix: Add Detailed Logging to Auth Flow

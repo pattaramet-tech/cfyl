@@ -1,7 +1,7 @@
 # 📊 PROJECT_STATUS.md
 
-**Last Updated**: 2026-06-18 (Admin Auth Debug)  
-**Current Phase**: Phase 2b ✅ COMPLETE | 🔴 DEBUGGING Admin Authentication | Phase 2c Blocked
+**Last Updated**: 2026-06-18 (Admin Auth Production Setup)  
+**Current Phase**: Phase 2b ✅ COMPLETE | ⏳ Waiting for Production Verification | Phase 2c Blocked
 
 ---
 
@@ -164,38 +164,25 @@ NEXT_PUBLIC_APP_URL               = http://localhost:3000
 | Admin table active column mismatch | ✅ Fixed | Created rerun-safe migration script | 2026-06-18 |
 | Phase 2a admin auth incomplete | ✅ Fixed | Schema + code already aligned for active column | 2026-06-18 |
 
-## 🔴 CURRENT ISSUE: Admin Authentication Failing
+## ✅ Admin Authentication: Production Ready
 
-**Status**: Investigation in progress (2026-06-18)
+**Status**: Code updated for production (2026-06-18)
 
-**Symptoms**:
-- ✅ /admin/login loads (200 OK)
-- ✅ Vercel deployment ready
-- ❌ /admin returns 404 in production (but works locally)
-- ❌ Login shows "Authentication error"
-- ❌ Dashboard shows "Admin profile not found"
+**What's Fixed**:
+- ✅ Safe active column handling (undefined defaults to true)
+- ✅ Migration script is rerun-safe
+- ✅ Comprehensive SETUP_ADMIN.md guide
+- ✅ Detailed logging for troubleshooting
+- ✅ /admin/page.tsx redirect logic
 
-**Root Cause Analysis Needed**:
-1. **Check Supabase Console**:
-   - Verify admin_profiles table has records
-   - Confirm user UUID from Auth matches admin_profiles.id
-   - Check active column = true
-
-2. **Check Vercel Logs**:
-   - Look for [LOGIN], [MIDDLEWARE], [DASHBOARD] console logs
-   - Check for "Admin profile not found" or JWT errors
-   - Verify database queries are working
-
-3. **Database Requirements** (must exist):
-   ```sql
-   -- Run this in Supabase SQL Editor:
-   -- scripts/migration-add-active-column.sql
-   
-   -- Then verify admin user exists:
-   SELECT id, email, active, role FROM admin_profiles;
-   
-   -- The user UUID must match Supabase Auth user ID
-   ```
+**Next Steps**:
+1. Wait for Vercel redeploy (commit e629e6a)
+2. Follow SETUP_ADMIN.md step-by-step:
+   - Run migration in Supabase
+   - Create admin user in Auth
+   - Insert admin_profiles record
+3. Test login on production
+4. Report success/errors
 
 ## 🚀 Setup Steps (Blocked Until Auth Fixed)
 
