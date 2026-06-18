@@ -37,7 +37,7 @@ export function AdminGuard({ children }: AdminGuardProps) {
 
         setIsAuthenticated(true);
       } catch (error) {
-        console.error('Auth check error:', error);
+        console.error('[ADMIN_GUARD] Auth check error:', error);
         localStorage.removeItem('admin_token');
         router.push('/admin/login');
       } finally {

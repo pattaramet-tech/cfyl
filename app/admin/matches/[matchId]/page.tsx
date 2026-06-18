@@ -54,7 +54,7 @@ export default function EditMatchPage() {
         setAwayScore(foundMatch.away_score);
         setStatus(foundMatch.status);
       } catch (error) {
-        console.error('Load match error:', error);
+        console.error('[ADMIN_MATCH_DETAIL] Load match error:', error);
         setError('Failed to load match details');
       } finally {
         setIsLoading(false);
@@ -130,7 +130,7 @@ export default function EditMatchPage() {
         router.push('/admin/matches');
       }, 2000);
     } catch (error) {
-      console.error('Update match error:', error);
+      console.error('[ADMIN_MATCH_DETAIL] Update match error:', error);
       setError(error instanceof Error ? error.message : 'Failed to update match');
     } finally {
       setIsSaving(false);

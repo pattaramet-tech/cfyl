@@ -40,7 +40,7 @@ export default function StandingsPage() {
         setSelectedDivision(data[0].id);
       }
     } catch (error) {
-      console.error('Failed to fetch divisions:', error);
+      console.error('[STANDINGS_PAGE] Failed to fetch divisions:', error);
     }
   };
 
@@ -53,7 +53,7 @@ export default function StandingsPage() {
       const data = await res.json();
       setStandings(data);
     } catch (error) {
-      console.error('Failed to fetch standings:', error);
+      console.error('[STANDINGS_PAGE] Failed to fetch standings:', error);
     } finally {
       setLoading(false);
     }

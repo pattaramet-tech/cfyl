@@ -63,7 +63,7 @@ export default function Home() {
         setTopScorers(scorerData);
       }
     } catch (error) {
-      console.error('Failed to fetch data:', error);
+      console.error('[HOME_PAGE] Failed to fetch data:', error);
     } finally {
       setLoading(false);
     }

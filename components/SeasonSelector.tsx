@@ -36,7 +36,7 @@ export function SeasonSelector() {
         setSelectedSeason(data[0].id);
       }
     } catch (error) {
-      console.error('Failed to fetch seasons:', error);
+      console.error('[SEASON_SELECTOR] Failed to fetch seasons:', error);
     } finally {
       setLoading(false);
     }
@@ -51,7 +51,7 @@ export function SeasonSelector() {
         setSelectedAgeGroup(data[0].id);
       }
     } catch (error) {
-      console.error('Failed to fetch age groups:', error);
+      console.error('[SEASON_SELECTOR] Failed to fetch age groups:', error);
     }
   };
 

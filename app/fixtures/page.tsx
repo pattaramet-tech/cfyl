@@ -47,7 +47,7 @@ export default function FixturesPage() {
         setSelectedMatchday(days[0]);
       }
     } catch (error) {
-      console.error('Failed to fetch matches:', error);
+      console.error('[FIXTURES_PAGE] Failed to fetch matches:', error);
     } finally {
       setLoading(false);
     }

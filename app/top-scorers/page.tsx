@@ -48,7 +48,7 @@ export default function TopScorersPage() {
         setSelectedDivision(data[0].id);
       }
     } catch (error) {
-      console.error('Failed to fetch divisions:', error);
+      console.error('[TOP_SCORERS_PAGE] Failed to fetch divisions:', error);
     }
   };
 
@@ -61,7 +61,7 @@ export default function TopScorersPage() {
       const data = await res.json();
       setScorers(data);
     } catch (error) {
-      console.error('Failed to fetch top scorers:', error);
+      console.error('[TOP_SCORERS_PAGE] Failed to fetch top scorers:', error);
     } finally {
       setLoading(false);
     }

@@ -22,7 +22,7 @@ export function AdminNav({ email, fullName }: AdminNavProps) {
       localStorage.removeItem('admin_token');
       router.push('/admin/login');
     } catch (error) {
-      console.error('Logout error:', error);
+      console.error('[ADMIN_NAV] Logout error:', error);
       setIsLoggingOut(false);
     }
   };

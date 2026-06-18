@@ -57,7 +57,7 @@ export default function DisciplinePage() {
         setSelectedDivision(data[0].id);
       }
     } catch (error) {
-      console.error('Failed to fetch divisions:', error);
+      console.error('[DISCIPLINE_PAGE] Failed to fetch divisions:', error);
     }
   };
 
@@ -83,7 +83,7 @@ export default function DisciplinePage() {
 
       setSuspensions(mapped);
     } catch (error) {
-      console.error('Failed to fetch suspensions:', error);
+      console.error('[DISCIPLINE_PAGE] Failed to fetch suspensions:', error);
     } finally {
       setLoading(false);
     }

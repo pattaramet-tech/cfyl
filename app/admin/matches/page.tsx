@@ -32,7 +32,7 @@ export default function AdminMatchesPage() {
           setSeasonId(data[0].id);
         }
       } catch (error) {
-        console.error('Load seasons error:', error);
+        console.error('[ADMIN_MATCHES_PAGE] Load seasons error:', error);
       }
     };
     loadSeasons();
@@ -51,7 +51,7 @@ export default function AdminMatchesPage() {
           setAgeGroupId(data[0].id);
         }
       } catch (error) {
-        console.error('Load age groups error:', error);
+        console.error('[ADMIN_MATCHES_PAGE] Load age groups error:', error);
       }
     };
     loadAgeGroups();
@@ -72,7 +72,7 @@ export default function AdminMatchesPage() {
           setDivisionId(data[0].id);
         }
       } catch (error) {
-        console.error('Load divisions error:', error);
+        console.error('[ADMIN_MATCHES_PAGE] Load divisions error:', error);
       }
     };
     loadDivisions();
@@ -99,7 +99,7 @@ export default function AdminMatchesPage() {
         const data = await res.json();
         setMatches(data);
       } catch (error) {
-        console.error('Load matches error:', error);
+        console.error('[ADMIN_MATCHES_PAGE] Load matches error:', error);
         setError('Failed to load matches');
       } finally {
         setIsLoading(false);
