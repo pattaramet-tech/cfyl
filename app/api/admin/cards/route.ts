@@ -178,6 +178,7 @@ export async function POST(request: NextRequest) {
       .insert({
         match_id: matchId,
         player_id: playerId,
+        team_id: playerTeamId,
         card_type: cardType,
         minute,
         created_at: new Date().toISOString(),

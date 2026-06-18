@@ -42,12 +42,12 @@ export async function PUT(
     }
 
     const body = await request.json();
-    const { cardType, minute } = body;
+    const { cardType, minute, playerId } = body;
 
     // Validation
-    if (!cardType && minute === undefined) {
+    if (!cardType && minute === undefined && !playerId) {
       return NextResponse.json(
-        { error: 'At least one field required: cardType or minute' },
+        { error: 'At least one field required: cardType, minute, or playerId' },
         { status: 400 }
       );
     }
@@ -68,10 +68,10 @@ export async function PUT(
 
     console.log('[CARDS_PUT] Fetching existing card');
 
-    // Get existing card
+    // Get existing card with match info
     const { data: existingCard, error: fetchError } = await supabaseAdmin
       .from('cards')
-      .select('id, match_id, player_id, card_type, minute')
+      .select('id, match_id, player_id, team_id, card_type, minute')
       .eq('id', cardId)
       .single();
 
@@ -82,14 +82,63 @@ export async function PUT(
       );
     }
 
+    // If playerId is being changed, validate new player
+    let newTeamId = existingCard.team_id;
+    if (playerId && playerId !== existingCard.player_id) {
+      console.log('[CARDS_PUT] Player ID changed, validating new player');
+
+      // Fetch match to get team IDs
+      const { data: match, error: matchError } = await supabaseAdmin
+        .from('matches')
+        .select('home_team_id, away_team_id')
+        .eq('id', existingCard.match_id)
+        .single();
+
+      if (matchError || !match) {
+        return NextResponse.json(
+          { error: 'Match not found' },
+          { status: 404 }
+        );
+      }
+
+      // Fetch new player
+      const { data: newPlayer, error: playerError } = await supabaseAdmin
+        .from('players')
+        .select('id, team_id')
+        .eq('id', playerId)
+        .single();
+
+      if (playerError || !newPlayer) {
+        return NextResponse.json(
+          { error: 'New player not found' },
+          { status: 404 }
+        );
+      }
+
+      // Verify player is in one of the match teams
+      if (
+        newPlayer.team_id !== match.home_team_id &&
+        newPlayer.team_id !== match.away_team_id
+      ) {
+        return NextResponse.json(
+          { error: 'New player does not belong to either team in this match' },
+          { status: 400 }
+        );
+      }
+
+      newTeamId = newPlayer.team_id;
+    }
+
     console.log('[CARDS_PUT] Updating card');
 
     // Update card
     const { data: updatedCard, error: updateError } = await supabaseAdmin
       .from('cards')
       .update({
-        card_type: cardType || existingCard.card_type,
-        minute: minute !== undefined ? minute : existingCard.minute,
+        ...(playerId && { player_id: playerId }),
+        ...(newTeamId && { team_id: newTeamId }),
+        ...(cardType && { card_type: cardType }),
+        ...(minute !== undefined && { minute }),
         updated_at: new Date().toISOString(),
       })
       .eq('id', cardId)
@@ -106,22 +155,61 @@ export async function PUT(
 
     console.log('[CARDS_PUT] Card updated:', cardId);
 
-    // Recalculate suspension for this player
+    // Recalculate suspensions
     try {
       const match = await getMatchDetails(existingCard.match_id);
-      const { data: player } = await supabaseAdmin
-        .from('players')
-        .select('team_id')
-        .eq('id', existingCard.player_id)
-        .single();
 
-      if (match && player) {
-        await recalculatePlayerSuspension(
-          existingCard.player_id,
-          match.season_id,
-          match.age_group_id,
-          player.team_id
-        );
+      // If player changed, recalculate for both old and new player
+      if (playerId && playerId !== existingCard.player_id) {
+        console.log('[CARDS_PUT] Player changed, recalculating for both players');
+
+        // Old player
+        const { data: oldPlayer } = await supabaseAdmin
+          .from('players')
+          .select('team_id')
+          .eq('id', existingCard.player_id)
+          .single();
+
+        if (match && oldPlayer) {
+          await recalculatePlayerSuspension(
+            existingCard.player_id,
+            match.season_id,
+            match.age_group_id,
+            oldPlayer.team_id
+          );
+        }
+
+        // New player
+        const { data: newPlayer } = await supabaseAdmin
+          .from('players')
+          .select('team_id')
+          .eq('id', playerId)
+          .single();
+
+        if (match && newPlayer) {
+          await recalculatePlayerSuspension(
+            playerId,
+            match.season_id,
+            match.age_group_id,
+            newPlayer.team_id
+          );
+        }
+      } else {
+        // Player didn't change, recalculate for existing player
+        const { data: player } = await supabaseAdmin
+          .from('players')
+          .select('team_id')
+          .eq('id', existingCard.player_id)
+          .single();
+
+        if (match && player) {
+          await recalculatePlayerSuspension(
+            existingCard.player_id,
+            match.season_id,
+            match.age_group_id,
+            player.team_id
+          );
+        }
       }
     } catch (calcError) {
       console.error('[CARDS_PUT] Suspension calculation error:', calcError);
