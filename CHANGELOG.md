@@ -2,6 +2,26 @@
 
 All notable changes to CFYL Youth League system are documented here.
 
+## [Phase 3D] - 2026-06-19 ✅ COMPLETE
+
+### Season Management
+- `/admin/seasons` tabbed page: 3 tabs — Seasons, Age Groups, Divisions
+- **Seasons tab**: list all seasons with status badge and age-group count; full add/edit/delete
+- **Age Groups tab**: select season → list age groups (division_count, team_count); add/edit/delete
+- **Divisions tab**: select season+ageGroup → list divisions (team_count, match_count); add/edit/delete
+- Active season constraint: only 1 active season allowed; confirm dialog warns which season(s) will be auto-completed
+- API auto-completes other active seasons (sets to "completed") and returns deactivated[] in response
+- Input validation: year must be 4-digit integer; age group code trimmed+uppercased; division name trimmed; status enum enforced
+- Delete safety (409 with readable message):
+  - Season: blocked if has teams/matches/players
+  - Age Group: blocked if has teams/matches/players; deletes empty child divisions first
+  - Division: blocked if has teams/matches
+- New admin APIs: `/api/admin/seasons` (GET/POST), `/api/admin/seasons/[seasonId]` (GET/PUT/DELETE)
+- New admin APIs: `/api/admin/age-groups` (GET/POST), `/api/admin/age-groups/[ageGroupId]` (PUT/DELETE)
+- New admin APIs: `/api/admin/divisions` (GET/POST), `/api/admin/divisions/[divisionId]` (PUT/DELETE)
+- Public APIs (`/api/public/seasons`, `/api/public/age-groups`, `/api/public/divisions`) unaffected
+- AdminNav: 🗓️ Seasons link added
+
 ## [Phase 3C] - 2026-06-18 ✅ COMPLETE
 
 ### Team Management

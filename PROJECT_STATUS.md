@@ -1,7 +1,7 @@
 # 📊 PROJECT_STATUS.md
 
-**Last Updated**: 2026-06-18 (Phase 3C Complete)  
-**Current Phase**: Phase 2e ✅ COMPLETE | Phase 3A ✅ COMPLETE | Phase 3B ✅ COMPLETE | Phase 3C ✅ COMPLETE
+**Last Updated**: 2026-06-19 (Phase 3D Complete)  
+**Current Phase**: Phase 2e ✅ COMPLETE | Phase 3A ✅ COMPLETE | Phase 3B ✅ COMPLETE | Phase 3C ✅ COMPLETE | Phase 3D ✅ COMPLETE
 
 ---
 
@@ -150,7 +150,32 @@
 - [x] AdminNav 👥 Teams link already existed — now has a working page
 - [x] npm run build: ✅ PASSED (39 routes)
 
-### Phase 3D: Season Management 🔴 NOT STARTED
+### Phase 3D: Season Management ✅ COMPLETE (2026-06-19)
+- [x] `/admin/seasons` — tabbed CRUD page (Seasons / Age Groups / Divisions)
+  - [x] Tab 1 Seasons: list with status badge + age_group count; add/edit/delete
+  - [x] Tab 2 Age Groups: season selector → list with division_count + team_count; add/edit/delete
+  - [x] Tab 3 Divisions: season+ageGroup selectors → list with team_count + match_count; add/edit/delete
+  - [x] Confirm dialog when setting Active: shows conflicting season names before auto-completing them
+  - [x] age_groups.code: text input, trim + toUpperCase on API
+  - [x] divisions.name: trim on API
+  - [x] seasons.year: 4-digit integer validation
+  - [x] Status restricted to upcoming/active/completed
+- [x] `GET /api/admin/seasons` — list all seasons + age_group_count (auth)
+- [x] `POST /api/admin/seasons` — create; auto-completes other active seasons; validates name+year uniqueness
+- [x] `GET /api/admin/seasons/[seasonId]` — single season + usage counts (teams/matches/players/age_groups)
+- [x] `PUT /api/admin/seasons/[seasonId]` — update; if status→active, auto-completes others + returns deactivated[]
+- [x] `DELETE /api/admin/seasons/[seasonId]` — 409 if has teams/matches/players; deletes empty divisions+ageGroups first
+- [x] `GET /api/admin/age-groups` — list by seasonId + division_count + team_count (auth)
+- [x] `POST /api/admin/age-groups` — create; validates code uniqueness per season
+- [x] `PUT /api/admin/age-groups/[id]` — update code/name/sort_order; code uniqueness re-checked
+- [x] `DELETE /api/admin/age-groups/[id]` — 409 if has teams/matches/players; deletes divisions first
+- [x] `GET /api/admin/divisions` — list by season+ageGroup + team_count + match_count (auth)
+- [x] `POST /api/admin/divisions` — create; validates name uniqueness per season+ageGroup
+- [x] `PUT /api/admin/divisions/[id]` — update name/sort_order; name uniqueness re-checked
+- [x] `DELETE /api/admin/divisions/[id]` — 409 if has teams/matches
+- [x] AdminNav: 🗓️ Seasons link added
+- [x] Public APIs (seasons/age-groups/divisions) unaffected
+- [x] npm run build: ✅ PASSED (47 routes)
 
 ### Phase 4: Integrations 🔴 NOT STARTED
 - [ ] Reports & analytics
