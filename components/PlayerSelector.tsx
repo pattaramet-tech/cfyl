@@ -34,7 +34,7 @@ export function PlayerSelector({
 
   // Load players from match teams
   useEffect(() => {
-    if (!matchId || !homeTeamId || !awayTeamId) return;
+    if (!homeTeamId || !awayTeamId) return;
 
     const loadPlayers = async () => {
       try {
@@ -42,29 +42,23 @@ export function PlayerSelector({
         setError(null);
 
         const token = localStorage.getItem('admin_token');
+
+        // Fetch players filtered by team IDs from server
+        console.log('[PLAYER_SELECTOR] Fetching players for teams:', homeTeamId, awayTeamId);
+        const teamIds = `${homeTeamId},${awayTeamId}`;
         const res = await fetch(
-          `/api/public/matches?matchId=${matchId}`,
+          `/api/admin/players?teamIds=${encodeURIComponent(teamIds)}`,
           {
             headers: token ? { 'Authorization': `Bearer ${token}` } : {},
           }
         );
 
-        if (!res.ok) throw new Error('Failed to load match');
+        if (!res.ok) {
+          const data = await res.json();
+          throw new Error(data.error || 'Failed to load players');
+        }
 
-        // Get all players - we'll filter client-side
-        const matchesData = await res.json();
-        const match = Array.isArray(matchesData) ? matchesData[0] : matchesData;
-
-        if (!match) throw new Error('Match not found');
-
-        // Fetch all players and filter by team
-        const playersRes = await fetch('/api/public/players?limit=1000');
-        const allPlayers = await playersRes.json();
-
-        // Filter players by match teams
-        const filteredPlayers = allPlayers.filter(
-          (p: Player) => p.team_id === homeTeamId || p.team_id === awayTeamId
-        );
+        const filteredPlayers = await res.json();
 
         // Sort by team then by name
         filteredPlayers.sort((a: Player, b: Player) => {
@@ -75,6 +69,7 @@ export function PlayerSelector({
         });
 
         setPlayers(filteredPlayers);
+        console.log('[PLAYER_SELECTOR] Loaded', filteredPlayers.length, 'players');
       } catch (err) {
         console.error('[PLAYER_SELECTOR] Load error:', err);
         setError('Failed to load players');
@@ -84,7 +79,7 @@ export function PlayerSelector({
     };
 
     loadPlayers();
-  }, [matchId, homeTeamId, awayTeamId]);
+  }, [homeTeamId, awayTeamId]);
 
   // Filter players by search term
   const filteredPlayers = players.filter(
