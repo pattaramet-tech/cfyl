@@ -6,15 +6,21 @@ import { SeasonSelector } from '@/components/SeasonSelector';
 import { DisciplineTable } from '@/components/DisciplineTable';
 import type { Division } from '@/types/db';
 
-interface DisciplineRecord {
+interface PointSource {
+  match_id: string;
+  points: number;
+  reason: string;
+}
+
+interface Suspension {
   player_id: string;
   full_name: string;
   team_name: string;
   shirt_no?: number;
-  yellow_cards: number;
-  red_cards: number;
-  total_cards: number;
-  matches_banned: number;
+  total_points: number;
+  ban_matches: number;
+  point_sources: PointSource[];
+  suspension_reason: string | null;
 }
 
 export default function DisciplinePage() {
@@ -22,7 +28,7 @@ export default function DisciplinePage() {
   const seasonId = searchParams.get('season');
   const ageGroupId = searchParams.get('ageGroup');
 
-  const [records, setRecords] = useState<DisciplineRecord[]>([]);
+  const [suspensions, setSuspensions] = useState<Suspension[]>([]);
   const [divisions, setDivisions] = useState<Division[]>([]);
   const [selectedDivision, setSelectedDivision] = useState<string>('');
   const [loading, setLoading] = useState(false);
@@ -30,12 +36,13 @@ export default function DisciplinePage() {
   useEffect(() => {
     if (seasonId && ageGroupId) {
       fetchDivisions();
+      fetchSuspensions();
     }
   }, [seasonId, ageGroupId]);
 
   useEffect(() => {
     if (selectedDivision) {
-      fetchDiscipline(selectedDivision);
+      // Suspensions are already fetched for season/age_group, just filter
     }
   }, [selectedDivision]);
 
@@ -54,16 +61,29 @@ export default function DisciplinePage() {
     }
   };
 
-  const fetchDiscipline = async (divisionId: string) => {
+  const fetchSuspensions = async () => {
     setLoading(true);
     try {
       const res = await fetch(
-        `/api/public/discipline?seasonId=${seasonId}&ageGroupId=${ageGroupId}&divisionId=${divisionId}`
+        `/api/public/suspensions?seasonId=${seasonId}&ageGroupId=${ageGroupId}`
       );
       const data = await res.json();
-      setRecords(data);
+
+      // Map suspension records to include team name (format for display)
+      const mapped = data.map((s: any) => ({
+        player_id: s.player_id,
+        full_name: s.player?.full_name || 'Unknown',
+        team_name: s.team?.name || 'Unknown Team',
+        shirt_no: s.player?.shirt_no,
+        total_points: s.total_points,
+        ban_matches: s.ban_matches,
+        point_sources: s.point_sources || [],
+        suspension_reason: s.suspension_reason,
+      }));
+
+      setSuspensions(mapped);
     } catch (error) {
-      console.error('Failed to fetch discipline records:', error);
+      console.error('Failed to fetch suspensions:', error);
     } finally {
       setLoading(false);
     }
@@ -72,7 +92,13 @@ export default function DisciplinePage() {
   return (
     <div className="space-y-6">
       <div className="bg-white rounded-lg shadow-md p-6">
-        <h1 className="text-3xl font-bold text-gray-800 mb-4">⚠️ ใบเหลืองใบแดง / โทษแบน</h1>
+        <h1 className="text-3xl font-bold text-gray-800 mb-4">
+          ⚠️ ใบเหลืองใบแดง / โทษแบน
+        </h1>
+        <p className="text-gray-600 text-sm">
+          ระบบคิดคะแนนโทษ CFYL: เหลือง 1 ใบ = 2 คะแนน | เหลือง 2 ใบ = 4 คะแนน | แดง =
+          6 คะแนน | เหลือง 1 + แดง 1 = 8 คะแนน
+        </p>
         <SeasonSelector />
       </div>
 
@@ -84,9 +110,11 @@ export default function DisciplinePage() {
         <>
           {divisions.length > 0 && (
             <div className="bg-white rounded-lg shadow-md p-6">
-              <h2 className="text-lg font-semibold text-gray-800 mb-4">เลือกดิวิชั่น</h2>
+              <h2 className="text-lg font-semibold text-gray-800 mb-4">
+                เลือกดิวิชั่น (ไม่จำเป็น - แสดงทั้งหมด)
+              </h2>
               <div className="flex flex-wrap gap-2">
-                {divisions.map(div => (
+                {divisions.map((div) => (
                   <button
                     key={div.id}
                     onClick={() => setSelectedDivision(div.id)}
@@ -106,10 +134,12 @@ export default function DisciplinePage() {
           <div className="bg-white rounded-lg shadow-md p-6">
             {loading ? (
               <p className="text-center py-12 text-gray-500">กำลังโหลดข้อมูล...</p>
-            ) : records.length > 0 ? (
-              <DisciplineTable records={records} />
+            ) : suspensions.length > 0 ? (
+              <DisciplineTable records={suspensions} />
             ) : (
-              <p className="text-center py-12 text-gray-500">ไม่พบข้อมูลใบเหลืองใบแดง</p>
+              <p className="text-center py-12 text-gray-500">
+                ไม่พบข้อมูลใบเหลืองใบแดง
+              </p>
             )}
           </div>
         </>

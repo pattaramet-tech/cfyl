@@ -37,7 +37,7 @@ export default function RootLayout({
           <nav className="container mx-auto px-4 py-4">
             <div className="flex items-center justify-between">
               <div>
-                <h1 className="text-2xl font-bold">⚽ CFYL 2026</h1>
+                <h1 className="text-2xl font-bold">⚽ CFYL</h1>
                 <p className="text-blue-100 text-sm">Chonburi Futsal Youth League</p>
               </div>
               <div className="flex gap-4">
