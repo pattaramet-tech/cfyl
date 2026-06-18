@@ -51,11 +51,13 @@
 - [x] Goal list by match (page: `/admin/goals`)
 - [x] Add/edit/delete goals (APIs: POST/PUT/DELETE)
 - [x] Player selector component (filtered by match teams)
+- [x] Player selector API: `/api/admin/players` (server-side filter)
 - [x] Goal form component (add/edit)
 - [x] Goals list component (table + actions)
 - [x] can_edit_goals permission enforced
 - [x] /top-scorers auto-updates
 - [x] Support multiple goals per player per match
+- [x] Bug fix: Added missing /api/admin/players endpoint
 
 ### Phase 2d: Card Management 🔴 PENDING
 - [ ] Card list by match

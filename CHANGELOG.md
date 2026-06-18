@@ -15,6 +15,43 @@ Each entry contains:
 
 ---
 
+## 2026-06-18 - Phase 2c Goal Management: Bug Fix
+
+### Fix: Missing /api/admin/players Endpoint
+
+**Problem**: PlayerSelector.tsx called non-existent `/api/public/players?limit=1000`
+- Fetched all 1000+ players from database
+- Filtered client-side (inefficient)
+- No route existed
+
+**Solution**: Created `/api/admin/players` endpoint
+
+**Files Added**:
+- `app/api/admin/players/route.ts` - Server-side player filter API
+
+**Files Modified**:
+- `components/PlayerSelector.tsx` - Use new API with teamIds param
+
+**API Details**:
+```
+GET /api/admin/players?teamIds=team1,team2
+├── Accepts: comma-separated team IDs
+├── Returns: players filtered to those teams (server-side)
+├── Fields: id, full_name, shirt_no, team_id, team.name, team.short_name
+└── Auth: JWT token (admin context)
+```
+
+**Benefits**:
+- ✅ Server-side filtering (efficient)
+- ✅ Smaller response payload
+- ✅ No fetching unnecessary data
+- ✅ Proper API design
+
+**Build Status**: ✅ PASSED (24 routes, +1 API)
+**Git Commit**: 3def4ba
+
+---
+
 ## 2026-06-18 - Phase 2c Goal Management: Complete
 
 ### Feature: Goal Management System
