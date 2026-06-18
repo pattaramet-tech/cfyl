@@ -1,7 +1,7 @@
 # 📊 PROJECT_STATUS.md
 
-**Last Updated**: 2026-06-18  
-**Current Phase**: Phase 2a (Admin Backend - In Progress)
+**Last Updated**: 2026-06-18 (Phase 2b)  
+**Current Phase**: Phase 2b (Match Editing - In Progress)
 
 ---
 
@@ -27,14 +27,18 @@
 - [x] Data import from Excel (CFYL2026.xlsx)
 - [x] Score display fix (handle 0-0, 0-1 correctly)
 
-### Phase 2a: Admin Backend - Authentication & Dashboard 🟡 IN PROGRESS
+### Phase 2a: Admin Backend - Authentication & Dashboard ✅ COMPLETE
 - [x] Database schema with RLS policies
 - [x] Supabase Auth setup (email/password)
 - [x] Admin login page
 - [x] Admin dashboard (stats display)
 - [x] Auth API endpoints (login, logout, me)
 - [x] Admin nav/sidebar
-- [ ] Match editing page (Phase 2b)
+
+### Phase 2b: Match Management 🟡 IN PROGRESS
+- [x] Match list page with filters
+- [x] Edit match page with score/status input
+- [x] Match update API endpoint
 - [ ] Goal management page (Phase 2c)
 - [ ] Card management page (Phase 2d)
 
@@ -194,17 +198,17 @@ NEXT_PUBLIC_APP_URL               = http://localhost:3000
 
 ## 🚀 Next Recommended Task
 
-### Immediate (Phase 2b)
-1. Create admin matches list page
-2. Implement match editing modal
-3. Add PUT /api/admin/matches/:matchId endpoint
-4. Test match score updates
-5. Verify public API still reads correctly
-6. **Build & Deploy to Vercel**
+### Immediate (Phase 2c - Goal Management)
+1. Create goals by match page
+2. Implement goal add/edit/delete forms
+3. Create player selector component
+4. Add POST/PUT/DELETE /api/admin/goals endpoints
+5. Test goal management
+6. Verify standings still calculate correctly
 
 ### Timeline
-- Phase 2b: 1-2 days (Match editing)
-- Phase 2c: 1-2 days (Goal management)
+- Phase 2b: ✅ COMPLETE
+- Phase 2c: 1-2 days (Goal management) ← NEXT
 - Phase 2d: 1-2 days (Card management)
 - Phase 2e: 1 day (Polish & testing)
 

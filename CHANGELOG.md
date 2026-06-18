@@ -15,6 +15,29 @@ Each entry contains:
 
 ---
 
+## 2026-06-18 - Phase 2b Match Editing Complete
+
+### Feature: Admin Match Editing
+
+**Files Added**:
+- `app/admin/matches/page.tsx` - Match list with filters
+- `app/admin/matches/[matchId]/page.tsx` - Edit match page
+- `app/api/admin/matches/[matchId]/route.ts` - Match update API
+
+**Features**:
+- List all matches with season/age group/division filters
+- Edit match scores (0-99 validation)
+- Change match status (scheduled/finished/postponed/cancelled)
+- Score input validation
+- Permission check (can_edit_matches)
+- Success/error messages
+- Logging for audit trail
+
+**Build Status**: ✅ PASSED
+**Git Commit**: 13b15b3 - "feat: Phase 2b - Match editing interface and API"
+
+---
+
 ## 2026-06-18 - Phase 2a Admin Backend Complete
 
 ### Feature: Admin Authentication & Dashboard

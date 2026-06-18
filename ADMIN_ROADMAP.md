@@ -155,10 +155,10 @@ Complete Admin Backend Development Roadmap
   - Auth guard
   - Route protection
 
-### Phase 2b: Match Management (🔴 PENDING)
+### Phase 2b: Match Management (🟢 ACTIVE)
 
-#### 2b.1 ⬜ Match List Page
-- **Status**: PENDING
+#### 2b.1 ✅ Match List Page
+- **Status**: ✅ COMPLETE
 - **Priority**: P0 (Next)
 - **Dependencies**: Phase 2a complete
 - **File**: `app/admin/matches/page.tsx`
@@ -170,8 +170,8 @@ Complete Admin Backend Development Roadmap
   - Match status badge
   - Edit button per match
 
-#### 2b.2 ⬜ Edit Match Page
-- **Status**: PENDING
+#### 2b.2 ✅ Edit Match Page
+- **Status**: ✅ COMPLETE
 - **Priority**: P0
 - **Dependencies**: Match list
 - **File**: `app/admin/matches/[matchId]/page.tsx`
@@ -185,8 +185,8 @@ Complete Admin Backend Development Roadmap
   - Goals section (preview)
   - Cards section (preview)
 
-#### 2b.3 ⬜ Match Update API
-- **Status**: PENDING
+#### 2b.3 ✅ Match Update API
+- **Status**: ✅ COMPLETE
 - **Priority**: P0
 - **Dependencies**: Auth API
 - **File**: `app/api/admin/matches/[matchId]/route.ts`
