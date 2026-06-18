@@ -91,15 +91,16 @@ CREATE TABLE matches (
 );
 
 -- 7. Goals table (Top Scorers data)
+-- NOTE: No unique constraint - supports multiple goal entries per player per match
+-- Each row represents one goal event (goals column = count, usually 1)
 CREATE TABLE goals (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   match_id UUID NOT NULL REFERENCES matches(id) ON DELETE CASCADE,
   player_id UUID NOT NULL REFERENCES players(id) ON DELETE CASCADE,
   team_id UUID NOT NULL REFERENCES teams(id),
-  goals INT NOT NULL DEFAULT 1,
+  goals INT NOT NULL DEFAULT 1 COMMENT 'Number of goals scored in this event',
   created_at TIMESTAMP DEFAULT now(),
-  updated_at TIMESTAMP DEFAULT now(),
-  UNIQUE(match_id, player_id)
+  updated_at TIMESTAMP DEFAULT now()
 );
 
 -- 8. Cards table (Discipline data)
