@@ -2,6 +2,18 @@
 
 All notable changes to CFYL Youth League system are documented here.
 
+## [Phase 3B] - 2026-06-18 ✅ COMPLETE
+
+### Player Management
+- `/admin/players` CRUD page: add, edit, toggle active, delete (soft/hard)
+- Cascading season → age group → team selectors
+- Client-side search by name / PlayerID / shirt number
+- player_code uniqueness validated per season on create and edit
+- Deactivate (active=false) always allowed; hard delete blocked if player has goals/cards
+- New public API: `/api/public/teams` for team list by season+ageGroup
+- New admin APIs: `/api/admin/players/manage` (GET/POST), `/api/admin/players/[playerId]` (GET/PUT/DELETE)
+- AdminNav: 👤 Players link
+
 ## [Phase 3A Bug Fix] - 2026-06-18 ✅ FIXED
 
 ### Suspension Next Match Detection Bug Fixes

@@ -1,7 +1,7 @@
 # 📊 PROJECT_STATUS.md
 
-**Last Updated**: 2026-06-18 (Phase 3A + Bug Fix)  
-**Current Phase**: Phase 2e ✅ COMPLETE | Phase 3A ✅ COMPLETE (Bug Fixed)
+**Last Updated**: 2026-06-18 (Phase 3B Complete)  
+**Current Phase**: Phase 2e ✅ COMPLETE | Phase 3A ✅ COMPLETE | Phase 3B ✅ COMPLETE
 
 ---
 
@@ -112,7 +112,24 @@
 - [x] `AdminNav` — 🚨 Suspensions link added
 - [x] npm run build: ✅ PASSED (32 routes)
 
-### Phase 3B: Player Management 🔴 NOT STARTED
+### Phase 3B: Player Management ✅ COMPLETE (2026-06-18)
+- [x] `/admin/players` — CRUD player management page
+  - [x] Two-column layout: form (add/edit) + player table
+  - [x] Cascading selectors: Season → Age Group → Team filter
+  - [x] Client-side search: name, PlayerID, shirt_no
+  - [x] Toggle active/inactive per player (PUT active=false/true)
+  - [x] 🗑️ Delete button shown only for inactive players; blocked if has goals/cards
+  - [x] Status badges: 🟢 ใช้งาน / 🔴 ปิดใช้งาน
+  - [x] Summary count: total active / inactive
+- [x] `GET /api/admin/players/manage` — list players with filters (auth)
+- [x] `POST /api/admin/players/manage` — create player, validates player_code uniqueness
+- [x] `GET /api/admin/players/[playerId]` — single player with goals/cards count
+- [x] `PUT /api/admin/players/[playerId]` — update fields; updates division_id when team changes
+- [x] `DELETE /api/admin/players/[playerId]` — hard delete only if no goals/cards (409 otherwise)
+- [x] `GET /api/public/teams` — list teams for season+ageGroup (new public endpoint)
+- [x] AdminNav: 👤 Players link added
+- [x] npm run build: ✅ PASSED (36 routes)
+
 ### Phase 3C: Team Management 🔴 NOT STARTED
 ### Phase 3D: Season Management 🔴 NOT STARTED
 

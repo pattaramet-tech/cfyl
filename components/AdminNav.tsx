@@ -69,6 +69,13 @@ export function AdminNav({ email, fullName }: AdminNavProps) {
             </Link>
 
             <Link
+              href="/admin/players"
+              className="block px-4 py-3 rounded-lg hover:bg-gray-800 transition hover:text-white"
+            >
+              👤 Players
+            </Link>
+
+            <Link
               href="/admin/suspensions"
               className="block px-4 py-3 rounded-lg hover:bg-gray-800 transition hover:text-white"
             >
