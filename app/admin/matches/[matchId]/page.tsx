@@ -214,8 +214,8 @@ export default function EditMatchPage() {
       </div>
 
       {/* Edit Form */}
-      <div className="bg-white rounded-lg shadow p-6">
-        <h2 className="text-lg font-semibold text-gray-800 mb-6">Update Score & Status</h2>
+      <div className="bg-white rounded-lg shadow p-4 md:p-6">
+        <h2 className="text-base md:text-lg font-semibold text-gray-800 mb-4 md:mb-6">Update Score & Status</h2>
 
         {error && (
           <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg">

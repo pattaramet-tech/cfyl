@@ -94,9 +94,9 @@ export default function AdminDashboardPage() {
       {/* Stats Cards */}
       {stats && !isLoading && (
         <>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
             {/* Total Matches */}
-            <div className="bg-white rounded-lg shadow p-6 border-l-4 border-blue-600">
+            <div className="bg-white rounded-lg shadow p-4 sm:p-6 border-l-4 border-blue-600">
               <p className="text-gray-600 text-sm font-semibold">Total Matches</p>
               <p className="text-3xl font-bold text-blue-600 mt-2">{stats.totalMatches}</p>
               <p className="text-xs text-gray-500 mt-2">
@@ -105,7 +105,7 @@ export default function AdminDashboardPage() {
             </div>
 
             {/* Finished Matches */}
-            <div className="bg-white rounded-lg shadow p-6 border-l-4 border-green-600">
+            <div className="bg-white rounded-lg shadow p-4 sm:p-6 border-l-4 border-green-600">
               <p className="text-gray-600 text-sm font-semibold">Finished Matches</p>
               <p className="text-3xl font-bold text-green-600 mt-2">{stats.finishedMatches}</p>
               <p className="text-xs text-gray-500 mt-2">
@@ -114,7 +114,7 @@ export default function AdminDashboardPage() {
             </div>
 
             {/* Total Goals */}
-            <div className="bg-white rounded-lg shadow p-6 border-l-4 border-orange-600">
+            <div className="bg-white rounded-lg shadow p-4 sm:p-6 border-l-4 border-orange-600">
               <p className="text-gray-600 text-sm font-semibold">Total Goals Recorded</p>
               <p className="text-3xl font-bold text-orange-600 mt-2">{stats.totalGoals}</p>
               <p className="text-xs text-gray-500 mt-2">
@@ -123,7 +123,7 @@ export default function AdminDashboardPage() {
             </div>
 
             {/* Total Cards */}
-            <div className="bg-white rounded-lg shadow p-6 border-l-4 border-red-600">
+            <div className="bg-white rounded-lg shadow p-4 sm:p-6 border-l-4 border-red-600">
               <p className="text-gray-600 text-sm font-semibold">Total Cards Issued</p>
               <p className="text-3xl font-bold text-red-600 mt-2">{stats.totalCards}</p>
               <p className="text-xs text-gray-500 mt-2">
@@ -132,7 +132,7 @@ export default function AdminDashboardPage() {
             </div>
 
             {/* Total Teams */}
-            <div className="bg-white rounded-lg shadow p-6 border-l-4 border-purple-600">
+            <div className="bg-white rounded-lg shadow p-4 sm:p-6 border-l-4 border-purple-600">
               <p className="text-gray-600 text-sm font-semibold">Total Teams</p>
               <p className="text-3xl font-bold text-purple-600 mt-2">{stats.totalTeams}</p>
               <p className="text-xs text-gray-500 mt-2">
@@ -141,7 +141,7 @@ export default function AdminDashboardPage() {
             </div>
 
             {/* Total Players */}
-            <div className="bg-white rounded-lg shadow p-6 border-l-4 border-indigo-600">
+            <div className="bg-white rounded-lg shadow p-4 sm:p-6 border-l-4 border-indigo-600">
               <p className="text-gray-600 text-sm font-semibold">Total Players</p>
               <p className="text-3xl font-bold text-indigo-600 mt-2">{stats.totalPlayers}</p>
               <p className="text-xs text-gray-500 mt-2">
@@ -153,7 +153,7 @@ export default function AdminDashboardPage() {
           {/* Quick Actions */}
           <div className="mt-8">
             <h2 className="text-xl font-bold text-gray-800 mb-4">🚀 Quick Actions</h2>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
               <Link
                 href="/admin/matches"
                 className="p-6 bg-gradient-to-br from-blue-50 to-blue-100 rounded-lg border border-blue-200 hover:border-blue-400 transition"

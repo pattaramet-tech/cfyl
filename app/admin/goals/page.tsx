@@ -180,7 +180,7 @@ export default function GoalsPage() {
       {/* Filters */}
       <div className="bg-white rounded-lg shadow p-6">
         <h2 className="text-lg font-semibold text-gray-800 mb-4">Select Match</h2>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4 mb-6">
           {/* Season Select */}
           <div>
             <label className="block text-sm font-semibold text-gray-700 mb-2">
@@ -252,7 +252,7 @@ export default function GoalsPage() {
             <label className="block text-sm font-semibold text-gray-700 mb-3">
               Select Match
             </label>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-2 lg:grid-cols-3 gap-2 sm:gap-3">
               {matches.map((match) => (
                 <button
                   key={match.id}

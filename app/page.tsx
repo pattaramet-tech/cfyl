@@ -86,9 +86,9 @@ export default function Home() {
         </div>
       ) : (
         <>
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            <div className="lg:col-span-2 bg-white rounded-lg shadow-md p-6">
-              <h3 className="text-xl font-bold text-gray-800 mb-4">📅 โปรแกรมแข่งขันล่าสุด</h3>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 md:gap-6">
+            <div className="md:col-span-2 bg-white rounded-lg shadow-md p-4 md:p-6">
+              <h3 className="text-lg md:text-xl font-bold text-gray-800 mb-4">📅 โปรแกรมแข่งขันล่าสุด</h3>
               <div className="space-y-3">
                 {matches.length > 0 ? (
                   <>
@@ -105,7 +105,7 @@ export default function Home() {
               </div>
             </div>
 
-            <div className="bg-white rounded-lg shadow-md p-6">
+            <div className="bg-white rounded-lg shadow-md p-4 md:p-6">
               <h3 className="text-xl font-bold text-gray-800 mb-4">🏆 ดาวซัลโว TOP 5</h3>
               {topScorers.length > 0 ? (
                 <div className="space-y-2">
@@ -128,8 +128,8 @@ export default function Home() {
             </div>
           </div>
 
-          <div className="bg-white rounded-lg shadow-md p-6">
-            <h3 className="text-xl font-bold text-gray-800 mb-4">📊 ตารางคะแนน Top 4</h3>
+          <div className="bg-white rounded-lg shadow-md p-4 md:p-6">
+            <h3 className="text-lg md:text-xl font-bold text-gray-800 mb-4">📊 ตารางคะแนน Top 4</h3>
             {standings.length > 0 ? (
               <>
                 <StandingsTable standings={standings} />

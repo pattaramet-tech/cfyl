@@ -81,14 +81,14 @@ export default function TopScorersPage() {
       ) : (
         <>
           {divisions.length > 0 && (
-            <div className="bg-white rounded-lg shadow-md p-6">
-              <h2 className="text-lg font-semibold text-gray-800 mb-4">เลือกดิวิชั่น</h2>
+            <div className="bg-white rounded-lg shadow-md p-4 md:p-6">
+              <h2 className="text-base md:text-lg font-semibold text-gray-800 mb-3 md:mb-4">เลือกดิวิชั่น</h2>
               <div className="flex flex-wrap gap-2">
                 {divisions.map(div => (
                   <button
                     key={div.id}
                     onClick={() => setSelectedDivision(div.id)}
-                    className={`px-4 py-2 rounded-lg font-semibold transition ${
+                    className={`px-3 md:px-4 py-2 text-sm md:text-base rounded-lg font-semibold transition ${
                       selectedDivision === div.id
                         ? 'bg-blue-600 text-white'
                         : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
@@ -101,7 +101,7 @@ export default function TopScorersPage() {
             </div>
           )}
 
-          <div className="bg-white rounded-lg shadow-md p-6">
+          <div className="bg-white rounded-lg shadow-md p-4 md:p-6">
             {loading ? (
               <p className="text-center py-12 text-gray-500">กำลังโหลดข้อมูล...</p>
             ) : scorers.length > 0 ? (

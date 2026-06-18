@@ -307,7 +307,7 @@ export default function CardsPage() {
       )}
 
       {/* Selectors */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
         {/* Season */}
         <div>
           <label className="block text-sm font-semibold text-gray-700 mb-2">
@@ -398,9 +398,9 @@ export default function CardsPage() {
 
       {/* Content */}
       {selectedMatch && selectedMatchData && (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6">
           {/* Add Card Form */}
-          <div className="lg:col-span-1 bg-white p-6 rounded-lg shadow">
+          <div className="md:col-span-1 bg-white p-4 sm:p-6 rounded-lg shadow">
             <h2 className="text-xl font-bold text-gray-800 mb-4">Add Card</h2>
             <CardForm
               matchId={selectedMatch}
@@ -413,7 +413,7 @@ export default function CardsPage() {
           </div>
 
           {/* Cards List */}
-          <div className="lg:col-span-2 bg-white p-6 rounded-lg shadow">
+          <div className="md:col-span-1 lg:col-span-2 bg-white p-4 sm:p-6 rounded-lg shadow">
             <h2 className="text-xl font-bold text-gray-800 mb-4">Cards in Match</h2>
             <CardsList
               matchId={selectedMatch}
