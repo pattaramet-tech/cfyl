@@ -6,7 +6,7 @@
 import XLSX from 'xlsx';
 import path from 'path';
 import { createClient } from '@supabase/supabase-js';
-import { excelDateToISO, parseTaiTime, extractDivisionNumber } from '../lib/calculations';
+import { excelDateToISO, parseTaiTime, extractDivisionNumber } from '../lib/calculations.ts';
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
