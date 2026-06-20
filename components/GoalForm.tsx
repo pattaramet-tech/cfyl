@@ -166,7 +166,7 @@ export function GoalForm({
       {/* Submit button */}
       <button
         type="submit"
-        disabled={isSaving || !playerId}
+        disabled={isSaving || (!isEditing && !playerId)}
         className="w-full px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white rounded-lg font-semibold transition text-sm"
       >
         {isSaving ? '⏳ Saving...' : isEditing ? '💾 Update Goal' : '➕ Add Goal'}

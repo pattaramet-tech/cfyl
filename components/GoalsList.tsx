@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { GoalForm } from './GoalForm';
+import { BulkGoalForm } from './BulkGoalForm';
 
 interface Goal {
   id: string;
@@ -150,7 +151,7 @@ export function GoalsList({
                     #{goal.player?.shirt_no || '—'}
                   </td>
                   <td className="px-6 py-4 text-sm text-gray-600">
-                    {goal.team?.short_name}
+                    {goal.team?.name || goal.team?.short_name || '—'}
                   </td>
                   <td className="px-6 py-4 text-center">
                     <span className="inline-block px-3 py-1 bg-blue-100 text-blue-800 rounded-full font-bold">
@@ -187,8 +188,16 @@ export function GoalsList({
         </div>
       )}
 
-      {/* Add goal form */}
+      {/* Single add goal form */}
       <GoalForm
+        matchId={matchId}
+        homeTeamId={homeTeamId}
+        awayTeamId={awayTeamId}
+        onSuccess={onGoalsChange}
+      />
+
+      {/* Bulk add goals */}
+      <BulkGoalForm
         matchId={matchId}
         homeTeamId={homeTeamId}
         awayTeamId={awayTeamId}

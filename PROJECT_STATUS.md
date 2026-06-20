@@ -1,7 +1,7 @@
 # 📊 PROJECT_STATUS.md
 
-**Last Updated**: 2026-06-19 (Phase 3D Complete)  
-**Current Phase**: Phase 2e ✅ COMPLETE | Phase 3A ✅ COMPLETE | Phase 3B ✅ COMPLETE | Phase 3C ✅ COMPLETE | Phase 3D ✅ COMPLETE
+**Last Updated**: 2026-06-19 (Phase 3E Complete)  
+**Current Phase**: Phase 2e ✅ COMPLETE | Phase 3A ✅ COMPLETE | Phase 3B ✅ COMPLETE | Phase 3C ✅ COMPLETE | Phase 3D ✅ COMPLETE | Phase 3E ✅ COMPLETE
 
 ---
 
@@ -149,6 +149,18 @@
 - [x] Public pages unaffected (standings/fixtures query by divisionId, not active status)
 - [x] AdminNav 👥 Teams link already existed — now has a working page
 - [x] npm run build: ✅ PASSED (39 routes)
+
+### Phase 3E: Goals & Cards UX Improvement ✅ COMPLETE (2026-06-19)
+- [x] **Edit Goal bug fixed**: `GoalForm.tsx` — `disabled` condition now skips `playerId` check in edit mode
+- [x] **PlayerSelector**: label `#เบอร์ ชื่อ — ทีม`; search by name/jersey/team name; optgroup uses full team name
+- [x] **Goals table**: Team column shows `team.name` (full) not `short_name`
+- [x] **BulkGoalForm**: multi-row UI under Add Goal; duplicate player rows warned + auto-merged; total > 10 → split records (no silent truncation); POST `/api/admin/goals/bulk`
+- [x] **BulkCardForm**: multi-row UI under Add Card; minute = `null` if not entered; POST `/api/admin/cards/bulk`
+- [x] **`POST /api/admin/goals/bulk`**: auth+permission; validate match+players; merge duplicates; split records if total > 10; returns `{ created, players, split }`
+- [x] **`POST /api/admin/cards/bulk`**: auth+permission; validate match+players; minute=null if omitted; insert all then recalculate suspension per distinct player; suspension errors in `suspensionWarnings[]`
+- [x] **CardsList**: minute shows `—` when null
+- [x] lib/suspension-calc.ts untouched; public pages unaffected
+- [x] npm run build: ✅ PASSED (49 routes)
 
 ### Phase 3D: Season Management ✅ COMPLETE (2026-06-19)
 - [x] `/admin/seasons` — tabbed CRUD page (Seasons / Age Groups / Divisions)

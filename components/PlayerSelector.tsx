@@ -81,12 +81,17 @@ export function PlayerSelector({
     loadPlayers();
   }, [homeTeamId, awayTeamId]);
 
-  // Filter players by search term
-  const filteredPlayers = players.filter(
-    (p) =>
-      p.full_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      p.shirt_no?.toString().includes(searchTerm)
-  );
+  // Filter players by search term (name, jersey, team name)
+  const filteredPlayers = players.filter((p) => {
+    if (!searchTerm) return true;
+    const q = searchTerm.toLowerCase();
+    return (
+      p.full_name.toLowerCase().includes(q) ||
+      p.shirt_no?.toString().includes(searchTerm) ||
+      p.team?.name?.toLowerCase().includes(q) ||
+      p.team?.short_name?.toLowerCase().includes(q)
+    );
+  });
 
   return (
     <div className="space-y-2">
@@ -110,7 +115,7 @@ export function PlayerSelector({
           {/* Search input */}
           <input
             type="text"
-            placeholder="Search by name or jersey #"
+            placeholder="ค้นหา ชื่อ / เบอร์ / ทีม"
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
             disabled={disabled || isLoading}
@@ -131,13 +136,13 @@ export function PlayerSelector({
             {/* Group by team */}
             {Array.from(new Set(filteredPlayers.map((p) => p.team_id))).map((teamId) => {
               const teamPlayers = filteredPlayers.filter((p) => p.team_id === teamId);
-              const teamName = teamPlayers[0]?.team?.short_name || 'Team';
+              const teamName = teamPlayers[0]?.team?.name || teamPlayers[0]?.team?.short_name || 'Team';
 
               return (
                 <optgroup key={teamId} label={teamName}>
                   {teamPlayers.map((player) => (
                     <option key={player.id} value={player.id}>
-                      {player.full_name} #{player.shirt_no || '—'}
+                      #{player.shirt_no || '—'} {player.full_name} — {player.team?.name || player.team?.short_name || ''}
                     </option>
                   ))}
                 </optgroup>

@@ -2,6 +2,20 @@
 
 All notable changes to CFYL Youth League system are documented here.
 
+## [Phase 3E] - 2026-06-19 ✅ COMPLETE
+
+### Goals & Cards UX Improvement
+- **Fix Edit Goal bug**: `GoalForm.tsx` button was always disabled in edit mode because `playerId` was empty (not passed). Fixed `disabled` condition to skip player check when `isEditing=true`
+- **PlayerSelector**: option label changed to `#เบอร์ ชื่อ — ชื่อทีม`; search now includes team name; optgroup uses full team name
+- **Goals table**: Team column now shows `team.name` (full name) instead of `short_name`
+- **Bulk Add Goals** (`BulkGoalForm`): multi-row UI in `/admin/goals`; duplicate player rows auto-merge; if merged total > 10 the API splits into multiple records (e.g. 12 → 10+2), no data lost
+- **Bulk Add Cards** (`BulkCardForm`): multi-row UI in `/admin/cards`; minute is `null` if not entered (not 0); suspension recalculated per distinct player after all inserts; suspension errors surfaced as `suspensionWarnings[]` in response (not silent)
+- **New API** `POST /api/admin/goals/bulk`: auth+`can_edit_goals`; validates match, players; merges duplicates; splits records > 10
+- **New API** `POST /api/admin/cards/bulk`: auth+`can_edit_cards`; validates match, players, card_type; minute=null if omitted; bulk insert then recalculate suspension per player
+- **CardsList**: minute column now shows `—` if null (instead of `null'`)
+- Public pages (`/top-scorers`, `/discipline`, `/standings`, `/fixtures`) unaffected
+- Suspension logic (`lib/suspension-calc.ts`) untouched
+
 ## [Phase 3D] - 2026-06-19 ✅ COMPLETE
 
 ### Season Management

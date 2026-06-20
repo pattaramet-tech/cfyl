@@ -177,7 +177,7 @@ export function CardsList({
                     </span>
                   </td>
                   <td className="px-4 py-3 text-center text-gray-800 font-semibold">
-                    {card.minute}'
+                    {card.minute != null ? `${card.minute}'` : '—'}
                   </td>
                   <td className="px-4 py-3 text-right">
                     <div className="flex gap-2 justify-end">

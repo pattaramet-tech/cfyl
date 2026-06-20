@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { CardForm } from '@/components/CardForm';
 import { CardsList } from '@/components/CardsList';
+import { BulkCardForm } from '@/components/BulkCardForm';
 
 interface Season {
   id: string;
@@ -409,6 +410,12 @@ export default function CardsPage() {
               onSave={handleAddCard}
               onCancel={() => {}}
               isLoading={isLoadingCards}
+            />
+            <BulkCardForm
+              matchId={selectedMatch}
+              homeTeamId={selectedMatchData.home_team_id}
+              awayTeamId={selectedMatchData.away_team_id}
+              onSuccess={handleCardUpdated}
             />
           </div>
 
