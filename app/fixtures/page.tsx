@@ -36,9 +36,9 @@ export default function FixturesPage() {
       const data = await res.json();
       setMatches(data);
 
-      // Extract unique matchdays
+      // Extract unique matchdays (from freshly-fetched data, not stale state)
       const days = Array.from(
-        new Set(matches.map((m) => String(m.matchday)).filter(Boolean))
+        new Set((data as Match[]).map((m) => String(m.matchday)).filter(Boolean))
       );
 
       setMatchdays(days);
@@ -63,34 +63,29 @@ export default function FixturesPage() {
 
   return (
     <div className="space-y-6">
-      <div className="bg-white rounded-lg shadow-md p-6">
-        <h1 className="text-3xl font-bold text-gray-800 mb-4">📅 โปรแกรมแข่งขัน</h1>
+      <div className="cfyl-section">
+        <h1 className="text-2xl sm:text-3xl font-bold text-slate-800 mb-4">📅 โปรแกรมแข่งขัน</h1>
         <SeasonSelector />
       </div>
 
       {!seasonId || !ageGroupId ? (
-        <div className="text-center py-12 text-gray-500">
-          <p>โปรดเลือกฤดูกาลและรุ่นอายุ</p>
-        </div>
+        <div className="cfyl-empty">โปรดเลือกฤดูกาลและรุ่นอายุ</div>
       ) : loading ? (
-        <div className="text-center py-12 text-gray-500">
-          <p>กำลังโหลดข้อมูล...</p>
+        <div className="cfyl-loading">
+          <span className="cfyl-spinner w-5 h-5" />
+          กำลังโหลดข้อมูล...
         </div>
       ) : (
         <>
           {matchdays.length > 0 && (
-            <div className="bg-white rounded-lg shadow-md p-4 md:p-6">
-              <h2 className="text-base md:text-lg font-semibold text-gray-800 mb-3 md:mb-4">เลือก MatchDay</h2>
+            <div className="cfyl-section">
+              <h2 className="cfyl-section-title mb-3">เลือก MatchDay</h2>
               <div className="flex flex-wrap gap-2">
                 {matchdays.map(day => (
                   <button
                     key={day}
                     onClick={() => setSelectedMatchday(day)}
-                    className={`px-3 md:px-4 py-2 text-sm md:text-base rounded-lg font-semibold transition ${
-                      selectedMatchday === day
-                        ? 'bg-blue-600 text-white'
-                        : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
-                    }`}
+                    className={`cfyl-chip ${selectedMatchday === day ? 'cfyl-chip-active' : ''}`}
                   >
                     {day}
                   </button>
@@ -99,15 +94,15 @@ export default function FixturesPage() {
             </div>
           )}
 
-          <div className="bg-white rounded-lg shadow-md p-4 md:p-6">
+          <div className="cfyl-section">
             {filteredMatches.length > 0 ? (
-              <div className="space-y-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
                 {filteredMatches.map(match => (
                   <MatchCard key={match.id} match={match} />
                 ))}
               </div>
             ) : (
-              <p className="text-center py-12 text-gray-500">ไม่พบข้อมูลแมตช์</p>
+              <p className="cfyl-empty">ไม่พบข้อมูลแมตช์</p>
             )}
           </div>
         </>

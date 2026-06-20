@@ -8,43 +8,65 @@ interface MatchCardProps {
   };
 }
 
+function formatDate(dateStr?: string | null): string {
+  if (!dateStr) return '';
+  const d = new Date(dateStr);
+  if (isNaN(d.getTime())) return '';
+  return d.toLocaleDateString('th-TH', { day: 'numeric', month: 'short' });
+}
+
 export function MatchCard({ match }: MatchCardProps) {
   const isFinished = match.status === 'finished';
-  const homeTeam = match.home_team?.short_name || match.home_team?.name || 'Team A';
-  const awayTeam = match.away_team?.short_name || match.away_team?.name || 'Team B';
+  const homeTeam = match.home_team?.name || match.home_team?.short_name || 'ทีมเหย้า';
+  const awayTeam = match.away_team?.name || match.away_team?.short_name || 'ทีมเยือน';
+  const date = formatDate(match.match_date);
 
   return (
-    <div className="border border-gray-200 rounded-lg p-4 bg-white hover:shadow-lg transition">
-      <div className="text-sm text-gray-500 mb-2">
-        {match.matchday} · {match.match_time}
+    <div className="cfyl-card p-4 hover:shadow-md transition">
+      {/* Meta row */}
+      <div className="flex items-center justify-between gap-2 mb-3 text-xs">
+        <div className="flex items-center gap-2 text-slate-500 min-w-0">
+          <span className="font-semibold text-blue-900 whitespace-nowrap">{match.matchday}</span>
+          {match.division?.name && (
+            <span className="truncate text-slate-400">· {match.division.name}</span>
+          )}
+        </div>
+        <div className="flex items-center gap-2 text-slate-500 whitespace-nowrap">
+          {date && <span>{date}</span>}
+          {match.match_time && <span>{String(match.match_time).substring(0, 5)}</span>}
+        </div>
       </div>
 
-      <div className="text-xs text-gray-400 mb-3 font-medium">{match.division?.name}</div>
-
-      <div className="flex items-center justify-between mb-3">
-        <div className="flex-1">
-          <div className="font-semibold text-sm text-gray-800">{homeTeam}</div>
+      {/* Teams + score */}
+      <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-3">
+        <div className="text-sm font-semibold text-slate-800 text-right break-words">
+          {homeTeam}
         </div>
 
-        <div className="mx-4 flex items-center gap-2">
+        <div className="flex items-center justify-center min-w-[64px]">
           {isFinished ? (
-            <>
-              <span className="text-2xl font-bold text-blue-600">{match.home_score}</span>
-              <span className="text-gray-400">-</span>
-              <span className="text-2xl font-bold text-blue-600">{match.away_score}</span>
-            </>
+            <div className="flex items-center gap-2 px-3 py-1 rounded-lg bg-blue-50">
+              <span className="text-xl font-bold text-blue-900">{match.home_score}</span>
+              <span className="text-slate-400">-</span>
+              <span className="text-xl font-bold text-blue-900">{match.away_score}</span>
+            </div>
           ) : (
-            <span className="text-gray-400 text-sm">vs</span>
+            <span className="text-slate-400 text-sm font-medium">VS</span>
           )}
         </div>
 
-        <div className="flex-1 text-right">
-          <div className="font-semibold text-sm text-gray-800">{awayTeam}</div>
-        </div>
+        <div className="text-sm font-semibold text-slate-800 break-words">{awayTeam}</div>
       </div>
 
-      <div className="text-xs text-center text-gray-500">
-        {isFinished ? '✓ แข่งจบแล้ว' : '⏰ ยังไม่แข่ง'}
+      {/* Status */}
+      <div className="mt-3 flex justify-center">
+        <span
+          className={`cfyl-badge ${
+            isFinished ? 'bg-slate-100 text-slate-600' : 'bg-blue-50 text-blue-700'
+          }`}
+        >
+          {isFinished ? '✓ แข่งจบแล้ว' : '⏰ ยังไม่แข่ง'}
+        </span>
       </div>
     </div>
   );

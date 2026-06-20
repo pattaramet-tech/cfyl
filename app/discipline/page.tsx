@@ -93,11 +93,11 @@ export default function DisciplinePage() {
 
   return (
     <div className="space-y-6">
-      <div className="bg-white rounded-lg shadow-md p-6">
-        <h1 className="text-3xl font-bold text-gray-800 mb-4">
+      <div className="cfyl-section">
+        <h1 className="text-2xl sm:text-3xl font-bold text-slate-800 mb-3">
           ⚠️ ใบเหลืองใบแดง / โทษแบน
         </h1>
-        <p className="text-gray-600 text-sm">
+        <p className="text-slate-500 text-xs sm:text-sm mb-4">
           ระบบคิดคะแนนโทษ CFYL: เหลือง 1 ใบ = 2 คะแนน | เหลือง 2 ใบ = 4 คะแนน | แดง =
           6 คะแนน | เหลือง 1 + แดง 1 = 8 คะแนน
         </p>
@@ -105,26 +105,18 @@ export default function DisciplinePage() {
       </div>
 
       {!seasonId || !ageGroupId ? (
-        <div className="text-center py-12 text-gray-500">
-          <p>โปรดเลือกฤดูกาลและรุ่นอายุ</p>
-        </div>
+        <div className="cfyl-empty">โปรดเลือกฤดูกาลและรุ่นอายุ</div>
       ) : (
         <>
           {divisions.length > 0 && (
-            <div className="bg-white rounded-lg shadow-md p-4 md:p-6">
-              <h2 className="text-base md:text-lg font-semibold text-gray-800 mb-3 md:mb-4">
-                เลือกดิวิชั่น (ไม่จำเป็น - แสดงทั้งหมด)
-              </h2>
+            <div className="cfyl-section">
+              <h2 className="cfyl-section-title mb-3">เลือกดิวิชั่น (ไม่จำเป็น - แสดงทั้งหมด)</h2>
               <div className="flex flex-wrap gap-2">
                 {divisions.map((div) => (
                   <button
                     key={div.id}
                     onClick={() => setSelectedDivision(div.id)}
-                    className={`px-3 md:px-4 py-2 text-sm md:text-base rounded-lg font-semibold transition ${
-                      selectedDivision === div.id
-                        ? 'bg-red-600 text-white'
-                        : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
-                    }`}
+                    className={`cfyl-chip ${selectedDivision === div.id ? 'cfyl-chip-active' : ''}`}
                   >
                     {div.name}
                   </button>
@@ -133,15 +125,16 @@ export default function DisciplinePage() {
             </div>
           )}
 
-          <div className="bg-white rounded-lg shadow-md p-4 md:p-6">
+          <div className="cfyl-section">
             {loading ? (
-              <p className="text-center py-12 text-gray-500">กำลังโหลดข้อมูล...</p>
+              <div className="cfyl-loading">
+                <span className="cfyl-spinner w-5 h-5" />
+                กำลังโหลดข้อมูล...
+              </div>
             ) : suspensions.length > 0 ? (
               <DisciplineTable records={suspensions} />
             ) : (
-              <p className="text-center py-12 text-gray-500">
-                ไม่พบข้อมูลใบเหลืองใบแดง
-              </p>
+              <p className="cfyl-empty">ไม่พบข้อมูลใบเหลืองใบแดง</p>
             )}
           </div>
         </>

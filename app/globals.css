@@ -1,26 +1,101 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
-
+/* ─── Theme tokens (Tailwind v4) ──────────────────────────────────────────── */
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --color-background: #f8fafc; /* slate-50 */
+  --color-foreground: #0f172a; /* slate-900 */
+  --font-sans: var(--font-prompt), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono, ui-monospace, monospace);
+
+  /* CFYL brand — official navy / royal blue */
+  --color-cfyl-navy: #1e3a8a;   /* blue-900 */
+  --color-cfyl-blue: #1d4ed8;   /* blue-700 */
+  --color-cfyl-soft: #eff6ff;   /* blue-50 */
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+:root {
+  --background: #f8fafc;
+  --foreground: #0f172a;
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-prompt), ui-sans-serif, system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ─── Reusable components ──────────────────────────────────────────────────── */
+@layer components {
+  .cfyl-card {
+    @apply bg-white rounded-xl border border-slate-200 shadow-sm;
+  }
+  .cfyl-section {
+    @apply bg-white rounded-xl border border-slate-200 shadow-sm p-4 sm:p-6;
+  }
+  .cfyl-section-title {
+    @apply text-lg sm:text-xl font-semibold text-slate-800;
+  }
+
+  /* Buttons — min height 44px tap target */
+  .cfyl-btn-primary {
+    @apply inline-flex items-center justify-center gap-2 min-h-[44px] px-5 py-2.5
+           rounded-lg font-semibold text-white bg-blue-900 hover:bg-blue-800
+           transition shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-400;
+  }
+  .cfyl-btn-secondary {
+    @apply inline-flex items-center justify-center gap-2 min-h-[44px] px-5 py-2.5
+           rounded-lg font-semibold text-blue-900 bg-white border border-blue-200
+           hover:bg-blue-50 transition focus:outline-none focus:ring-2 focus:ring-blue-300;
+  }
+
+  /* Filter chips (season / division / matchday) */
+  .cfyl-chip {
+    @apply px-3.5 py-2 min-h-[40px] rounded-full text-sm font-medium transition
+           bg-slate-100 text-slate-600 hover:bg-slate-200
+           focus:outline-none focus:ring-2 focus:ring-blue-300;
+  }
+  .cfyl-chip-active {
+    @apply bg-blue-900 text-white hover:bg-blue-900;
+  }
+
+  /* Select / inputs */
+  .cfyl-select {
+    @apply min-h-[44px] px-3.5 py-2 border border-slate-300 rounded-lg text-sm bg-white
+           text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500;
+  }
+
+  /* Badge */
+  .cfyl-badge {
+    @apply inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold;
+  }
+
+  /* Tables */
+  .cfyl-table {
+    @apply w-full text-sm border-collapse;
+  }
+  .cfyl-table thead tr {
+    @apply bg-blue-900 text-white text-xs;
+  }
+  .cfyl-table th {
+    @apply px-3 py-3 font-semibold;
+  }
+  .cfyl-table tbody tr {
+    @apply border-b border-slate-100;
+  }
+
+  /* States */
+  .cfyl-empty {
+    @apply text-center py-12 text-slate-400 text-sm;
+  }
+  .cfyl-loading {
+    @apply flex items-center justify-center gap-3 py-12 text-slate-500 text-sm;
+  }
+  .cfyl-error {
+    @apply p-4 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm;
+  }
+
+  .cfyl-spinner {
+    @apply inline-block animate-spin rounded-full border-2 border-blue-600 border-t-transparent;
+  }
 }

@@ -252,6 +252,21 @@
 - [x] Client-side only — no API change; `/standings` public unaffected
 - [x] npm run build: ✅ PASSED
 
+### Phase 4C: Public UI/UX Polish + Admin Access Button ✅ COMPLETE (2026-06-21)
+- [x] Whole-site font → **Prompt** (`next/font/google`, 400/500/600/700, thai+latin)
+- [x] `app/globals.css` — navy brand tokens + reusable `.cfyl-*` component classes (Tailwind v4 `@layer`)
+- [x] `components/PublicChrome.tsx` (NEW) — responsive header, hamburger (mobile), outline Admin button (desktop), footer; passes through on `/admin*` (fixes double-header)
+- [x] `app/layout.tsx` — load Prompt + render PublicChrome shell
+- [x] Homepage hero (title + Season 2026 + primary buttons + quick links)
+- [x] `/fixtures` mobile match-card grid + chip filters (+ fixed stale matchday filter)
+- [x] `/standings` compact scrollable table, sticky team, rank badges
+- [x] `/top-scorers` ranked list layout
+- [x] `/discipline` mobile cards + desktop table, soft status badges
+- [x] `SeasonSelector` restyled + U14/U17 accent
+- [x] Admin inherits Prompt globally; sidebar/pages unchanged
+- [x] No API/DB/logic changes; 0-0 / GD 0 / PTS 0 correct
+- [x] npm run build: ✅ PASSED
+
 ### Suspension Lifecycle Status ✅ COMPLETE (2026-06-21)
 - [x] `lib/suspension-status.ts` — `getSuspensionStatus(record, today)` derives live status
   - [x] States: `normal` / `warning` / `pending` / `active` / `served` / `no_next_match`

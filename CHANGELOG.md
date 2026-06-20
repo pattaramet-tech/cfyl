@@ -2,6 +2,44 @@
 
 All notable changes to CFYL Youth League system are documented here.
 
+## [Phase 4C: Public UI/UX Polish + Admin Access Button] - 2026-06-21 ✅ COMPLETE
+
+### Official, clean, mobile-first redesign (CSS / layout only — no logic touched)
+
+**Font**: switched whole site to **Prompt** via `next/font/google`
+(weights 400/500/600/700, `thai`+`latin` subsets). Removed the old Arial override.
+
+**`app/globals.css`** (Tailwind v4 theme):
+- Navy/royal-blue brand tokens; light slate background; removed dark-mode override
+- Reusable component classes via `@layer components`:
+  `.cfyl-card .cfyl-section .cfyl-section-title .cfyl-btn-primary .cfyl-btn-secondary
+  .cfyl-chip(.cfyl-chip-active) .cfyl-select .cfyl-badge .cfyl-table .cfyl-empty
+  .cfyl-loading .cfyl-error .cfyl-spinner`
+
+**`components/PublicChrome.tsx`** (NEW, client):
+- Responsive public header — sticky navy bar, desktop inline nav + **outline "Admin"
+  button (top-right)**, mobile **hamburger dropdown** with Admin link at the end
+- Owns `<main>` container + footer; **returns children untouched on `/admin*`**
+  (fixes the old double-header where the public bar wrapped admin pages)
+- Admin link → `/admin` (existing auth redirects to login if not signed in)
+
+**`app/layout.tsx`**: loads Prompt, renders `<PublicChrome>` shell (header/footer removed from layout).
+
+**Public pages polished (mobile-first):**
+- `/` — official hero (title + Season 2026 + primary buttons + quick links) + restyled preview cards
+- `/fixtures` — match cards in responsive grid; chip filters; **fixed matchday filter** (was reading stale `matches` state instead of fetched `data`)
+- `/standings` — compact table, horizontal scroll, sticky team column, rank badges (cols: #/Team/P/ช/ส/พ/+−/คะแนน)
+- `/top-scorers` — clean ranked list layout
+- `/discipline` — **mobile card layout** + desktop table; soft status badges (warning amber / pending·active red / no_next_match gray); served+normal still hidden per lifecycle logic
+- `SeasonSelector` — restyled; subtle age-group accent (U14 amber, U17 blue)
+
+**Components restyled**: `MatchCard`, `StandingsTable`, `TopScorersTable`, `DisciplineTable` — navy palette, lighter shadows, larger tap targets, 0-0 / GD 0 / PTS 0 render correctly (no truthy checks).
+
+**Admin**: inherits Prompt font globally; no longer wrapped by the public header; sidebar/pages unchanged (no risky refactor).
+
+- No change to API / DB / standings / suspension / goals / cards / auth / export logic
+- npm run build: ✅ PASSED
+
 ## 🏁 Phase 3 Closeout - 2026-06-21 ✅ COMPLETE
 
 **Phase 3G tested and passed in production.** The Cards and Suspensions

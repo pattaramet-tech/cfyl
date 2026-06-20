@@ -76,20 +76,29 @@ export function SeasonSelector() {
   };
 
   if (loading) {
-    return <div className="text-center py-4">Loading...</div>;
+    return <div className="text-center py-4 text-slate-500">กำลังโหลด...</div>;
   }
 
+  // Subtle age-group accent: U14 = amber, U17 = blue
+  const ageAccent = (code: string, active: boolean): string => {
+    if (!active) return 'cfyl-chip';
+    const c = code.toUpperCase();
+    if (c.includes('14')) return 'cfyl-chip bg-amber-500 text-white hover:bg-amber-500';
+    if (c.includes('17')) return 'cfyl-chip bg-blue-700 text-white hover:bg-blue-700';
+    return 'cfyl-chip cfyl-chip-active';
+  };
+
   return (
-    <div className="mb-6 flex gap-4 flex-wrap">
+    <div className="flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-4">
       <div className="flex items-center gap-2">
-        <label htmlFor="season" className="font-semibold text-gray-700">
-          ฤดูกาล:
+        <label htmlFor="season" className="text-sm font-semibold text-slate-600 whitespace-nowrap">
+          ฤดูกาล
         </label>
         <select
           id="season"
           value={selectedSeason}
           onChange={handleSeasonChange}
-          className="px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+          className="cfyl-select flex-1 sm:flex-none"
         >
           <option value="">-- เลือกฤดูกาล --</option>
           {seasons.map(season => (
@@ -102,9 +111,7 @@ export function SeasonSelector() {
 
       {ageGroups.length > 0 && (
         <div className="flex items-center gap-2">
-          <label htmlFor="ageGroup" className="font-semibold text-gray-700">
-            รุ่นอายุ:
-          </label>
+          <span className="text-sm font-semibold text-slate-600 whitespace-nowrap">รุ่นอายุ</span>
           <div className="flex gap-2">
             {ageGroups.map(ag => (
               <button
@@ -113,11 +120,7 @@ export function SeasonSelector() {
                   setSelectedAgeGroup(ag.id);
                   updateUrl(selectedSeason, ag.id);
                 }}
-                className={`px-4 py-2 rounded-lg font-semibold transition ${
-                  selectedAgeGroup === ag.id
-                    ? 'bg-blue-600 text-white'
-                    : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
-                }`}
+                className={ageAccent(ag.code, selectedAgeGroup === ag.id)}
               >
                 {ag.code}
               </button>
