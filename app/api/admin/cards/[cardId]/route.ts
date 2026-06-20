@@ -49,12 +49,12 @@ export async function PUT(
     }
 
     const body = await request.json();
-    const { cardType, minute, playerId } = body;
+    const { cardType, minute, playerId, note } = body;
 
-    // Validation
-    if (!cardType && minute === undefined && !playerId) {
+    // Validation — at least one field required; minute null is allowed
+    if (!cardType && minute === undefined && !playerId && note === undefined) {
       return NextResponse.json(
-        { error: 'At least one field required: cardType, minute, or playerId' },
+        { error: 'At least one field required: cardType, minute, playerId, or note' },
         { status: 400 }
       );
     }
@@ -66,11 +66,13 @@ export async function PUT(
       );
     }
 
-    if (minute !== undefined && (typeof minute !== 'number' || minute < 0 || minute > 90)) {
-      return NextResponse.json(
-        { error: 'Minute must be between 0 and 90' },
-        { status: 400 }
-      );
+    if (minute !== undefined && minute !== null) {
+      if (typeof minute !== 'number' || minute < 0 || minute > 90) {
+        return NextResponse.json(
+          { error: 'Minute must be between 0 and 90' },
+          { status: 400 }
+        );
+      }
     }
 
     console.log('[CARDS_PUT] Fetching existing card');
@@ -145,7 +147,8 @@ export async function PUT(
         ...(playerId && { player_id: playerId }),
         ...(newTeamId && { team_id: newTeamId }),
         ...(cardType && { card_type: cardType }),
-        ...(minute !== undefined && { minute }),
+        ...(minute !== undefined && { minute: minute ?? null }),
+        ...(note !== undefined && { note: note ?? null }),
         updated_at: new Date().toISOString(),
       })
       .eq('id', cardId)

@@ -41,7 +41,7 @@ export async function GET(request: NextRequest) {
 
     console.log('[CARDS_GET] Fetching cards for match:', matchId);
 
-    // Get cards with player and team relations
+    // Get cards with player, team, and note
     const { data: cards, error } = await supabaseAdmin
       .from('cards')
       .select(`
@@ -50,8 +50,9 @@ export async function GET(request: NextRequest) {
         player_id,
         card_type,
         minute,
+        note,
         created_at,
-        player:player_id(id, full_name, shirt_no, team_id),
+        player:player_id(id, full_name, shirt_no, team_id, team:team_id(name, short_name)),
         match:match_id(id, matchday, home_team_id, away_team_id)
       `)
       .eq('match_id', matchId)
@@ -109,12 +110,12 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { matchId, playerId, cardType, minute } = body;
+    const { matchId, playerId, cardType, minute, note } = body;
 
-    // Validation
-    if (!matchId || !playerId || !cardType || minute === undefined) {
+    // Validation — minute is optional (null allowed)
+    if (!matchId || !playerId || !cardType) {
       return NextResponse.json(
-        { error: 'Missing required fields: matchId, playerId, cardType, minute' },
+        { error: 'Missing required fields: matchId, playerId, cardType' },
         { status: 400 }
       );
     }
@@ -126,11 +127,13 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    if (typeof minute !== 'number' || minute < 0 || minute > 90) {
-      return NextResponse.json(
-        { error: 'Minute must be between 0 and 90' },
-        { status: 400 }
-      );
+    if (minute !== null && minute !== undefined) {
+      if (typeof minute !== 'number' || minute < 0 || minute > 90) {
+        return NextResponse.json(
+          { error: 'Minute must be between 0 and 90' },
+          { status: 400 }
+        );
+      }
     }
 
     // Verify match exists
@@ -189,7 +192,8 @@ export async function POST(request: NextRequest) {
         player_id: playerId,
         team_id: playerTeamId,
         card_type: cardType,
-        minute,
+        minute: minute ?? null,
+        note: note ?? null,
         created_at: new Date().toISOString(),
       })
       .select()

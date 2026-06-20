@@ -2,6 +2,35 @@
 
 All notable changes to CFYL Youth League system are documented here.
 
+## [Phase 3G: Cards Page Full UI Redesign] - 2026-06-20 ✅ COMPLETE
+
+### Cards Page Full Redesign with 2-Column Layout
+
+**`app/admin/cards/page.tsx`** — full rewrite:
+- Cascading selectors: Season → Age Group → Division → Match (4-column responsive grid)
+- Match dropdown label: `[match_code] MD{matchday} | {time} | {home} score {away}`
+- `refreshCards` via `useCallback` — passed to all child components; called after any add/edit/delete
+- 2-column desktop layout (`lg:grid-cols-5`): left col-span-2 (Quick Add + Bulk Add), right col-span-3 (Cards List + Suspension Impact)
+- Shows "เลือก Match เพื่อจัดการใบโทษ" hint when division is selected but no match chosen
+
+**5 new components** (`components/cards/`):
+- **`MatchSummaryCard.tsx`**: match_code badge, division, matchday, date/time, home vs away (with score), card count badges (🟨/🟨🟥/🟥)
+- **`QuickAddCardForm.tsx`**: `PlayerSelector` reuse; 3 card type toggle buttons (Yellow/2nd Yellow/Red) with emoji+pts; optional minute (null if empty); optional note (→ DB `note`); POST `/api/admin/cards`
+- **`BulkAddCardForm.tsx`**: multi-row grid (player+type+minute+note+remove); players grouped by home/away with optgroup; minute→null if empty; "ล้างทั้งหมด" clear button; POST `/api/admin/cards/bulk`; shows `suspensionWarnings[]`
+- **`CardsInMatchPanel.tsx`**: table with columns นาที/ผู้เล่น/ทีม/ประเภท/เหตุผล/จัดการ; null minutes sort last; compact dashed empty state; inline edit modal (read-only player + type toggle + optional minute + optional note); PUT `/api/admin/cards/[cardId]`; confirm-before-delete
+- **`SuspensionImpactPanel.tsx`**: client-side only, no API; yellow=2pts/second_yellow=4pts/red=6pts; groups by player, sums from this match's cards; warning badge if ≥6pts ("อาจติดโทษแบน"); disclaimer "เป็นการประเมินจากใบในแมตช์นี้เท่านั้น"; link to /admin/suspensions
+
+**API changes**:
+- `GET /api/admin/cards`: `.select()` now includes `note` + nested `team:team_id(name, short_name)` inside player
+- `POST /api/admin/cards`: `minute` now optional (null if omitted); `note` field added to insert
+- `PUT /api/admin/cards/[cardId]`: allows `minute: null` (clears minute); allows `note` update
+
+**DB constraint**: `note` maps directly to existing `note` column in `cards` table — no migration required.
+
+Old components (`CardForm.tsx`, `CardsList.tsx`, `BulkCardForm.tsx`) preserved in place.
+
+- npm run build: ✅ PASSED (50 routes)
+
 ## [Phase 3F: Persistent Admin Session] - 2026-06-20 ✅ COMPLETE
 
 ### Persistent Admin Login with Supabase Browser Session

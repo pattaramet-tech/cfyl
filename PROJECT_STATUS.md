@@ -1,7 +1,7 @@
 # 📊 PROJECT_STATUS.md
 
-**Last Updated**: 2026-06-19 (Phase 3E Complete)  
-**Current Phase**: Phase 2e ✅ COMPLETE | Phase 3A ✅ COMPLETE | Phase 3B ✅ COMPLETE | Phase 3C ✅ COMPLETE | Phase 3D ✅ COMPLETE | Phase 3E ✅ COMPLETE
+**Last Updated**: 2026-06-20 (Phase 3G Complete)  
+**Current Phase**: Phase 3E ✅ | Phase 3F ✅ | Phase 3G ✅ COMPLETE
 
 ---
 
@@ -188,6 +188,28 @@
 - [x] AdminNav: 🗓️ Seasons link added
 - [x] Public APIs (seasons/age-groups/divisions) unaffected
 - [x] npm run build: ✅ PASSED (47 routes)
+
+### Phase 3F: Persistent Admin Login ✅ COMPLETE (2026-06-20)
+- [x] `lib/supabase-browser.ts` — singleton browser Supabase client (persistSession, autoRefreshToken)
+- [x] Login page: client-side `signInWithPassword` (SDK stores full session incl. refresh_token)
+- [x] "จดจำการเข้าสู่ระบบ (Remember me)" checkbox
+- [x] Layout guard: `getSession()` (auto-refresh) + syncs `localStorage.admin_token` → all existing pages unchanged
+- [x] `onAuthStateChange` listener: syncs token live on long-running pages
+- [x] Logout: `supabase.auth.signOut()` + clear all flags
+- [x] npm run build: ✅ PASSED
+
+### Phase 3G: Cards Page Full UI Redesign ✅ COMPLETE (2026-06-20)
+- [x] `app/admin/cards/page.tsx` — full rewrite with cascading selectors + 2-column layout
+- [x] `components/cards/MatchSummaryCard.tsx` — match info + card count badges
+- [x] `components/cards/QuickAddCardForm.tsx` — PlayerSelector + card type toggle buttons + optional minute/note
+- [x] `components/cards/BulkAddCardForm.tsx` — multi-row grid, optgroup by team, null minute
+- [x] `components/cards/CardsInMatchPanel.tsx` — table + inline edit modal + delete confirm
+- [x] `components/cards/SuspensionImpactPanel.tsx` — client-side points preview with disclaimer
+- [x] `GET /api/admin/cards`: added `note` + nested team name to select
+- [x] `POST /api/admin/cards`: minute=null allowed; note field added
+- [x] `PUT /api/admin/cards/[cardId]`: minute=null allowed; note update supported
+- [x] note → DB `note` column (no migration needed)
+- [x] npm run build: ✅ PASSED (50 routes)
 
 ### Phase 4: Integrations 🔴 NOT STARTED
 - [ ] Reports & analytics

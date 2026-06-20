@@ -1,9 +1,13 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import { CardForm } from '@/components/CardForm';
-import { CardsList } from '@/components/CardsList';
-import { BulkCardForm } from '@/components/BulkCardForm';
+import { useEffect, useState, useCallback } from 'react';
+import { MatchSummaryCard } from '@/components/cards/MatchSummaryCard';
+import { QuickAddCardForm } from '@/components/cards/QuickAddCardForm';
+import { BulkAddCardForm } from '@/components/cards/BulkAddCardForm';
+import { CardsInMatchPanel } from '@/components/cards/CardsInMatchPanel';
+import { SuspensionImpactPanel } from '@/components/cards/SuspensionImpactPanel';
+
+// ─── Types ──────────────────────────────────────────────────────────────────
 
 interface Season {
   id: string;
@@ -24,32 +28,60 @@ interface Division {
 interface Match {
   id: string;
   match_code?: string;
-  matchday: number;
+  matchday: number | string;
+  match_date?: string;
   match_time?: string;
   home_team_id: string;
   away_team_id: string;
+  home_score?: number | null;
+  away_score?: number | null;
+  status?: string;
   home_team?: { name: string; short_name: string };
   away_team?: { name: string; short_name: string };
+  division?: { name: string };
 }
 
 interface Card {
   id: string;
+  match_id: string;
   player_id: string;
   card_type: string;
-  minute: number;
+  minute: number | null;
+  note: string | null;
+  created_at: string;
   player?: {
     id: string;
     full_name: string;
-    shirt_no?: number;
+    shirt_no?: number | null;
+    team_id?: string;
+    team?: { name: string; short_name: string };
   };
 }
 
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+function matchLabel(m: Match): string {
+  const code = m.match_code || m.id.substring(0, 8);
+  const time = m.match_time ? m.match_time.substring(0, 5) : '--:--';
+  const home =
+    m.home_team?.name || m.home_team?.short_name || 'ทีมเหย้า';
+  const away =
+    m.away_team?.name || m.away_team?.short_name || 'ทีมเยือน';
+  const score =
+    m.home_score != null && m.away_score != null
+      ? `${m.home_score}–${m.away_score}`
+      : 'vs';
+  return `[${code}] MD${m.matchday} | ${time} | ${home} ${score} ${away}`;
+}
+
+// ─── Page ────────────────────────────────────────────────────────────────────
+
 export default function CardsPage() {
+  // Cascading selectors
   const [seasons, setSeasons] = useState<Season[]>([]);
   const [ageGroups, setAgeGroups] = useState<AgeGroup[]>([]);
   const [divisions, setDivisions] = useState<Division[]>([]);
   const [matches, setMatches] = useState<Match[]>([]);
-  const [cards, setCards] = useState<Card[]>([]);
 
   const [selectedSeason, setSelectedSeason] = useState('');
   const [selectedAgeGroup, setSelectedAgeGroup] = useState('');
@@ -61,384 +93,245 @@ export default function CardsPage() {
   const [isLoadingDivisions, setIsLoadingDivisions] = useState(false);
   const [isLoadingMatches, setIsLoadingMatches] = useState(false);
   const [isLoadingCards, setIsLoadingCards] = useState(false);
-  const [isAddingCard, setIsAddingCard] = useState(false);
 
-  const [error, setError] = useState<string | null>(null);
-  const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  const [cards, setCards] = useState<Card[]>([]);
 
-  // Load seasons
+  // ── Load seasons ──────────────────────────────────────────────────────────
+
   useEffect(() => {
-    const fetchSeasons = async () => {
+    const fetch_ = async () => {
       try {
         const res = await fetch('/api/public/seasons');
         if (res.ok) {
-          const data = await res.json();
+          const data: Season[] = await res.json();
           setSeasons(data);
-          if (data.length > 0) {
-            setSelectedSeason(data[0].id);
-          }
+          if (data.length > 0) setSelectedSeason(data[0].id);
         }
-      } catch (err) {
-        setError('Failed to load seasons');
       } finally {
         setIsLoadingSeasons(false);
       }
     };
-
-    fetchSeasons();
+    fetch_();
   }, []);
 
-  // Load age groups when season changes
+  // ── Load age groups ───────────────────────────────────────────────────────
+
   useEffect(() => {
     if (!selectedSeason) return;
+    setIsLoadingAgeGroups(true);
+    setSelectedAgeGroup('');
+    setSelectedDivision('');
+    setSelectedMatch('');
+    setCards([]);
 
-    const fetchAgeGroups = async () => {
-      try {
-        setIsLoadingAgeGroups(true);
-        setSelectedAgeGroup('');
-        setSelectedDivision('');
-        setSelectedMatch('');
-        setCards([]);
-
-        const res = await fetch(
-          `/api/public/age-groups?seasonId=${selectedSeason}`
-        );
-        if (res.ok) {
-          const data = await res.json();
-          setAgeGroups(data);
-          if (data.length > 0) {
-            setSelectedAgeGroup(data[0].id);
-          }
-        }
-      } catch (err) {
-        setError('Failed to load age groups');
-      } finally {
-        setIsLoadingAgeGroups(false);
-      }
-    };
-
-    fetchAgeGroups();
+    fetch(`/api/public/age-groups?seasonId=${selectedSeason}`)
+      .then((r) => r.ok ? r.json() : [])
+      .then((data: AgeGroup[]) => {
+        setAgeGroups(data);
+        if (data.length > 0) setSelectedAgeGroup(data[0].id);
+      })
+      .finally(() => setIsLoadingAgeGroups(false));
   }, [selectedSeason]);
 
-  // Load divisions when age group changes
+  // ── Load divisions ────────────────────────────────────────────────────────
+
   useEffect(() => {
     if (!selectedSeason || !selectedAgeGroup) return;
+    setIsLoadingDivisions(true);
+    setSelectedDivision('');
+    setSelectedMatch('');
+    setCards([]);
 
-    const fetchDivisions = async () => {
-      try {
-        setIsLoadingDivisions(true);
-        setSelectedDivision('');
-        setSelectedMatch('');
-        setCards([]);
-
-        const res = await fetch(
-          `/api/public/divisions?seasonId=${selectedSeason}&ageGroupId=${selectedAgeGroup}`
-        );
-        if (res.ok) {
-          const data = await res.json();
-          setDivisions(data);
-          if (data.length > 0) {
-            setSelectedDivision(data[0].id);
-          }
-        }
-      } catch (err) {
-        setError('Failed to load divisions');
-      } finally {
-        setIsLoadingDivisions(false);
-      }
-    };
-
-    fetchDivisions();
+    fetch(`/api/public/divisions?seasonId=${selectedSeason}&ageGroupId=${selectedAgeGroup}`)
+      .then((r) => r.ok ? r.json() : [])
+      .then((data: Division[]) => {
+        setDivisions(data);
+        if (data.length > 0) setSelectedDivision(data[0].id);
+      })
+      .finally(() => setIsLoadingDivisions(false));
   }, [selectedSeason, selectedAgeGroup]);
 
-  // Load matches when division changes
+  // ── Load matches ──────────────────────────────────────────────────────────
+
   useEffect(() => {
     if (!selectedSeason || !selectedAgeGroup || !selectedDivision) return;
+    setIsLoadingMatches(true);
+    setSelectedMatch('');
+    setCards([]);
 
-    const fetchMatches = async () => {
-      try {
-        setIsLoadingMatches(true);
-        setSelectedMatch('');
-        setCards([]);
-
-        const res = await fetch(
-          `/api/public/matches?seasonId=${selectedSeason}&ageGroupId=${selectedAgeGroup}&divisionId=${selectedDivision}`
-        );
-        if (res.ok) {
-          const data = await res.json();
-          setMatches(data);
-        }
-      } catch (err) {
-        setError('Failed to load matches');
-      } finally {
-        setIsLoadingMatches(false);
-      }
-    };
-
-    fetchMatches();
+    fetch(
+      `/api/public/matches?seasonId=${selectedSeason}&ageGroupId=${selectedAgeGroup}&divisionId=${selectedDivision}`
+    )
+      .then((r) => r.ok ? r.json() : [])
+      .then((data: Match[]) => setMatches(data))
+      .finally(() => setIsLoadingMatches(false));
   }, [selectedSeason, selectedAgeGroup, selectedDivision]);
 
-  // Load cards when match changes
-  useEffect(() => {
-    if (!selectedMatch) {
-      setCards([]);
-      return;
+  // ── Load cards ────────────────────────────────────────────────────────────
+
+  const fetchCards = useCallback(async (matchId: string) => {
+    if (!matchId) { setCards([]); return; }
+    setIsLoadingCards(true);
+    try {
+      const token = localStorage.getItem('admin_token');
+      const res = await fetch(`/api/admin/cards?matchId=${matchId}`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (res.ok) setCards(await res.json());
+    } finally {
+      setIsLoadingCards(false);
     }
+  }, []);
 
-    const fetchCards = async () => {
-      try {
-        setIsLoadingCards(true);
+  useEffect(() => {
+    if (selectedMatch) fetchCards(selectedMatch);
+    else setCards([]);
+  }, [selectedMatch, fetchCards]);
 
-        const token = localStorage.getItem('admin_token');
-        const res = await fetch(`/api/admin/cards?matchId=${selectedMatch}`, {
-          headers: token ? { Authorization: `Bearer ${token}` } : {},
-        });
+  const refreshCards = useCallback(() => {
+    if (selectedMatch) fetchCards(selectedMatch);
+  }, [selectedMatch, fetchCards]);
 
-        if (res.ok) {
-          const data = await res.json();
-          setCards(data);
-        }
-      } catch (err) {
-        setError('Failed to load cards');
-      } finally {
-        setIsLoadingCards(false);
-      }
-    };
-
-    fetchCards();
-  }, [selectedMatch]);
+  // ── Derived ───────────────────────────────────────────────────────────────
 
   const selectedMatchData = matches.find((m) => m.id === selectedMatch);
 
-  const handleAddCard = async (data: {
-    playerId: string;
-    cardType: string;
-    minute: number;
-  }) => {
-    try {
-      setError(null);
-      setSuccessMessage(null);
-      setIsAddingCard(true);
+  const selectClass =
+    'w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100 bg-white';
 
-      const token = localStorage.getItem('admin_token');
-      const res = await fetch('/api/admin/cards', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token && { Authorization: `Bearer ${token}` }),
-        },
-        body: JSON.stringify({
-          matchId: selectedMatch,
-          playerId: data.playerId,
-          cardType: data.cardType,
-          minute: data.minute,
-        }),
-      });
-
-      if (!res.ok) {
-        const errorData = await res.json();
-        throw new Error(errorData.error || 'Failed to add card');
-      }
-
-      setSuccessMessage('Card added successfully');
-      // Reload cards
-      const cardsRes = await fetch(`/api/admin/cards?matchId=${selectedMatch}`, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-      });
-      if (cardsRes.ok) {
-        const cardsData = await cardsRes.json();
-        setCards(cardsData);
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to add card');
-    } finally {
-      setIsAddingCard(false);
-    }
-  };
-
-  const handleCardDeleted = async () => {
-    try {
-      const token = localStorage.getItem('admin_token');
-      const res = await fetch(`/api/admin/cards?matchId=${selectedMatch}`, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setCards(data);
-        setSuccessMessage('Card deleted successfully');
-      }
-    } catch (err) {
-      setError('Failed to reload cards');
-    }
-  };
-
-  const handleCardUpdated = async () => {
-    try {
-      const token = localStorage.getItem('admin_token');
-      const res = await fetch(`/api/admin/cards?matchId=${selectedMatch}`, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setCards(data);
-        setSuccessMessage('Card updated successfully');
-      }
-    } catch (err) {
-      setError('Failed to reload cards');
-    }
-  };
+  // ── Render ────────────────────────────────────────────────────────────────
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       <div>
         <h1 className="text-3xl font-bold text-gray-800">🟨 Card Management</h1>
-        <p className="text-gray-600 mt-2">Manage yellow cards, red cards, and suspensions</p>
+        <p className="text-gray-600 mt-1">จัดการใบเหลือง ใบแดง และโทษแบน</p>
       </div>
 
-      {error && (
-        <div className="p-4 bg-red-50 border border-red-200 rounded-lg text-red-700">
-          {error}
-        </div>
-      )}
+      {/* ── Match Selector ──────────────────────────────────────────────── */}
+      <div className="bg-white rounded-lg shadow p-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+          {/* Season */}
+          <div>
+            <label className="block text-xs font-semibold text-gray-600 mb-1">Season</label>
+            <select
+              value={selectedSeason}
+              onChange={(e) => setSelectedSeason(e.target.value)}
+              disabled={isLoadingSeasons}
+              className={selectClass}
+            >
+              <option value="">เลือก Season...</option>
+              {seasons.map((s) => (
+                <option key={s.id} value={s.id}>{s.name}</option>
+              ))}
+            </select>
+          </div>
 
-      {successMessage && (
-        <div className="p-4 bg-green-50 border border-green-200 rounded-lg text-green-700">
-          {successMessage}
-        </div>
-      )}
+          {/* Age Group */}
+          <div>
+            <label className="block text-xs font-semibold text-gray-600 mb-1">Age Group</label>
+            <select
+              value={selectedAgeGroup}
+              onChange={(e) => setSelectedAgeGroup(e.target.value)}
+              disabled={isLoadingAgeGroups || !selectedSeason}
+              className={selectClass}
+            >
+              <option value="">เลือก Age Group...</option>
+              {ageGroups.map((ag) => (
+                <option key={ag.id} value={ag.id}>{ag.name}</option>
+              ))}
+            </select>
+          </div>
 
-      {/* Selectors */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
-        {/* Season */}
-        <div>
-          <label className="block text-sm font-semibold text-gray-700 mb-2">
-            Season
-          </label>
-          <select
-            value={selectedSeason}
-            onChange={(e) => setSelectedSeason(e.target.value)}
-            disabled={isLoadingSeasons}
-            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-600 disabled:bg-gray-100"
-          >
-            <option value="">Select season...</option>
-            {seasons.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.name}
-              </option>
-            ))}
-          </select>
-        </div>
+          {/* Division */}
+          <div>
+            <label className="block text-xs font-semibold text-gray-600 mb-1">Division</label>
+            <select
+              value={selectedDivision}
+              onChange={(e) => setSelectedDivision(e.target.value)}
+              disabled={isLoadingDivisions || !selectedAgeGroup}
+              className={selectClass}
+            >
+              <option value="">เลือก Division...</option>
+              {divisions.map((d) => (
+                <option key={d.id} value={d.id}>{d.name}</option>
+              ))}
+            </select>
+          </div>
 
-        {/* Age Group */}
-        <div>
-          <label className="block text-sm font-semibold text-gray-700 mb-2">
-            Age Group
-          </label>
-          <select
-            value={selectedAgeGroup}
-            onChange={(e) => setSelectedAgeGroup(e.target.value)}
-            disabled={isLoadingAgeGroups || !selectedSeason}
-            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-600 disabled:bg-gray-100"
-          >
-            <option value="">Select age group...</option>
-            {ageGroups.map((ag) => (
-              <option key={ag.id} value={ag.id}>
-                {ag.name}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        {/* Division */}
-        <div>
-          <label className="block text-sm font-semibold text-gray-700 mb-2">
-            Division
-          </label>
-          <select
-            value={selectedDivision}
-            onChange={(e) => setSelectedDivision(e.target.value)}
-            disabled={isLoadingDivisions || !selectedAgeGroup}
-            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-600 disabled:bg-gray-100"
-          >
-            <option value="">Select division...</option>
-            {divisions.map((d) => (
-              <option key={d.id} value={d.id}>
-                {d.name}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        {/* Match */}
-        <div>
-          <label className="block text-sm font-semibold text-gray-700 mb-2">
-            Match
-          </label>
-          <select
-            value={selectedMatch}
-            onChange={(e) => setSelectedMatch(e.target.value)}
-            disabled={isLoadingMatches || !selectedDivision}
-            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-600 disabled:bg-gray-100"
-          >
-            <option value="">Select match...</option>
-            {matches.map((m) => {
-              const matchCode = m.match_code || m.id.substring(0, 8);
-              const matchTime = m.match_time || '';
-              const homeTeam = m.home_team?.name || m.home_team?.short_name || 'ไม่พบทีม';
-              const awayTeam = m.away_team?.name || m.away_team?.short_name || 'ไม่พบทีม';
-              const displayTime = matchTime ? matchTime.substring(0, 5) : '--:--';
-              return (
-                <option key={m.id} value={m.id}>
-                  [{matchCode}] | MD{m.matchday} | {displayTime} | {homeTeam} vs {awayTeam}
-                </option>
-              );
-            })}
-          </select>
+          {/* Match */}
+          <div>
+            <label className="block text-xs font-semibold text-gray-600 mb-1">Match</label>
+            <select
+              value={selectedMatch}
+              onChange={(e) => setSelectedMatch(e.target.value)}
+              disabled={isLoadingMatches || !selectedDivision}
+              className={selectClass}
+            >
+              <option value="">เลือก Match...</option>
+              {matches.map((m) => (
+                <option key={m.id} value={m.id}>{matchLabel(m)}</option>
+              ))}
+            </select>
+          </div>
         </div>
       </div>
 
-      {/* Content */}
-      {selectedMatch && selectedMatchData && (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6">
-          {/* Add Card Form */}
-          <div className="md:col-span-1 bg-white p-4 sm:p-6 rounded-lg shadow">
-            <h2 className="text-xl font-bold text-gray-800 mb-4">Add Card</h2>
-            <CardForm
-              matchId={selectedMatch}
-              homeTeamId={selectedMatchData.home_team_id}
-              awayTeamId={selectedMatchData.away_team_id}
-              onSave={handleAddCard}
-              onCancel={() => {}}
-              isLoading={isLoadingCards}
-            />
-            <BulkCardForm
-              matchId={selectedMatch}
-              homeTeamId={selectedMatchData.home_team_id}
-              awayTeamId={selectedMatchData.away_team_id}
-              onSuccess={handleCardUpdated}
-            />
-          </div>
-
-          {/* Cards List */}
-          <div className="md:col-span-1 lg:col-span-2 bg-white p-4 sm:p-6 rounded-lg shadow">
-            <h2 className="text-xl font-bold text-gray-800 mb-4">Cards in Match</h2>
-            <CardsList
-              matchId={selectedMatch}
-              homeTeamId={selectedMatchData.home_team_id}
-              awayTeamId={selectedMatchData.away_team_id}
-              cards={cards}
-              isLoading={isLoadingCards || isAddingCard}
-              onCardDeleted={handleCardDeleted}
-              onCardUpdated={handleCardUpdated}
-            />
-          </div>
-        </div>
-      )}
-
+      {/* ── Content (only when match selected) ─────────────────────────── */}
       {!selectedMatch && selectedDivision && (
-        <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 text-blue-700">
-          Select a match to view and manage cards
+        <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 text-blue-700 text-sm">
+          เลือก Match เพื่อจัดการใบโทษ
         </div>
+      )}
+
+      {selectedMatch && selectedMatchData && (
+        <>
+          {/* Match Summary */}
+          <MatchSummaryCard match={selectedMatchData} cards={cards} />
+
+          {/* Two-column layout */}
+          <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">
+            {/* ── Left: Add forms ────────────────────────────────────────── */}
+            <div className="lg:col-span-2 space-y-4">
+              {/* Quick Add */}
+              <div className="bg-white rounded-lg shadow p-4">
+                <QuickAddCardForm
+                  matchId={selectedMatch}
+                  homeTeamId={selectedMatchData.home_team_id}
+                  awayTeamId={selectedMatchData.away_team_id}
+                  onSuccess={refreshCards}
+                />
+              </div>
+
+              {/* Bulk Add */}
+              <div className="bg-white rounded-lg shadow p-4">
+                <BulkAddCardForm
+                  matchId={selectedMatch}
+                  homeTeamId={selectedMatchData.home_team_id}
+                  awayTeamId={selectedMatchData.away_team_id}
+                  onSuccess={refreshCards}
+                />
+              </div>
+            </div>
+
+            {/* ── Right: Cards list + impact ─────────────────────────────── */}
+            <div className="lg:col-span-3 space-y-4">
+              {/* Cards in Match */}
+              <div className="bg-white rounded-lg shadow p-4">
+                <CardsInMatchPanel
+                  cards={cards}
+                  isLoading={isLoadingCards}
+                  onCardsChanged={refreshCards}
+                />
+              </div>
+
+              {/* Suspension Impact */}
+              <div className="bg-white rounded-lg shadow p-4">
+                <SuspensionImpactPanel cards={cards} />
+              </div>
+            </div>
+          </div>
+        </>
       )}
     </div>
   );
