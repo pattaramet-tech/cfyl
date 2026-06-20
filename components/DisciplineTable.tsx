@@ -1,4 +1,5 @@
 import type { SuspensionDetails, SuspendedMatchDetail } from '@/lib/suspension-calc';
+import { getSuspensionStatus, getBangkokToday } from '@/lib/suspension-status';
 
 interface Suspension {
   player_id: string;
@@ -15,15 +16,6 @@ interface DisciplineTableProps {
   records: Suspension[];
 }
 
-function getStatus(record: Suspension): { label: string; color: string; emoji: string } {
-  const { total_points, ban_matches, suspension_details } = record;
-  if (total_points === 0) return { label: 'ปกติ', color: 'bg-green-100 text-green-800', emoji: '🟢' };
-  if (ban_matches === 0) return { label: 'สะสมคะแนน / เฝ้าระวัง', color: 'bg-yellow-100 text-yellow-800', emoji: '🟡' };
-  const hasNextMatch = (suspension_details?.suspended_matches?.length ?? 0) > 0;
-  if (!hasNextMatch) return { label: 'ไม่พบโปรแกรมแข่งขันนัดถัดไป', color: 'bg-gray-100 text-gray-600', emoji: '⚪' };
-  return { label: 'ติดโทษแบน', color: 'bg-red-100 text-red-800', emoji: '🔴' };
-}
-
 function NextMatchBadge({ match, is_home }: { match: SuspendedMatchDetail; is_home: boolean }) {
   return (
     <span className="inline-flex items-center gap-1 text-xs">
@@ -36,10 +28,18 @@ function NextMatchBadge({ match, is_home }: { match: SuspendedMatchDetail; is_ho
 }
 
 export function DisciplineTable({ records }: DisciplineTableProps) {
-  if (records.length === 0) {
+  const today = getBangkokToday();
+
+  // Public view: emphasise players still relevant — hide served & normal (0 pts)
+  const visible = records.filter((r) => {
+    const key = getSuspensionStatus(r, today).key;
+    return key !== 'served' && key !== 'normal';
+  });
+
+  if (visible.length === 0) {
     return (
       <div className="text-center py-8 text-gray-500">
-        ไม่มีข้อมูลใบเหลืองใบแดง
+        ไม่มีผู้เล่นที่ติดโทษแบนหรือสะสมคะแนนอยู่ในขณะนี้
       </div>
     );
   }
@@ -80,8 +80,8 @@ export function DisciplineTable({ records }: DisciplineTableProps) {
           </tr>
         </thead>
         <tbody>
-          {records.map((record, index) => {
-            const status = getStatus(record);
+          {visible.map((record, index) => {
+            const status = getSuspensionStatus(record, today);
             const suspendedMatches = record.suspension_details?.suspended_matches || [];
 
             const pointColor =

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import type { SuspensionDetails, SuspendedMatchDetail } from '@/lib/suspension-calc';
+import { getSuspensionStatus, getBangkokToday, type SuspensionStatusKey } from '@/lib/suspension-status';
 
 interface SuspensionRecord {
   id: string;
@@ -22,15 +23,6 @@ interface SuspensionRecord {
   updated_at: string;
   player: { id: string; full_name: string; shirt_no: number | null; player_code: string };
   team: { id: string; name: string; short_name: string };
-}
-
-function getStatus(record: SuspensionRecord): { label: string; color: string; emoji: string } {
-  const { total_points, ban_matches, suspension_details } = record;
-  if (total_points === 0) return { label: 'ปกติ', color: 'bg-green-100 text-green-800', emoji: '🟢' };
-  if (ban_matches === 0) return { label: 'สะสมคะแนน / เฝ้าระวัง', color: 'bg-yellow-100 text-yellow-800', emoji: '🟡' };
-  const hasNextMatch = (suspension_details?.suspended_matches?.length ?? 0) > 0;
-  if (!hasNextMatch) return { label: 'ไม่พบโปรแกรมแข่งขันนัดถัดไป', color: 'bg-gray-100 text-gray-700', emoji: '⚪' };
-  return { label: 'ติดโทษแบน', color: 'bg-red-100 text-red-800', emoji: '🔴' };
 }
 
 function formatDate(dateStr: string): string {
@@ -168,6 +160,7 @@ export default function AdminSuspensionsPage() {
   const [error, setError] = useState<string | null>(null);
 
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [statusFilter, setStatusFilter] = useState<SuspensionStatusKey | 'all'>('all');
 
   // Load seasons
   useEffect(() => {
@@ -250,9 +243,27 @@ export default function AdminSuspensionsPage() {
     }
   };
 
-  const bannedCount = suspensions.filter((s) => s.ban_matches > 0 && (s.suspension_details?.suspended_matches?.length ?? 0) > 0).length;
-  const warningCount = suspensions.filter((s) => s.ban_matches === 0 && s.total_points > 0).length;
-  const noScheduleCount = suspensions.filter((s) => s.ban_matches > 0 && (s.suspension_details?.suspended_matches?.length ?? 0) === 0).length;
+  const today = getBangkokToday();
+  const statusOf = (s: SuspensionRecord) => getSuspensionStatus(s, today).key;
+
+  const counts = suspensions.reduce(
+    (acc, s) => {
+      acc[statusOf(s)] = (acc[statusOf(s)] || 0) + 1;
+      return acc;
+    },
+    {} as Record<SuspensionStatusKey, number>
+  );
+  const activeCount = (counts.pending || 0) + (counts.active || 0);
+  const servedCount = counts.served || 0;
+  const warningCount = counts.warning || 0;
+  const noScheduleCount = counts.no_next_match || 0;
+
+  const filteredSuspensions =
+    statusFilter === 'all'
+      ? suspensions
+      : statusFilter === 'active'
+      ? suspensions.filter((s) => statusOf(s) === 'pending' || statusOf(s) === 'active')
+      : suspensions.filter((s) => statusOf(s) === statusFilter);
 
   return (
     <div className="space-y-6">
@@ -324,10 +335,14 @@ export default function AdminSuspensionsPage() {
 
       {/* Summary Cards */}
       {suspensions.length > 0 && (
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4">
+        <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 sm:gap-4">
           <div className="bg-red-50 border border-red-200 rounded-lg p-3 sm:p-4 text-center">
-            <p className="text-2xl font-bold text-red-700">{bannedCount}</p>
+            <p className="text-2xl font-bold text-red-700">{activeCount}</p>
             <p className="text-xs sm:text-sm text-red-600 mt-1">🔴 ติดโทษแบน</p>
+          </div>
+          <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 sm:p-4 text-center">
+            <p className="text-2xl font-bold text-slate-600">{servedCount}</p>
+            <p className="text-xs sm:text-sm text-slate-500 mt-1">✅ พ้นโทษแล้ว</p>
           </div>
           <div className="bg-gray-50 border border-gray-200 rounded-lg p-3 sm:p-4 text-center">
             <p className="text-2xl font-bold text-gray-600">{noScheduleCount}</p>
@@ -338,9 +353,35 @@ export default function AdminSuspensionsPage() {
             <p className="text-xs sm:text-sm text-yellow-600 mt-1">🟡 สะสมคะแนน</p>
           </div>
           <div className="bg-green-50 border border-green-200 rounded-lg p-3 sm:p-4 text-center">
-            <p className="text-2xl font-bold text-green-700">{suspensions.length - bannedCount - warningCount - noScheduleCount}</p>
+            <p className="text-2xl font-bold text-green-700">{counts.normal || 0}</p>
             <p className="text-xs sm:text-sm text-green-600 mt-1">🟢 ปกติ</p>
           </div>
+        </div>
+      )}
+
+      {/* Status filter */}
+      {suspensions.length > 0 && (
+        <div className="flex flex-wrap gap-2">
+          {([
+            ['all', `ทั้งหมด (${suspensions.length})`],
+            ['active', `🔴 ติดโทษแบน (${activeCount})`],
+            ['served', `✅ พ้นโทษแล้ว (${servedCount})`],
+            ['warning', `🟡 สะสมคะแนน (${warningCount})`],
+            ['no_next_match', `⚪ ไม่พบโปรแกรม (${noScheduleCount})`],
+            ['normal', `🟢 ปกติ (${counts.normal || 0})`],
+          ] as const).map(([key, label]) => (
+            <button
+              key={key}
+              onClick={() => setStatusFilter(key as SuspensionStatusKey | 'all')}
+              className={`px-3 py-1.5 rounded-full text-xs font-semibold transition border ${
+                statusFilter === key
+                  ? 'bg-gray-800 text-white border-gray-800'
+                  : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-100'
+              }`}
+            >
+              {label}
+            </button>
+          ))}
         </div>
       )}
 
@@ -389,8 +430,8 @@ export default function AdminSuspensionsPage() {
                 </tr>
               </thead>
               <tbody>
-                {suspensions.map((record, index) => {
-                  const status = getStatus(record);
+                {filteredSuspensions.map((record, index) => {
+                  const status = getSuspensionStatus(record, today);
                   const isExpanded = expandedId === record.id;
                   const suspendedMatches = record.suspension_details?.suspended_matches || [];
 
