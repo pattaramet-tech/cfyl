@@ -2,6 +2,21 @@
 
 All notable changes to CFYL Youth League system are documented here.
 
+## [Phase 3F: Persistent Admin Session] - 2026-06-20 ✅ COMPLETE
+
+### Persistent Admin Login with Supabase Browser Session
+- **Root cause fixed**: Previous login flow called `/api/admin/auth/login` (server-side), returning only `access_token` — no refresh_token on client, causing forced re-login after 1 hour
+- **`lib/supabase-browser.ts`** (NEW): singleton browser Supabase client with `persistSession: true, autoRefreshToken: true, detectSessionInUrl: true`
+- **Login page**: now calls `supabase.auth.signInWithPassword` client-side — SDK stores full session (access + refresh tokens) in localStorage and auto-refreshes transparently
+- **Login page**: added "จดจำการเข้าสู่ระบบ (Remember me)" checkbox
+- **"Remember me" = true**: Supabase session persists in localStorage across browser restarts — re-opens stay logged in
+- **"Remember me" = false**: sets `sessionStorage.admin_active_session = '1'`; layout detects missing flag on browser restart and signs out (acceptable: new tabs also require re-login in this mode)
+- **`app/admin/layout.tsx`**: uses `supabase.auth.getSession()` (auto-refreshes expired tokens via SDK); syncs fresh `access_token` to `localStorage.admin_token` on every mount — all existing admin pages continue reading from localStorage without changes
+- **`app/admin/layout.tsx`**: `onAuthStateChange` listener syncs `localStorage.admin_token` live whenever SDK silently refreshes the token (prevents 401 on long-running pages)
+- **`components/AdminNav.tsx`**: logout now calls `getSupabaseBrowser().auth.signOut()` — properly invalidates the browser Supabase session and clears all flags (`admin_token`, `admin_remember_me`, `admin_active_session`)
+- All existing admin API routes (`verifyAdminAuth` via Bearer token) unchanged — backward compatible
+- Public pages unaffected
+
 ## [Phase 3E Hotfix] - 2026-06-20 ✅ COMPLETE
 
 ### Edit Goal Validation + Bulk Card UI

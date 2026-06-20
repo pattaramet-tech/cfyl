@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
-import { signOutAdmin } from '@/lib/admin-auth';
+import { getSupabaseBrowser } from '@/lib/supabase-browser';
 
 interface AdminNavProps {
   email: string;
@@ -17,9 +17,11 @@ export function AdminNav({ email, fullName }: AdminNavProps) {
   const handleLogout = async () => {
     setIsLoggingOut(true);
     try {
-      await signOutAdmin();
-      // Clear token from localStorage
+      const supabase = getSupabaseBrowser();
+      await supabase.auth.signOut();
       localStorage.removeItem('admin_token');
+      localStorage.removeItem('admin_remember_me');
+      sessionStorage.removeItem('admin_active_session');
       router.push('/admin/login');
     } catch (error) {
       console.error('[ADMIN_NAV] Logout error:', error);
