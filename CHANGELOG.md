@@ -17,6 +17,27 @@ Phase 3 delivered: Suspension Management · Player Management · Team
 Management · Season Management · Goals & Cards UX · Persistent Admin Login ·
 Cards Page Full UI Redesign · Suspension Lifecycle Status.
 
+## [Phase 4A Hotfix: Table / TSV Copy Format] - 2026-06-21 ✅ COMPLETE
+
+### Tab-separated copy for pasting into Canva Table / Google Sheets
+
+**`app/admin/exports/page.tsx`** (client-side only — no API change):
+- Added third format option to the toggle: **Detailed** / **Compact** / **Table / TSV**
+- `formatTSV(group)`: one row per team, **tab (`\t`) separated**, data rows only —
+  no header, no rank, no labels. Columns in order:
+  `Team Name · P · W · D · L · +/- (GD, plain signed) · PTS`
+  - GD shown as plain signed number (`7`, `0`, `-1`) — not `+7`
+  - 0 / GD 0 / PTS 0 render correctly
+- Per-table Copy button copies real tab-separated text → paste splits into columns
+  directly in Canva Table / Google Sheets
+- "Copy All Standings" in TSV mode separates each table with a blank line + its
+  label heading; UI hints that per-table copy is recommended for Canva
+- Preview `<textarea>` now sizes to actual line count + `whitespace-pre` so tabs
+  are visible
+- Detailed / Compact formats unchanged
+- `/standings` public + API + `lib/calculations.ts` untouched
+- npm run build: ✅ PASSED
+
 ## [Suspension Lifecycle Status] - 2026-06-21 ✅ COMPLETE
 
 ### Live ban status: pending → active → served (no cron, no DB column)

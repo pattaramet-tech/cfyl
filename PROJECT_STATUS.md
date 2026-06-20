@@ -242,6 +242,16 @@
 - [x] `/standings` public + `lib/calculations.ts` unchanged
 - [x] npm run build: ✅ PASSED (52 routes)
 
+### Phase 4A Hotfix: Table / TSV Copy Format ✅ COMPLETE (2026-06-21)
+- [x] Third format option in `/admin/exports`: Detailed / Compact / **Table / TSV**
+- [x] `formatTSV` — tab-separated, data rows only (no header/rank/labels)
+- [x] Columns: Team Name · P · W · D · L · +/- (GD plain signed) · PTS
+- [x] Per-table Copy → paste splits columns in Canva Table / Google Sheets
+- [x] Copy All (TSV) separates tables with blank line + label heading
+- [x] 0 / GD 0 / PTS 0 render correctly; Detailed/Compact unchanged
+- [x] Client-side only — no API change; `/standings` public unaffected
+- [x] npm run build: ✅ PASSED
+
 ### Suspension Lifecycle Status ✅ COMPLETE (2026-06-21)
 - [x] `lib/suspension-status.ts` — `getSuspensionStatus(record, today)` derives live status
   - [x] States: `normal` / `warning` / `pending` / `active` / `served` / `no_next_match`

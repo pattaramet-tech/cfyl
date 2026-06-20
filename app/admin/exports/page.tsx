@@ -36,7 +36,7 @@ interface ExportsData {
   groups: Group[];
 }
 
-type Format = 'detailed' | 'compact';
+type Format = 'detailed' | 'compact' | 'tsv';
 
 // ─── Text Formatting ──────────────────────────────────────────────────────────
 
@@ -85,13 +85,30 @@ function formatCompact(group: Group, matchdayFilter: number | null): string {
   return lines.join('\n');
 }
 
+// Table / TSV — tab-separated, data rows only (no header, no rank, no labels).
+// Columns: Team Name, P, W, D, L, +/- (GD, plain signed), PTS
+function formatTSV(group: Group): string {
+  return group.standings
+    .map((s) =>
+      [s.teamName, s.played, s.wins, s.draws, s.losses, s.goalDiff, s.points].join('\t')
+    )
+    .join('\n');
+}
+
 function formatGroup(group: Group, format: Format, seasonName: string, matchdayFilter: number | null): string {
+  if (format === 'tsv') return formatTSV(group);
   return format === 'detailed'
     ? formatDetailed(group, seasonName, matchdayFilter)
     : formatCompact(group, matchdayFilter);
 }
 
 function formatAll(groups: Group[], format: Format, seasonName: string, matchdayFilter: number | null): string {
+  if (format === 'tsv') {
+    // Each table separated by a blank line, prefixed with its label heading
+    return groups
+      .map((g) => `${g.label}\n${formatTSV(g)}`)
+      .join('\n\n');
+  }
   const divider = '\n──────────────────────────\n';
   return groups
     .map((g) => formatGroup(g, format, seasonName, matchdayFilter))
@@ -156,8 +173,8 @@ function PreviewCard({
       <textarea
         readOnly
         value={text}
-        rows={Math.min(group.standings.length * 3 + 4, 20)}
-        className="w-full px-3 py-2 border border-gray-200 rounded-lg text-xs font-mono bg-gray-50 text-gray-700 resize-none focus:outline-none focus:ring-1 focus:ring-blue-300"
+        rows={Math.min(Math.max(text.split('\n').length, 3), 24)}
+        className="w-full px-3 py-2 border border-gray-200 rounded-lg text-xs font-mono bg-gray-50 text-gray-700 resize-none focus:outline-none focus:ring-1 focus:ring-blue-300 whitespace-pre overflow-x-auto"
       />
     </div>
   );
@@ -284,7 +301,11 @@ export default function ExportsPage() {
 
           {/* Format toggle */}
           <div className="ml-auto flex items-center gap-1 bg-gray-100 p-1 rounded-lg">
-            {(['detailed', 'compact'] as const).map((f) => (
+            {([
+              ['detailed', 'Detailed'],
+              ['compact', 'Compact'],
+              ['tsv', 'Table / TSV'],
+            ] as const).map(([f, label]) => (
               <button
                 key={f}
                 onClick={() => setFormat(f)}
@@ -294,7 +315,7 @@ export default function ExportsPage() {
                     : 'text-gray-500 hover:text-gray-700'
                 }`}
               >
-                {f === 'detailed' ? 'Detailed' : 'Compact'}
+                {label}
               </button>
             ))}
           </div>
@@ -317,6 +338,11 @@ export default function ExportsPage() {
               ({groups.length} ตาราง
               {matchdayFilter !== null ? ` — MD ${matchdayFilter}` : ''})
             </span>
+            {format === 'tsv' && (
+              <p className="text-xs text-blue-500 mt-0.5">
+                โหมด Table / TSV: แนะนำให้ Copy รายตารางทีละอัน แล้ววางใน Canva Table / Google Sheets
+              </p>
+            )}
           </div>
           <CopyButton text={allText} label="Copy All Standings" />
         </div>
