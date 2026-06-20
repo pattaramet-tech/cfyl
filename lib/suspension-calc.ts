@@ -69,12 +69,19 @@ export function parseMatchdayNumber(val: string | number | null | undefined): nu
  */
 export function calculateMatchPoints(cards: CardCount): number {
   const { yellow, red, second_yellow } = cards;
-  const totalYellows = yellow + second_yellow;
+  const hasSecondYellow = second_yellow >= 1;
+  const hasRed = red >= 1;
 
-  if (red >= 1 && totalYellows === 0) return 6;
-  if (red >= 1 && totalYellows >= 1) return 8;
-  if (totalYellows >= 2) return 4;
-  if (totalYellows === 1) return 2;
+  // Yellow or 2nd-yellow + Red in same match = 8 pts
+  if (hasRed && (yellow >= 1 || hasSecondYellow)) return 8;
+  // Direct Red = 6 pts
+  if (hasRed) return 6;
+  // second_yellow = standalone "2nd yellow in match" = 4 pts
+  if (hasSecondYellow) return 4;
+  // Backward compat: 2 separate yellow records in same match = 4 pts
+  if (yellow >= 2) return 4;
+  // 1 yellow = 2 pts
+  if (yellow >= 1) return 2;
   return 0;
 }
 
@@ -195,11 +202,12 @@ export async function getSeasonCards(
 
       const points = calculateMatchPoints(count);
       if (points > 0) {
-        const totalYellows = count.yellow + count.second_yellow;
+        // second_yellow represents 2 yellows in same match for display purposes
+        const effectiveYellows = count.yellow + (count.second_yellow >= 1 ? 2 : 0);
         const reason =
           count.red > 0
-            ? totalYellows > 0 ? `${totalYellows}Y + ${count.red}R` : `${count.red}R`
-            : totalYellows >= 2 ? `${totalYellows}Y` : '1Y';
+            ? effectiveYellows > 0 ? `${effectiveYellows}Y + ${count.red}R` : `${count.red}R`
+            : effectiveYellows >= 2 ? `${effectiveYellows}Y` : '1Y';
 
         result.push({
           match_id: matchId,
