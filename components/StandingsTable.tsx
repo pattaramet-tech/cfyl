@@ -2,6 +2,8 @@ import type { Standing } from '@/types/db';
 
 interface StandingsTableProps {
   standings: Standing[];
+  /** Only the top division has a provincial representative (rank 1). */
+  showProvinceRep?: boolean;
 }
 
 // Zone markers (EPL-style left strips). Champions take priority over relegation
@@ -10,7 +12,7 @@ const CHAMPIONS_COUNT = 4; // top 4 → Champions League (blue)
 const RELEGATION_COUNT = 2; // bottom 2 → relegation (red)
 const PROVINCE_REP_RANK = 1; // rank 1 → ตัวแทนจังหวัด
 
-export function StandingsTable({ standings }: StandingsTableProps) {
+export function StandingsTable({ standings, showProvinceRep = true }: StandingsTableProps) {
   if (standings.length === 0) {
     return <div className="cfyl-empty">ไม่มีข้อมูลตารางคะแนน</div>;
   }
@@ -37,7 +39,7 @@ export function StandingsTable({ standings }: StandingsTableProps) {
             const rank = index + 1;
             const isChampion = rank <= CHAMPIONS_COUNT;
             const isRelegation = !isChampion && rank > total - RELEGATION_COUNT;
-            const isProvinceRep = rank === PROVINCE_REP_RANK;
+            const isProvinceRep = showProvinceRep && rank === PROVINCE_REP_RANK;
             const stripClass = isChampion
               ? 'border-blue-600'
               : isRelegation
@@ -91,10 +93,12 @@ export function StandingsTable({ standings }: StandingsTableProps) {
           <span className="inline-block w-3 h-3 rounded-sm bg-blue-600" />
           แชมเปี้ยนส์ลีก (อันดับ 1-{CHAMPIONS_COUNT})
         </span>
-        <span className="flex items-center gap-2">
-          <span>🏆</span>
-          อันดับ 1 = ตัวแทนจังหวัด
-        </span>
+        {showProvinceRep && (
+          <span className="flex items-center gap-2">
+            <span>🏆</span>
+            อันดับ 1 = ตัวแทนจังหวัด
+          </span>
+        )}
         <span className="flex items-center gap-2">
           <span className="inline-block w-3 h-3 rounded-sm bg-red-500" />
           โซนตกชั้น ({RELEGATION_COUNT} อันดับสุดท้าย)

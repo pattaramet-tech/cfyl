@@ -94,7 +94,10 @@ export default function StandingsPage() {
                 กำลังโหลดข้อมูล...
               </div>
             ) : standings.length > 0 ? (
-              <StandingsTable standings={standings} />
+              <StandingsTable
+                standings={standings}
+                showProvinceRep={divisions[0]?.id === selectedDivision}
+              />
             ) : (
               <p className="cfyl-empty">ไม่พบข้อมูลตารางคะแนน</p>
             )}
