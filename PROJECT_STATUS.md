@@ -1,7 +1,22 @@
 # 📊 PROJECT_STATUS.md
 
-**Last Updated**: 2026-06-20 (Phase 4A Complete)  
-**Current Phase**: Phase 3E ✅ | Phase 3F ✅ | Phase 3G ✅ | Phase 4A ✅ COMPLETE
+**Last Updated**: 2026-06-21 (Phase 3 Closed + Phase 4A Complete)  
+**Current Phase**: 🏁 **Phase 3 COMPLETE** — production-ready standalone admin system  
+**Stable Tag**: `v0.3-admin-complete`
+
+> ### 🏁 Phase 3 Closeout (2026-06-21)
+> Phase 3G tested and passed in production. The full admin system is live and verified.
+> **Features delivered in Phase 3:**
+> - ✅ Suspension Management (auto-calc, rich details, recalculate)
+> - ✅ Player Management (CRUD + active toggle)
+> - ✅ Team Management (CRUD + color/logo)
+> - ✅ Season Management (Seasons / Age Groups / Divisions)
+> - ✅ Goals & Cards UX Improvement (bulk add, edit fixes)
+> - ✅ Persistent Admin Login (Supabase browser session)
+> - ✅ Cards Page Full UI Redesign (2-column, 5 components)
+> - ✅ Suspension Lifecycle Status (live pending → active → served)
+>
+> Plus **Phase 4A: Standings Copy for Canva** (export tool) shipped alongside.
 
 ---
 
@@ -226,6 +241,18 @@
 - [x] AdminNav: 📋 Exports link added
 - [x] `/standings` public + `lib/calculations.ts` unchanged
 - [x] npm run build: ✅ PASSED (52 routes)
+
+### Suspension Lifecycle Status ✅ COMPLETE (2026-06-21)
+- [x] `lib/suspension-status.ts` — `getSuspensionStatus(record, today)` derives live status
+  - [x] States: `normal` / `warning` / `pending` / `active` / `served` / `no_next_match`
+  - [x] Computed against today (Asia/Bangkok, UTC+7) — advances daily, no cron / DB column / recalc
+  - [x] Banned match = played when `status==='finished'` OR `match_date < today` (guards stale snapshot)
+  - [x] Records never mutated/deleted — history preserved
+- [x] `/discipline` public — hides `served` + `normal`, shows only still-relevant players
+- [x] `/admin/suspensions` — shows all incl. `served`; new ✅ พ้นโทษแล้ว summary card + status filter chips
+- [x] Hotfix: `second_yellow` scored 2 → now 4 pts (`calculateMatchPoints` explicit `hasSecondYellow`)
+- [x] No change to yellow/second_yellow/red point logic
+- [x] npm run build: ✅ PASSED
 
 ### Phase 4: Integrations 🔴 NOT STARTED
 - [ ] Reports & analytics

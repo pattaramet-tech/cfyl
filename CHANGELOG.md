@@ -2,6 +2,58 @@
 
 All notable changes to CFYL Youth League system are documented here.
 
+## 🏁 Phase 3 Closeout - 2026-06-21 ✅ COMPLETE
+
+**Phase 3G tested and passed in production.** The Cards and Suspensions
+workflows are verified working correctly end-to-end (card entry → point
+scoring → suspension calculation → public display).
+
+**The system is now production-ready as a standalone admin system** — full
+CRUD over Seasons / Age Groups / Divisions / Teams / Players / Matches /
+Goals / Cards, automatic CFYL suspension calculation with live lifecycle
+status, persistent admin login, and a Canva standings export tool.
+
+Phase 3 delivered: Suspension Management · Player Management · Team
+Management · Season Management · Goals & Cards UX · Persistent Admin Login ·
+Cards Page Full UI Redesign · Suspension Lifecycle Status.
+
+## [Suspension Lifecycle Status] - 2026-06-21 ✅ COMPLETE
+
+### Live ban status: pending → active → served (no cron, no DB column)
+
+**Problem**: status badge was static — a player kept showing 🔴 ติดโทษแบน
+forever, even after the banned match was already played.
+
+**`lib/suspension-status.ts`** (NEW):
+- `getSuspensionStatus(record, today)` derives one of: `normal` / `warning` /
+  `pending` / `active` / `served` / `no_next_match`
+- Computed live against today's date in Asia/Bangkok (UTC+7) — status advances
+  on its own each day, no recalculate / cron / DB column needed
+- A banned match counts as played when `status === 'finished'` **OR**
+  `match_date < today` — guards against the snapshot status inside
+  `suspension_details` being stale between recalcs
+- Suspension records are never mutated or deleted (history preserved)
+
+**`components/DisciplineTable.tsx`** (public `/discipline`):
+- Hides `served` + `normal` (0 pts) — shows only still-relevant players
+  (warning / pending / active / no_next_match)
+- Uses the shared helper (removed duplicated local `getStatus`)
+
+**`app/admin/suspensions/page.tsx`**:
+- Uses the shared helper; shows all statuses including `served` for historical review
+- New summary card "✅ พ้นโทษแล้ว" + status filter chips (all / active / served /
+  warning / no_next_match / normal)
+
+- No change to yellow / second_yellow / red point logic
+- npm run build: ✅ PASSED
+
+### Hotfix: second_yellow scored 2 pts instead of 4 (pre-lifecycle)
+- `lib/suspension-calc.ts` `calculateMatchPoints`: `second_yellow` was folded
+  into the yellow count → 1 yellow → 2 pts. Now checks `hasSecondYellow`
+  explicitly → 4 pts. Reason string uses `effectiveYellows` for correct display.
+- Cards stored correctly all along (`card_type = 'second_yellow'`); only the
+  cached `suspensions.total_points` was stale → fixed by re-running recalculate.
+
 ## [Phase 4A: Standings Copy for Canva] - 2026-06-20 ✅ COMPLETE
 
 ### Canva Standings Export Tool
