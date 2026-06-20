@@ -1,7 +1,7 @@
 # 📊 PROJECT_STATUS.md
 
-**Last Updated**: 2026-06-20 (Phase 3G Complete)  
-**Current Phase**: Phase 3E ✅ | Phase 3F ✅ | Phase 3G ✅ COMPLETE
+**Last Updated**: 2026-06-20 (Phase 4A Complete)  
+**Current Phase**: Phase 3E ✅ | Phase 3F ✅ | Phase 3G ✅ | Phase 4A ✅ COMPLETE
 
 ---
 
@@ -210,6 +210,22 @@
 - [x] `PUT /api/admin/cards/[cardId]`: minute=null allowed; note update supported
 - [x] note → DB `note` column (no migration needed)
 - [x] npm run build: ✅ PASSED (50 routes)
+
+### Phase 4A: Standings Copy for Canva ✅ COMPLETE (2026-06-20)
+- [x] `GET /api/admin/exports/standings` — auth required; seasonId + optional matchday filter
+- [x] Standings logic: `status=finished && home_score!=null && away_score!=null` (safe 0-0)
+- [x] Matchday filter: `parseMatchdayNumber(match.matchday) <= N`
+- [x] Sort age_groups: `sort_order ASC, code ASC`; divisions: `sort_order ASC, name ASC`
+- [x] Sort standings: pts DESC → GD DESC → GF DESC → name ASC
+- [x] `app/admin/exports/page.tsx` — Season selector + MatchDay input + format toggle
+- [x] Detailed format: header block + ranked rows with `P W D L GD PTS`
+- [x] Compact format: single-line header + `1. ทีม — P2 W2 D0 L0 GD+6 PTS6`
+- [x] 4 preview cards (2-col desktop) + Copy button per card
+- [x] Copy All Standings (4 tables combined with divider)
+- [x] Clipboard API with error fallback
+- [x] AdminNav: 📋 Exports link added
+- [x] `/standings` public + `lib/calculations.ts` unchanged
+- [x] npm run build: ✅ PASSED (52 routes)
 
 ### Phase 4: Integrations 🔴 NOT STARTED
 - [ ] Reports & analytics

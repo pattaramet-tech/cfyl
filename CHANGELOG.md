@@ -2,6 +2,40 @@
 
 All notable changes to CFYL Youth League system are documented here.
 
+## [Phase 4A: Standings Copy for Canva] - 2026-06-20 ✅ COMPLETE
+
+### Canva Standings Export Tool
+
+**`app/api/admin/exports/standings/route.ts`** (NEW):
+- Auth required via `verifyAdminAuth` (Bearer JWT)
+- Params: `seasonId` (required), `matchday` (optional integer — filter "up to matchday N")
+- Fetches all age_groups → sorted by `sort_order ASC, code ASC` (U14 before U17)
+- Per age_group: fetches divisions → sorted by `sort_order ASC, name ASC` (Division 1 before Division 2)
+- Per division: fetches all matches + teams → filters `status === 'finished' && home_score !== null && away_score !== null` (handles 0-0 correctly, no truthy check)
+- Matchday filter: `parseMatchdayNumber(match.matchday) <= matchdayFilter` — imported from `lib/suspension-calc.ts` (already exported)
+- Standings calculated via `calculateStandings()` from `lib/calculations.ts` (unchanged)
+- Sort: pts DESC → GD DESC → GF DESC → teamName ASC (localeCompare th)
+- Returns: `{ season, matchdayFilter, groups: [{ label, ageGroupName, divisionName, standings: [{rank, teamName, P W D L GD PTS}] }] }`
+
+**`app/admin/exports/page.tsx`** (NEW):
+- Season selector (auto-loads, auto-fetches on change)
+- Optional MatchDay input — if blank = all finished matches; if set = up to that matchday
+- "โหลดข้อมูล" button for manual re-fetch
+- Format toggle: **Detailed** / **Compact** — client-side only, no refetch
+- 4 preview cards (one per ageGroup×division) in 2-column desktop grid; each has read-only `<textarea>` + Copy button
+- "Copy All Standings" button (combines all 4 in one clipboard with `──────────` divider)
+- Clipboard API with fallback state if unavailable
+- Detailed format: header block (STANDINGS / season / division / matchday) + ranked rows with `P W D L GD PTS`
+- Compact format: single-line header + ranked rows as `1. ทีม — P2 W2 D0 L0 GD+6 PTS6`
+- GD always signed: `+6`, `0`, `-3`
+
+**`components/AdminNav.tsx`** (MODIFY):
+- Added `📋 Exports` link → `/admin/exports`
+
+Public `/standings` page and `lib/calculations.ts` unchanged.
+
+- npm run build: ✅ PASSED (52 routes)
+
 ## [Phase 3G: Cards Page Full UI Redesign] - 2026-06-20 ✅ COMPLETE
 
 ### Cards Page Full Redesign with 2-Column Layout
