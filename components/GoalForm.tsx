@@ -36,8 +36,13 @@ export function GoalForm({
     setSuccessMessage(null);
 
     // Validate
-    if (!playerId) {
+    if (!isEditing && !playerId) {
       setError('Please select a player');
+      return;
+    }
+
+    if (isEditing && !goalId) {
+      setError('Missing goal ID');
       return;
     }
 

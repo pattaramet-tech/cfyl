@@ -2,6 +2,12 @@
 
 All notable changes to CFYL Youth League system are documented here.
 
+## [Phase 3E Hotfix] - 2026-06-20 ✅ COMPLETE
+
+### Edit Goal Validation + Bulk Card UI
+- **Fix Edit Goal validation**: `GoalForm.tsx` submit handler still blocked edit with "Please select a player" — fixed `if (!playerId)` guard to `if (!isEditing && !playerId)`, and added `if (isEditing && !goalId)` guard; edit mode now validates only `goalId` + `goals`, not `playerId`
+- **Bulk Card UI redesign** (`BulkCardForm.tsx`): desktop uses wider grid (`minmax(280px,2fr) 160px 120px minmax(220px,1fr) 48px`); mobile uses card-per-row vertical layout with labelled fields; inputs use `py-2 px-3 rounded-lg` for easier tapping; Remove button shows label on mobile; Save/Add Row buttons use `py-2.5` for better click targets; logic and suspension recalculation unchanged
+
 ## [Phase 3E] - 2026-06-19 ✅ COMPLETE
 
 ### Goals & Cards UX Improvement
