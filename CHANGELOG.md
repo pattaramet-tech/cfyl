@@ -28,7 +28,7 @@ All notable changes to CFYL Youth League system are documented here.
 **Public pages polished (mobile-first):**
 - `/` — official hero (title + Season 2026 + primary buttons + quick links) + restyled preview cards
 - `/fixtures` — match cards in responsive grid; chip filters; **fixed matchday filter** (was reading stale `matches` state instead of fetched `data`)
-- `/standings` — compact table, horizontal scroll, sticky team column, rank badges (cols: #/Team/P/ช/ส/พ/+−/คะแนน)
+- `/standings` — compact table, horizontal scroll, sticky team column, rank badges (cols: #/Team/P/ช/ส/พ/+−/คะแนน); **red left strip on the relegation zone (bottom 2)** + legend, EPL-style
 - `/top-scorers` — clean ranked list layout
 - `/discipline` — **mobile card layout** + desktop table; soft status badges (warning amber / pending·active red / no_next_match gray); served+normal still hidden per lifecycle logic
 - `SeasonSelector` — restyled; subtle age-group accent (U14 amber, U17 blue)
