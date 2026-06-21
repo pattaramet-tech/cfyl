@@ -33,6 +33,14 @@ public/client; all endpoints auth-required; clear error when URL empty/disabled.
 No change to suspension/discipline/cards/goals/standings logic.
 - npm run build: ✅ PASSED
 
+**Tested & verified (2026-06-21)** against production DB:
+- Test Send → Discord OK (audit `notification.discord.test`, HTTP 204)
+- Send Discord Alert OK (audit `notification.discord.suspensions_send`, success)
+- Status filter confirmed: 0 sendable (pending/active/no_next_match) vs 63 excluded
+  (warning/served/normal) → only ban-relevant statuses are ever sent; empty list
+  correctly sends the "ไม่มีนักกีฬาติดโทษแบน" message
+- Both audit log actions recorded ✅
+
 ## [Phase 4F: Audit Log + Backup Center] - 2026-06-21 ✅ COMPLETE
 
 ### Audit trail of admin actions + CSV/Excel backup export

@@ -261,6 +261,7 @@
 - [x] `/admin/suspensions`: 📣 Send Discord Alert button + confirm modal + result
 - [x] Audit log `notification.discord.*` (Phase 4F)
 - [x] Webhook server-side only; auth required; no suspension/discipline logic change; build ✅
+- [x] **TESTED & VERIFIED (2026-06-21)**: Test Send + Send Alert OK; filter sends only pending/active/no_next_match (verified 0 sendable / 63 excluded warning+served+normal); both audit actions logged; build ✅
 
 ### Phase 4F: Audit Log + Backup Center ✅ COMPLETE (2026-06-21)
 - [x] ⚠️ Migration pending: `scripts/migration-phase4f-audit-logs.sql` (adds `admin_audit_logs` table; RLS no-policy)
