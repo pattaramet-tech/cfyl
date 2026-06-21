@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
+import { slugify } from '@/lib/public-slugs';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -10,6 +11,8 @@ interface Season {
   id: string;
   name: string;
   year: number;
+  season_slug?: string | null;
+  competition_type?: 'league' | 'tournament' | 'mixed';
   start_date: string | null;
   end_date: string | null;
   status: 'upcoming' | 'active' | 'completed';
@@ -47,6 +50,8 @@ const STATUS_LABELS: Record<string, { label: string; cls: string }> = {
 const EMPTY_SEASON = {
   name: '',
   year: new Date().getFullYear(),
+  season_slug: '',
+  competition_type: 'league' as 'league' | 'tournament' | 'mixed',
   start_date: '',
   end_date: '',
   status: 'upcoming' as Season['status'],
@@ -146,6 +151,8 @@ export default function SeasonsPage() {
       name: seasonForm.data.name,
       year: seasonForm.data.year,
       status,
+      season_slug: seasonForm.data.season_slug?.trim() || undefined,
+      competition_type: seasonForm.data.competition_type,
       start_date: seasonForm.data.start_date || null,
       end_date: seasonForm.data.end_date || null,
     };
@@ -389,6 +396,41 @@ export default function SeasonsPage() {
                 </div>
 
                 <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Season Slug (URL)</label>
+                  <input
+                    className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 lowercase"
+                    value={seasonForm.data.season_slug}
+                    onChange={(e) =>
+                      setSeasonForm({ ...seasonForm, data: { ...seasonForm.data, season_slug: e.target.value } })
+                    }
+                    placeholder={slugify(seasonForm.data.name || '', seasonForm.data.year) || 'cfyl-2026'}
+                  />
+                  <p className="text-xs text-gray-400 mt-1">
+                    เว้นว่าง = สร้างอัตโนมัติจากชื่อ ({slugify(seasonForm.data.name || '', seasonForm.data.year) || '—'}) · a-z, 0-9, hyphen
+                  </p>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Competition Type</label>
+                  <select
+                    className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+                    value={seasonForm.data.competition_type}
+                    onChange={(e) =>
+                      setSeasonForm({ ...seasonForm, data: { ...seasonForm.data, competition_type: e.target.value as 'league' | 'tournament' | 'mixed' } })
+                    }
+                  >
+                    <option value="league">league (ลีกปกติ)</option>
+                    <option value="tournament">tournament (ทัวร์นาเมนต์)</option>
+                    <option value="mixed">mixed (ทั้งสองแบบ)</option>
+                  </select>
+                  {seasonForm.data.competition_type !== 'league' && (
+                    <p className="text-xs text-amber-600 mt-1">
+                      ℹ️ tournament ต้องมี Division อย่างน้อย 1 รายการก่อนเพิ่มทีม (สร้างใน tab Divisions เช่น &quot;Tournament&quot;)
+                    </p>
+                  )}
+                </div>
+
+                <div>
                   <label className="block text-xs font-medium text-gray-600 mb-1">วันเริ่ม</label>
                   <input
                     type="date"
@@ -535,6 +577,8 @@ export default function SeasonsPage() {
                                   data: {
                                     name: s.name,
                                     year: s.year,
+                                    season_slug: s.season_slug || '',
+                                    competition_type: s.competition_type || 'league',
                                     start_date: s.start_date || '',
                                     end_date: s.end_date || '',
                                     status: s.status,

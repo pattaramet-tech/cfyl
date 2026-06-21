@@ -15,7 +15,7 @@ export function DisciplineView({ seasonId, ageGroupId }: DisciplineViewProps) {
   const [records, setRecords] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
-  const { seasons, ageGroups, year, code, onSeasonChange, onAgeChange } = usePublicNav(
+  const { seasons, ageGroups, seg, code, onSeasonChange, onAgeChange } = usePublicNav(
     'discipline',
     seasonId,
     ageGroupId
@@ -48,7 +48,7 @@ export function DisciplineView({ seasonId, ageGroupId }: DisciplineViewProps) {
     };
   }, [seasonId, ageGroupId]);
 
-  const copyPath = year != null && code ? buildDisciplinePath(year, code) : null;
+  const copyPath = seg && code ? buildDisciplinePath(seg, code) : null;
 
   return (
     <div className="space-y-6">

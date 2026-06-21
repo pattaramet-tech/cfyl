@@ -92,7 +92,7 @@ export async function PUT(
 
     const { seasonId } = await params;
     const body = await request.json();
-    const { name, year, start_date, end_date, status, competition_type } = body;
+    const { name, year, start_date, end_date, status, competition_type, season_slug } = body;
 
     console.log(`[ADMIN_SEASONS_ID_PUT] Updating season=${seasonId}`);
 
@@ -147,6 +147,23 @@ export async function PUT(
       updates.competition_type = competition_type;
     }
 
+    if (season_slug !== undefined && String(season_slug).trim() !== '') {
+      const slug = String(season_slug).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+      if (!slug) {
+        return NextResponse.json({ error: 'season_slug ไม่ถูกต้อง (ใช้ a-z, 0-9, hyphen)' }, { status: 400 });
+      }
+      const { data: slugTaken } = await supabaseAdmin
+        .from('seasons')
+        .select('id')
+        .eq('season_slug', slug)
+        .neq('id', seasonId)
+        .maybeSingle();
+      if (slugTaken) {
+        return NextResponse.json({ error: 'Season slug นี้ถูกใช้แล้ว กรุณาใช้ slug อื่น' }, { status: 409 });
+      }
+      updates.season_slug = slug;
+    }
+
     // Check name+year uniqueness if either changed
     const newName = (updates.name as string) ?? existing.name;
     const newYear = (updates.year as number) ?? existing.year;
@@ -199,7 +216,13 @@ export async function PUT(
 
     if (error) {
       console.error('[ADMIN_SEASONS_ID_PUT] Update error:', error);
-      return NextResponse.json({ error: error.message }, { status: 500 });
+      if ((error as any).code === '23505') {
+        return NextResponse.json({ error: 'Season slug นี้ถูกใช้แล้ว กรุณาใช้ slug อื่น' }, { status: 409 });
+      }
+      if ((error as any).code === '42703') {
+        return NextResponse.json({ error: 'ฐานข้อมูลยังไม่มีคอลัมน์ season_slug/competition_type — กรุณารัน migration phase 5A.1 ก่อน' }, { status: 500 });
+      }
+      return NextResponse.json({ error: 'บันทึก Season ไม่สำเร็จ กรุณาลองใหม่' }, { status: 500 });
     }
 
     console.log(`[ADMIN_SEASONS_ID_PUT] Updated season=${seasonId} status=${season.status}`);

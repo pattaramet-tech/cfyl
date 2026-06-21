@@ -4,6 +4,8 @@ export interface Season {
   id: string;
   name: string;
   year: number;
+  season_slug?: string | null;
+  competition_type?: 'league' | 'tournament' | 'mixed';
   start_date: string | null;
   end_date: string | null;
   status: 'upcoming' | 'active' | 'completed';

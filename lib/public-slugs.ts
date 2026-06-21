@@ -13,6 +13,7 @@ export interface ResolvedStandings {
   ageGroupId: string;
   divisionId: string | null; // null = all divisions of the age group
   seasonYear: number;
+  seasonSeg: string; // slug or year — for building clean URLs
   ageGroupCode: string;
   divisions: Division[]; // sorted
 }
@@ -88,10 +89,38 @@ export function matchdayFromCode(code: string): number {
   return m ? parseInt(m[1], 10) : 0;
 }
 
+// ─── Season slug helpers ────────────────────────────────────────────────────
+type SeasonLike = { season_slug?: string | null; year: number; status?: string };
+
+/** URL segment for a season: prefer slug, fall back to year. */
+export function seasonSeg(s: SeasonLike): string {
+  return s.season_slug && s.season_slug.trim() ? s.season_slug.trim() : String(s.year);
+}
+
+/** Match a season by slug first; else by year (prefer active, else first). */
+function pickSeasonBySeg<T extends SeasonLike>(seasons: T[], seg: string): T | null {
+  const bySlug = seasons.find((s) => (s.season_slug || '').toLowerCase() === seg.toLowerCase());
+  if (bySlug) return bySlug;
+  const byYear = seasons.filter((s) => String(s.year) === seg);
+  if (!byYear.length) return null;
+  return byYear.find((s) => s.status === 'active') || byYear[0];
+}
+
+/** Build a season slug from name (+ year appended if not already present). */
+export function slugify(name: string, year?: number): string {
+  let base = (name || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+  if (year != null && !new RegExp(`(^|-)${year}(-|$)`).test(base)) {
+    base = base ? `${base}-${year}` : String(year);
+  }
+  return base;
+}
+
 export interface CurrentSeasonSlug {
   seasonId: string;
   ageGroupId: string;
   seasonYear: number;
+  seasonSlug: string | null;
+  seasonSeg: string;
   ageGroupCode: string;
 }
 
@@ -114,6 +143,8 @@ export async function resolveCurrentSeasonSlug(): Promise<CurrentSeasonSlug | nu
     seasonId: season.id,
     ageGroupId: ageGroup.id,
     seasonYear: season.year,
+    seasonSlug: season.season_slug ?? null,
+    seasonSeg: seasonSeg(season),
     ageGroupCode: ageGroup.code,
   };
 }
@@ -138,7 +169,7 @@ export async function resolveStandingsSlug(
   divCode?: string
 ): Promise<ResolvedStandings | null> {
   const seasons = await getJson<Season[]>('/api/public/seasons');
-  const season = seasons?.find((s) => String(s.year) === String(year));
+  const season = pickSeasonBySeg(seasons || [], year);
   if (!season) return null;
 
   const ageGroups = await getJson<AgeGroup[]>(`/api/public/age-groups?seasonId=${season.id}`);
@@ -165,6 +196,7 @@ export async function resolveStandingsSlug(
     ageGroupId: ageGroup.id,
     divisionId,
     seasonYear: season.year,
+    seasonSeg: seasonSeg(season),
     ageGroupCode: ageGroup.code,
     divisions,
   };
@@ -179,7 +211,7 @@ export async function resolvePublicSlug(
   ageCode: string
 ): Promise<CurrentSeasonSlug | null> {
   const seasons = await getJson<Season[]>('/api/public/seasons');
-  const season = seasons?.find((s) => String(s.year) === String(year));
+  const season = pickSeasonBySeg(seasons || [], year);
   if (!season) return null;
 
   const ageGroups = await getJson<AgeGroup[]>(`/api/public/age-groups?seasonId=${season.id}`);
@@ -190,6 +222,8 @@ export async function resolvePublicSlug(
     seasonId: season.id,
     ageGroupId: ageGroup.id,
     seasonYear: season.year,
+    seasonSlug: season.season_slug ?? null,
+    seasonSeg: seasonSeg(season),
     ageGroupCode: ageGroup.code,
   };
 }
@@ -217,8 +251,9 @@ export async function resolveSeasonSwitchPath(
   const ag =
     ags.find((a) => a.code.toLowerCase() === desiredAgeCode.toLowerCase()) || ags[0];
   const ageCode = ag.code;
+  const seg = seasonSeg(newSeason);
 
-  if (!sub) return buildPath(page, newSeason.year, ageCode);
+  if (!sub) return buildPath(page, seg, ageCode);
 
   if (sub.kind === 'div') {
     const divs = sortDivisions(
@@ -227,7 +262,7 @@ export async function resolveSeasonSwitchPath(
       )) || []
     );
     const div = divisionFromCode(divs, sub.code);
-    return buildPath(page, newSeason.year, ageCode, div ? divisionToCode(divs, div.id)! : undefined);
+    return buildPath(page, seg, ageCode, div ? divisionToCode(divs, div.id)! : undefined);
   }
 
   // matchday
@@ -237,5 +272,5 @@ export async function resolveSeasonSwitchPath(
     )) || [];
   const want = matchdayFromCode(sub.code);
   const exists = matches.some((m) => matchdayNumber(m.matchday) === want);
-  return buildPath(page, newSeason.year, ageCode, exists ? `md${want}` : undefined);
+  return buildPath(page, seg, ageCode, exists ? `md${want}` : undefined);
 }

@@ -2,6 +2,35 @@
 
 All notable changes to CFYL Youth League system are documented here.
 
+## [Phase 5A.1: Season slug + multiple seasons per year] - 2026-06-21 ✅ COMPLETE
+
+### Multiple competitions in the same year (e.g. CFYL 2026 + Chonburi PAO 2026)
+
+⚠️ Deploy this code FIRST, then run `scripts/migration-phase5a1-season-slug.sql`
+(adds `seasons.season_slug` + backfills + unique index, then drops the old
+`seasons_year_key` so a year can repeat). Existing CFYL 2026 → slug `cfyl-2026`.
+
+- `seasons.season_slug` (unique). `slugify(name, year)` helper — auto-generates
+  (e.g. "Chonburi PAO" + 2026 → `chonburi-pao-2026`; "CFYL 2026" → `cfyl-2026`)
+- `POST /api/admin/seasons`: accepts `season_slug` + `competition_type`; slug
+  unique (year may repeat); friendly errors (no raw DB messages; maps 23505/42703)
+- `PUT /api/admin/seasons/[seasonId]`: accepts `season_slug` (unique, excl self)
+- Seasons list GET uses `select('*')` (surfaces slug/type post-migration, safe before)
+- `/admin/seasons` form: Season Slug field (auto-gen preview) + Competition Type
+  select + hint that tournament needs a Division before adding teams
+- **Clean URLs accept slug OR year**: `/standings/cfyl-2026/u14`,
+  `/standings/chonburi-pao-2026/u14`, and old `/standings/2026/u14` still work
+  (year falls back to active/first season of that year). Applies to fixtures /
+  top-scorers / discipline too
+- Navbar + all season/age/division/matchday selectors now build slug URLs when a
+  slug exists (`seasonSeg = season_slug || year`); fall back to year otherwise
+- `types/db.ts`: Season += `season_slug?`, `competition_type?`
+
+Pre-migration safe: public/admin reads use `select('*')`; season edits only write
+`season_slug` when provided. No change to League Mode, calculations, fixtures,
+standings, top-scorers, discipline, tournament groups, backup, audit, or Discord.
+- npm run build: ✅ PASSED
+
 ## [Phase 5A: Tournament Mode Foundation] - 2026-06-21 ✅ COMPLETE
 
 ### Group-stage foundation that coexists with League Mode (no League changes)

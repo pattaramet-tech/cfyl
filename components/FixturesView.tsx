@@ -20,7 +20,7 @@ export function FixturesView({ seasonId, ageGroupId, matchdayCode }: FixturesVie
 
   const selectedMd = matchdayCode ? matchdayNumber(matchdayCode) : null;
 
-  const { router, seasons, ageGroups, year, code, onSeasonChange, onAgeChange } = usePublicNav(
+  const { router, seasons, ageGroups, seg, code, onSeasonChange, onAgeChange } = usePublicNav(
     'fixtures',
     seasonId,
     ageGroupId,
@@ -49,14 +49,14 @@ export function FixturesView({ seasonId, ageGroupId, matchdayCode }: FixturesVie
     ? matches.filter((m) => matchdayNumber(m.matchday) === selectedMd)
     : matches;
 
-  const canNav = year != null && !!code;
-  const goAll = () => canNav && router.push(buildFixturesPath(year!, code!));
-  const goMd = (n: number) => canNav && router.push(buildFixturesPath(year!, code!, `md${n}`));
+  const canNav = !!seg && !!code;
+  const goAll = () => canNav && router.push(buildFixturesPath(seg!, code!));
+  const goMd = (n: number) => canNav && router.push(buildFixturesPath(seg!, code!, `md${n}`));
 
   const copyPath = canNav
     ? selectedMd != null
-      ? buildFixturesPath(year!, code!, `md${selectedMd}`)
-      : buildFixturesPath(year!, code!)
+      ? buildFixturesPath(seg!, code!, `md${selectedMd}`)
+      : buildFixturesPath(seg!, code!)
     : null;
 
   return (

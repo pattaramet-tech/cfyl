@@ -53,7 +53,7 @@ export function StandingsView({ seasonId, ageGroupId, divisionId, allDivisions =
     : undefined;
   const currentDivCode = currentDivisionId ? divisionToCode(divisions, currentDivisionId) : null;
 
-  const { router, seasons, ageGroups, year, code, onSeasonChange, onAgeChange } = usePublicNav(
+  const { router, seasons, ageGroups, seg, code, onSeasonChange, onAgeChange } = usePublicNav(
     'standings',
     seasonId,
     ageGroupId,
@@ -88,15 +88,15 @@ export function StandingsView({ seasonId, ageGroupId, divisionId, allDivisions =
     };
   }, [seasonId, ageGroupId, allDivisions, divisions]);
 
-  const canNav = year != null && !!code;
-  const goAll = () => canNav && router.push(buildStandingsPath(year!, code!));
+  const canNav = !!seg && !!code;
+  const goAll = () => canNav && router.push(buildStandingsPath(seg!, code!));
   const goDiv = (d: Division) =>
-    canNav && router.push(buildStandingsPath(year!, code!, divisionToCode(divisions, d.id) || undefined));
+    canNav && router.push(buildStandingsPath(seg!, code!, divisionToCode(divisions, d.id) || undefined));
 
   const copyPath = canNav
     ? allDivisions
-      ? buildStandingsPath(year!, code!)
-      : buildStandingsPath(year!, code!, currentDivCode || undefined)
+      ? buildStandingsPath(seg!, code!)
+      : buildStandingsPath(seg!, code!, currentDivCode || undefined)
     : null;
 
   return (

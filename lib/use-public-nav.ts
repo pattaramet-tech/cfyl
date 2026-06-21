@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import type { Season, AgeGroup } from '@/types/db';
-import { buildPath, resolveSeasonSwitchPath, type PublicPage, type SubFilter } from '@/lib/public-slugs';
+import { buildPath, resolveSeasonSwitchPath, seasonSeg, type PublicPage, type SubFilter } from '@/lib/public-slugs';
 
 /**
  * Shared season/age-group navigation for public pages.
@@ -41,6 +41,7 @@ export function usePublicNav(
   const season = seasons.find((s) => s.id === seasonId);
   const ageGroup = ageGroups.find((a) => a.id === ageGroupId);
   const year = season?.year;
+  const seg = season ? seasonSeg(season) : undefined;
   const code = ageGroup?.code;
 
   const onSeasonChange = useCallback(
@@ -54,10 +55,10 @@ export function usePublicNav(
 
   const onAgeChange = useCallback(
     (ag: AgeGroup) => {
-      if (year != null) router.push(buildPath(page, year, ag.code));
+      if (seg) router.push(buildPath(page, seg, ag.code));
     },
-    [page, year, router]
+    [page, seg, router]
   );
 
-  return { router, seasons, ageGroups, season, ageGroup, year, code, onSeasonChange, onAgeChange };
+  return { router, seasons, ageGroups, season, ageGroup, year, seg, code, onSeasonChange, onAgeChange };
 }

@@ -37,7 +37,7 @@ export function PublicChrome({ children }: { children: React.ReactNode }) {
     let active = true;
     resolveCurrentSeasonSlug().then((r) => {
       if (!active || !r) return;
-      const { seasonYear: y, ageGroupCode: c } = r;
+      const { seasonSeg: y, ageGroupCode: c } = r;
       setCleanHrefs({
         '/standings': buildStandingsPath(y, c),
         '/fixtures': buildFixturesPath(y, c),

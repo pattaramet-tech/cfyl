@@ -252,6 +252,14 @@
 - [x] Client-side only — no API change; `/standings` public unaffected
 - [x] npm run build: ✅ PASSED
 
+### Phase 5A.1: Season slug + multiple seasons per year ✅ COMPLETE (2026-06-21)
+- [x] ⚠️ Migration pending: `scripts/migration-phase5a1-season-slug.sql` (season_slug + backfill + unique; drops seasons_year_key)
+- [x] Multiple competitions per year (CFYL 2026 + Chonburi PAO 2026 + …)
+- [x] `slugify` helper + auto-gen; seasons POST/PUT accept season_slug + competition_type with friendly errors
+- [x] `/admin/seasons` form: Season Slug + Competition Type + tournament division hint
+- [x] Clean URLs accept slug OR year (backward compatible); navbar/selectors build slug URLs (seasonSeg = slug || year)
+- [x] Pre-migration safe (select('*'), slug only written when provided); no League/calc/public/backup change; build ✅
+
 ### Phase 5A: Tournament Mode Foundation ✅ COMPLETE (2026-06-21)
 - [x] ⚠️ Migration pending: `scripts/migration-phase5a-tournament-foundation.sql` (competition_type, matches.stage, tournament_groups, tournament_group_teams)
 - [x] Coexists with League Mode — additive only, existing data = league

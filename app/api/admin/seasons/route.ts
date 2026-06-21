@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { verifyAdminAuth } from '@/lib/admin-middleware';
+import { slugify } from '@/lib/public-slugs';
 import { createClient } from '@supabase/supabase-js';
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -14,6 +15,11 @@ const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey);
 export const dynamic = 'force-dynamic';
 
 const VALID_STATUSES = ['upcoming', 'active', 'completed'] as const;
+const VALID_COMPETITION_TYPES = ['league', 'tournament', 'mixed'] as const;
+
+function normalizeSlug(raw: string): string {
+  return raw.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+}
 
 export async function GET(request: NextRequest) {
   try {
@@ -26,7 +32,7 @@ export async function GET(request: NextRequest) {
 
     const { data: seasons, error } = await supabaseAdmin
       .from('seasons')
-      .select('id, name, year, start_date, end_date, status, created_at, updated_at')
+      .select('*')
       .order('year', { ascending: false });
 
     if (error) {
@@ -72,7 +78,7 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { name, year, start_date, end_date, status } = body;
+    const { name, year, start_date, end_date, status, season_slug, competition_type } = body;
 
     if (!name || !year) {
       return NextResponse.json({ error: 'name และ year จำเป็นต้องระบุ' }, { status: 400 });
@@ -97,9 +103,39 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'name ต้องไม่ว่างเปล่า' }, { status: 400 });
     }
 
-    console.log(`[ADMIN_SEASONS_POST] Creating season: "${trimmedName}" year=${yearNum}`);
+    // Competition type (default league)
+    const compType = competition_type || 'league';
+    if (!VALID_COMPETITION_TYPES.includes(compType)) {
+      return NextResponse.json(
+        { error: 'competition_type ต้องเป็น league, tournament, หรือ mixed' },
+        { status: 400 }
+      );
+    }
 
-    // Check name uniqueness per year
+    // Season slug (auto-generate if blank) — slug unique, year may repeat
+    const slug = season_slug && String(season_slug).trim()
+      ? normalizeSlug(String(season_slug))
+      : slugify(trimmedName, yearNum);
+    if (!slug) {
+      return NextResponse.json({ error: 'season_slug ไม่ถูกต้อง (ใช้ a-z, 0-9, hyphen)' }, { status: 400 });
+    }
+
+    console.log(`[ADMIN_SEASONS_POST] Creating season: "${trimmedName}" year=${yearNum} slug=${slug}`);
+
+    // Slug uniqueness
+    const { data: slugTaken } = await supabaseAdmin
+      .from('seasons')
+      .select('id')
+      .eq('season_slug', slug)
+      .maybeSingle();
+    if (slugTaken) {
+      return NextResponse.json(
+        { error: 'Season slug นี้ถูกใช้แล้ว กรุณาใช้ slug อื่น' },
+        { status: 409 }
+      );
+    }
+
+    // Check exact name+year duplicate (year alone may repeat)
     const { data: existing } = await supabaseAdmin
       .from('seasons')
       .select('id, name')
@@ -140,16 +176,24 @@ export async function POST(request: NextRequest) {
       .insert({
         name: trimmedName,
         year: yearNum,
+        season_slug: slug,
+        competition_type: compType,
         start_date: start_date || null,
         end_date: end_date || null,
         status: resolvedStatus,
       })
-      .select('id, name, year, start_date, end_date, status, created_at, updated_at')
+      .select('*')
       .single();
 
     if (error) {
       console.error('[ADMIN_SEASONS_POST] Insert error:', error);
-      return NextResponse.json({ error: error.message }, { status: 500 });
+      if ((error as any).code === '23505') {
+        return NextResponse.json({ error: 'Season slug นี้ถูกใช้แล้ว กรุณาใช้ slug อื่น' }, { status: 409 });
+      }
+      if ((error as any).code === '42703') {
+        return NextResponse.json({ error: 'ฐานข้อมูลยังไม่มีคอลัมน์ season_slug/competition_type — กรุณารัน migration phase 5A.1 ก่อน' }, { status: 500 });
+      }
+      return NextResponse.json({ error: 'บันทึก Season ไม่สำเร็จ กรุณาลองใหม่' }, { status: 500 });
     }
 
     console.log(`[ADMIN_SEASONS_POST] Created season id=${season.id}`);

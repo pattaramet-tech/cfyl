@@ -33,7 +33,7 @@ export function TopScorersView({ seasonId, ageGroupId }: TopScorersViewProps) {
   const [scorers, setScorers] = useState<TopScorer[]>([]);
   const [loading, setLoading] = useState(true);
 
-  const { seasons, ageGroups, year, code, onSeasonChange, onAgeChange } = usePublicNav(
+  const { seasons, ageGroups, seg, code, onSeasonChange, onAgeChange } = usePublicNav(
     'top-scorers',
     seasonId,
     ageGroupId
@@ -70,7 +70,7 @@ export function TopScorersView({ seasonId, ageGroupId }: TopScorersViewProps) {
     };
   }, [seasonId, ageGroupId, selected]);
 
-  const copyPath = year != null && code ? buildTopScorersPath(year, code) : null;
+  const copyPath = seg && code ? buildTopScorersPath(seg, code) : null;
 
   return (
     <div className="space-y-6">
