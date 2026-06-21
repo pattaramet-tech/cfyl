@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { verifyAdminAuth } from '@/lib/admin-middleware';
+import { logAdminAction } from '@/lib/audit-log';
 import { recalculatePlayerSuspension, getMatchDetails } from '@/lib/suspension-calc';
 import { createClient } from '@supabase/supabase-js';
 
@@ -227,6 +228,16 @@ export async function PUT(
     }
     console.timeEnd(timerSuspension);
 
+    await logAdminAction({
+      admin: { id: authResult.profile!.id, email: authResult.profile!.email },
+      action: 'card.update',
+      entityType: 'card',
+      entityId: cardId,
+      entityLabel: updatedCard?.card_type ?? existingCard.card_type,
+      oldData: { card_type: existingCard.card_type, minute: existingCard.minute, player_id: existingCard.player_id },
+      newData: { card_type: updatedCard?.card_type, minute: updatedCard?.minute, player_id: updatedCard?.player_id },
+    });
+
     console.timeEnd(timerTotal);
     return NextResponse.json(updatedCard, { status: 200 });
   } catch (error) {
@@ -269,10 +280,10 @@ export async function DELETE(
 
     console.log('[CARDS_DELETE] Fetching card before deletion');
 
-    // Get card before deleting (for suspension recalc)
+    // Get card before deleting (for suspension recalc + audit)
     const { data: card, error: fetchError } = await supabaseAdmin
       .from('cards')
-      .select('id, match_id, player_id')
+      .select('*')
       .eq('id', cardId)
       .single();
 
@@ -321,6 +332,15 @@ export async function DELETE(
     } catch (calcError) {
       console.error('[CARDS_DELETE] Suspension calculation error:', calcError);
     }
+
+    await logAdminAction({
+      admin: { id: authResult.profile!.id, email: authResult.profile!.email },
+      action: 'card.delete',
+      entityType: 'card',
+      entityId: cardId,
+      entityLabel: card.card_type,
+      oldData: card,
+    });
 
     return NextResponse.json(
       { message: 'Card deleted successfully' },

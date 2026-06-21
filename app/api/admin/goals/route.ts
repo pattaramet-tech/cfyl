@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { verifyAdminAuth } from '@/lib/admin-middleware';
+import { logAdminAction } from '@/lib/audit-log';
 import { createClient } from '@supabase/supabase-js';
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -187,6 +188,15 @@ export async function POST(request: NextRequest) {
     }
 
     console.log('[GOALS_POST] Goal created:', newGoal?.id);
+
+    await logAdminAction({
+      admin: { id: authResult.profile!.id, email: authResult.profile!.email },
+      action: 'goal.create',
+      entityType: 'goal',
+      entityId: newGoal?.id,
+      entityLabel: `${player.full_name} (${goals})`,
+      newData: { match_id, player_id, team_id: player.team_id, goals },
+    });
 
     return NextResponse.json(
       {

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { verifyAdminAuth } from '@/lib/admin-middleware';
+import { logAdminAction } from '@/lib/audit-log';
 import { recalculatePlayerSuspension, getMatchDetails } from '@/lib/suspension-calc';
 import { createClient } from '@supabase/supabase-js';
 
@@ -224,6 +225,15 @@ export async function POST(request: NextRequest) {
       console.error('[CARDS_POST] Suspension calculation error:', calcError);
       // Don't fail the request if suspension calc fails
     }
+
+    await logAdminAction({
+      admin: { id: authResult.profile!.id, email: authResult.profile!.email },
+      action: 'card.create',
+      entityType: 'card',
+      entityId: card?.id,
+      entityLabel: cardType,
+      newData: { match_id: matchId, player_id: playerId, team_id: playerTeamId, card_type: cardType, minute: minute ?? null },
+    });
 
     console.timeEnd(timerTotal);
     return NextResponse.json(card, { status: 201 });

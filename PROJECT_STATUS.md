@@ -252,6 +252,16 @@
 - [x] Client-side only — no API change; `/standings` public unaffected
 - [x] npm run build: ✅ PASSED
 
+### Phase 4F: Audit Log + Backup Center ✅ COMPLETE (2026-06-21)
+- [x] ⚠️ Migration pending: `scripts/migration-phase4f-audit-logs.sql` (adds `admin_audit_logs` table; RLS no-policy)
+- [x] `lib/audit-log.ts` — `logAdminAction` (service role, never throws)
+- [x] Instrumented core 8: match update, goal C/U/D + bulk, card C/U/D + bulk, suspension recalc
+- [x] `GET /api/admin/audit-logs` (filters + pagination) + `/admin/audit-logs` read-only UI
+- [x] `lib/csv.ts` (UTF-8 BOM) + `GET /api/admin/backup/export` (csv/xlsx, type incl. all)
+- [x] `/admin/backup` page: Season/Age/Division filters + per-type export + Export All (confirm)
+- [x] AdminNav: 💾 Backup + 🧾 Audit Logs
+- [x] No calc/public/auth/schema changes (except new audit table); build ✅
+
 ### Phase 4E: Clean URLs + Season Selector for all public pages ✅ COMPLETE (2026-06-21)
 - [x] Clean URLs: `/fixtures/{year}/{age}[/md{n}]`, `/top-scorers/{year}/{age}`, `/discipline/{year}/{age}` (standings from 4D)
 - [x] `lib/public-slugs.ts`: generic `buildPath` + per-page builders, matchday helpers (client-safe), `resolvePublicSlug`, `resolveSeasonSwitchPath` (keep age + sub-filter best-effort)

@@ -106,6 +106,20 @@ export function AdminNav({ email, fullName }: AdminNavProps) {
             </Link>
 
             <Link
+              href="/admin/backup"
+              className="block px-4 py-3 rounded-lg hover:bg-gray-800 transition hover:text-white"
+            >
+              💾 Backup
+            </Link>
+
+            <Link
+              href="/admin/audit-logs"
+              className="block px-4 py-3 rounded-lg hover:bg-gray-800 transition hover:text-white"
+            >
+              🧾 Audit Logs
+            </Link>
+
+            <Link
               href="/admin/settings"
               className="block px-4 py-3 rounded-lg hover:bg-gray-800 transition hover:text-white"
             >

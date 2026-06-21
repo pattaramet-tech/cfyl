@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { verifyAdminAuth } from '@/lib/admin-middleware';
+import { logAdminAction } from '@/lib/audit-log';
 import { createClient } from '@supabase/supabase-js';
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -158,6 +159,15 @@ export async function POST(request: NextRequest) {
       });
 
     console.log(`[GOALS_BULK_POST] Created ${created?.length} records`);
+
+    await logAdminAction({
+      admin: { id: authResult.profile!.id, email: authResult.profile!.email },
+      action: 'goal.bulk_create',
+      entityType: 'goal',
+      entityId: matchId,
+      entityLabel: `${created?.length ?? 0} records / ${mergedMap.size} players`,
+      newData: { match_id: matchId, players: mergedMap.size, created: created?.length ?? 0 },
+    });
 
     return NextResponse.json(
       {

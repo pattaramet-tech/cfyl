@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { verifyAdminAuth } from '@/lib/admin-middleware';
+import { logAdminAction } from '@/lib/audit-log';
 import { recalculateSeasonSuspensions } from '@/lib/suspension-calc';
 
 export const dynamic = 'force-dynamic';
@@ -28,6 +29,15 @@ export async function POST(request: NextRequest) {
     const result = await recalculateSeasonSuspensions(seasonId, ageGroupId);
 
     console.log(`[RECALCULATE_ALL] Done:`, result);
+
+    await logAdminAction({
+      admin: { id: authResult.profile!.id, email: authResult.profile!.email },
+      action: 'suspension.recalculate',
+      entityType: 'suspension',
+      entityId: null,
+      entityLabel: `season=${seasonId} age_group=${ageGroupId}`,
+      newData: result,
+    });
 
     return NextResponse.json({
       success: true,

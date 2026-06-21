@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { verifyAdminAuth, badRequestResponse, internalErrorResponse } from '@/lib/admin-middleware';
+import { logAdminAction } from '@/lib/audit-log';
 import { createClient } from '@supabase/supabase-js';
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -95,11 +96,19 @@ export async function PUT(
       return internalErrorResponse('Failed to update match');
     }
 
-    // Log the update (for audit trail in future)
-    console.log(`[ADMIN] Match updated by ${authResult.profile.email}: ${matchId}`);
-    console.log(`  Home: ${currentMatch.home_score} → ${home_score}`);
-    console.log(`  Away: ${currentMatch.away_score} → ${away_score}`);
-    console.log(`  Status: ${currentMatch.status} → ${status || currentMatch.status}`);
+    await logAdminAction({
+      admin: { id: authResult.profile.id, email: authResult.profile.email },
+      action: 'match.update_score',
+      entityType: 'match',
+      entityId: matchId,
+      entityLabel: currentMatch.match_code || matchId,
+      oldData: {
+        home_score: currentMatch.home_score,
+        away_score: currentMatch.away_score,
+        status: currentMatch.status,
+      },
+      newData: { home_score, away_score, status: status || currentMatch.status },
+    });
 
     return NextResponse.json(
       {

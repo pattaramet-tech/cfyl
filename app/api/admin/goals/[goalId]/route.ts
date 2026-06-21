@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { verifyAdminAuth } from '@/lib/admin-middleware';
+import { logAdminAction } from '@/lib/audit-log';
 import { createClient } from '@supabase/supabase-js';
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -97,6 +98,16 @@ export async function PUT(
 
     console.log('[GOALS_PUT] Goal updated:', goalId);
 
+    await logAdminAction({
+      admin: { id: authResult.profile!.id, email: authResult.profile!.email },
+      action: 'goal.update',
+      entityType: 'goal',
+      entityId: goalId,
+      entityLabel: (updatedGoal as any)?.player?.full_name ?? goalId,
+      oldData: { goals: currentGoal.goals },
+      newData: { goals: updatedGoal?.goals },
+    });
+
     return NextResponse.json(
       {
         success: true,
@@ -143,7 +154,7 @@ export async function DELETE(
     // Get goal to verify it exists
     const { data: goal, error: getError } = await supabaseAdmin
       .from('goals')
-      .select('id')
+      .select('*')
       .eq('id', goalId)
       .single();
 
@@ -170,6 +181,15 @@ export async function DELETE(
     }
 
     console.log('[GOALS_DELETE] Goal deleted:', goalId);
+
+    await logAdminAction({
+      admin: { id: authResult.profile!.id, email: authResult.profile!.email },
+      action: 'goal.delete',
+      entityType: 'goal',
+      entityId: goalId,
+      entityLabel: goalId,
+      oldData: goal,
+    });
 
     return NextResponse.json(
       {

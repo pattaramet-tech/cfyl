@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { verifyAdminAuth } from '@/lib/admin-middleware';
+import { logAdminAction } from '@/lib/audit-log';
 import { recalculatePlayerSuspension } from '@/lib/suspension-calc';
 import { createClient } from '@supabase/supabase-js';
 
@@ -172,6 +173,15 @@ export async function POST(request: NextRequest) {
         suspensionWarnings.push(`${player.full_name}: ${msg}`);
       }
     }
+
+    await logAdminAction({
+      admin: { id: authResult.profile!.id, email: authResult.profile!.email },
+      action: 'card.bulk_create',
+      entityType: 'card',
+      entityId: matchId,
+      entityLabel: `${created?.length ?? 0} cards / ${playerIds.length} players`,
+      newData: { match_id: matchId, players: playerIds.length, created: created?.length ?? 0 },
+    });
 
     return NextResponse.json(
       {

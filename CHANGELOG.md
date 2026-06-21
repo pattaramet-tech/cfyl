@@ -2,6 +2,41 @@
 
 All notable changes to CFYL Youth League system are documented here.
 
+## [Phase 4F: Audit Log + Backup Center] - 2026-06-21 ✅ COMPLETE
+
+### Audit trail of admin actions + CSV/Excel backup export
+
+⚠️ Requires running `scripts/migration-phase4f-audit-logs.sql` in Supabase
+(adds ONE table `admin_audit_logs`; no existing schema changed).
+
+**Audit Log**
+- `lib/audit-log.ts`: `logAdminAction(...)` — writes to `admin_audit_logs` via
+  service role; **never throws** (failed insert only logs, never breaks the action)
+- Instrumented (core 8): match score/status update, goal create/update/delete,
+  goal bulk, card create/update/delete, card bulk, suspension recalculate
+- `GET /api/admin/audit-logs` — auth required; filters: page/limit/action/
+  entityType/adminEmail/dateFrom/dateTo/search; latest first
+- `/admin/audit-logs` — read-only UI: filters + paginated table + expandable
+  old_data/new_data
+- Table locked down: RLS enabled with NO policies (service role only)
+
+**Backup / Export Center**
+- `lib/csv.ts`: CSV builder with UTF-8 BOM (Thai opens correctly in Excel),
+  proper escaping, keeps 0 / null handled
+- `GET /api/admin/backup/export` — auth required; `seasonId` (required),
+  `ageGroupId?`, `divisionId?`, `type`, `format?` (csv|xlsx)
+- Types: teams, players, matches, goals, cards, suspensions, standings; `all`
+  → multi-sheet Excel (via existing `xlsx` package). 0-0 / GD 0 render correctly
+- `/admin/backup` — Season/Age/Division filters + per-type CSV/Excel buttons +
+  Export All (confirm before download)
+- Standings export reuses `calculateStandings` read-only (no logic change)
+
+**`components/AdminNav.tsx`**: added 💾 Backup + 🧾 Audit Logs links.
+
+No change to public logic, standings/suspension calculations, clean URL routing,
+admin auth flow, or existing schema.
+- npm run build: ✅ PASSED
+
 ## [Phase 4E: Clean URLs + Season Selector for all public pages] - 2026-06-21 ✅ COMPLETE
 
 ### Fixtures / Top Scorers / Discipline get clean URLs + a season selector
