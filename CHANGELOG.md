@@ -2,6 +2,25 @@
 
 All notable changes to CFYL Youth League system are documented here.
 
+## [Phase 4D Hotfix: Navbar & Standings selector use clean URLs] - 2026-06-21 ✅ COMPLETE
+
+### Navigation now routes to short slugs (old query URLs still work)
+
+- **`lib/public-slugs.ts`**: added `resolveCurrentSeasonSlug()` (active season → newest
+  year fallback, + first age group by sort_order)
+- **`components/PublicChrome.tsx`**: navbar "ตารางคะแนน" now resolves to the current-season
+  clean URL (`/standings/2026/u14`); falls back to `/standings` if it can't resolve
+- **`components/StandingsView.tsx`**: now self-contained with season / age-group / division
+  selectors that **`router.push` clean URLs** (`/standings/{year}/{ageCode}[/dN]`,
+  "ทุกดิวิชั่น" → age-group URL). No more query-string pushes from the selector.
+- **`app/standings/page.tsx`**: dropped the shared `SeasonSelector`; reads query ids when
+  present (backward compatible) else resolves the current season; renders `StandingsView`.
+- Clean route pages simplified (StandingsView owns the selectors now).
+
+Backward compatible: `/standings`, `/standings?season=&ageGroup=`, and `&division=` all
+still open. No change to standings calculation, public APIs, or admin pages.
+- npm run build: ✅ PASSED
+
 ## [Phase 4D: Clean Public URLs / Short Slugs (Standings)] - 2026-06-21 ✅ COMPLETE
 
 ### Shareable short URLs for standings — old query-string URLs still work

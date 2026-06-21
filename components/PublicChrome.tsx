@@ -2,7 +2,8 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { resolveCurrentSeasonSlug, buildStandingsPath } from '@/lib/public-slugs';
 
 const NAV_LINKS = [
   { href: '/', label: 'หน้าหลัก' },
@@ -20,9 +21,26 @@ function isActive(pathname: string, href: string): boolean {
 export function PublicChrome({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const [menuOpen, setMenuOpen] = useState(false);
+  const [standingsHref, setStandingsHref] = useState('/standings');
+
+  const onAdmin = pathname.startsWith('/admin');
+
+  // Point "ตารางคะแนน" at the current-season clean URL (fallback /standings)
+  useEffect(() => {
+    if (onAdmin) return;
+    let active = true;
+    resolveCurrentSeasonSlug().then((r) => {
+      if (active && r) setStandingsHref(buildStandingsPath(r.seasonYear, r.ageGroupCode));
+    });
+    return () => {
+      active = false;
+    };
+  }, [onAdmin]);
+
+  const hrefFor = (href: string) => (href === '/standings' ? standingsHref : href);
 
   // Admin owns its own full-screen layout — render children through untouched.
-  if (pathname.startsWith('/admin')) {
+  if (onAdmin) {
     return <>{children}</>;
   }
 
@@ -47,7 +65,7 @@ export function PublicChrome({ children }: { children: React.ReactNode }) {
               {NAV_LINKS.map((link) => (
                 <Link
                   key={link.href}
-                  href={link.href}
+                  href={hrefFor(link.href)}
                   className={`px-3 py-2 rounded-md text-sm font-medium transition ${
                     isActive(pathname, link.href)
                       ? 'bg-white/15 text-white'
@@ -85,7 +103,7 @@ export function PublicChrome({ children }: { children: React.ReactNode }) {
               {NAV_LINKS.map((link) => (
                 <Link
                   key={link.href}
-                  href={link.href}
+                  href={hrefFor(link.href)}
                   onClick={() => setMenuOpen(false)}
                   className={`block px-3 py-3 rounded-lg text-base font-medium transition ${
                     isActive(pathname, link.href)

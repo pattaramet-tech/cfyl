@@ -56,6 +56,36 @@ export function buildStandingsPath(
   return divCode ? `${base}/${divCode.toLowerCase()}` : base;
 }
 
+export interface CurrentSeasonSlug {
+  seasonId: string;
+  ageGroupId: string;
+  seasonYear: number;
+  ageGroupCode: string;
+}
+
+/**
+ * Resolve the "current" season (active, else newest year) + its first age group.
+ * Used to point the navbar / bare /standings at a clean URL.
+ */
+export async function resolveCurrentSeasonSlug(): Promise<CurrentSeasonSlug | null> {
+  const seasons = await getJson<Season[]>('/api/public/seasons');
+  if (!seasons?.length) return null;
+  const season =
+    seasons.find((s) => s.status === 'active') ||
+    [...seasons].sort((a, b) => b.year - a.year)[0];
+
+  const ageGroups = await getJson<AgeGroup[]>(`/api/public/age-groups?seasonId=${season.id}`);
+  if (!ageGroups?.length) return null;
+  const ageGroup = [...ageGroups].sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0))[0];
+
+  return {
+    seasonId: season.id,
+    ageGroupId: ageGroup.id,
+    seasonYear: season.year,
+    ageGroupCode: ageGroup.code,
+  };
+}
+
 async function getJson<T>(url: string): Promise<T | null> {
   try {
     const res = await fetch(url);

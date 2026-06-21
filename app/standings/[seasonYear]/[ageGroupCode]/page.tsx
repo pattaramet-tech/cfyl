@@ -34,17 +34,10 @@ export default function StandingsByAgeGroupPage() {
   return (
     <div className="space-y-6">
       <div className="cfyl-section">
-        <div className="flex items-center justify-between gap-3 flex-wrap">
-          <div>
-            <h1 className="text-2xl sm:text-3xl font-bold text-slate-800">📊 ตารางคะแนน</h1>
-            <p className="text-sm text-slate-500 mt-1">
-              CFYL {year} · {ageCode.toUpperCase()} · ทุกดิวิชั่น
-            </p>
-          </div>
-          <Link href="/standings" className="cfyl-chip text-xs">
-            เลือกฤดูกาล/รุ่นอื่น →
-          </Link>
-        </div>
+        <h1 className="text-2xl sm:text-3xl font-bold text-slate-800">📊 ตารางคะแนน</h1>
+        <p className="text-sm text-slate-500 mt-1">
+          CFYL {year} · {ageCode.toUpperCase()} · ทุกดิวิชั่น
+        </p>
       </div>
 
       {state === 'loading' ? (
@@ -62,8 +55,6 @@ export default function StandingsByAgeGroupPage() {
           seasonId={resolved.seasonId}
           ageGroupId={resolved.ageGroupId}
           allDivisions
-          seasonYear={resolved.seasonYear}
-          ageGroupCode={resolved.ageGroupCode}
         />
       )}
     </div>

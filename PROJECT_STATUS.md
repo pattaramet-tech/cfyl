@@ -252,6 +252,13 @@
 - [x] Client-side only — no API change; `/standings` public unaffected
 - [x] npm run build: ✅ PASSED
 
+### Phase 4D Hotfix: Navbar & Standings selector use clean URLs ✅ COMPLETE (2026-06-21)
+- [x] `resolveCurrentSeasonSlug()` helper (active/newest season + first age group)
+- [x] Navbar "ตารางคะแนน" → current-season clean URL (fallback `/standings`)
+- [x] `StandingsView` selectors (season/age/division) now `router.push` clean URLs
+- [x] `/standings` page resolves current season when no query params; query ids still work
+- [x] No standings calc / API / admin changes; build ✅
+
 ### Phase 4D: Clean Public URLs / Short Slugs — Standings ✅ COMPLETE (2026-06-21)
 - [x] Clean URLs: `/standings/{year}/{ageCode}/{divCode}` (e.g. `/standings/2026/u14/d1`)
 - [x] Age-group-only URL shows all divisions stacked (`/standings/2026/u14`)
