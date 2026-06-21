@@ -2,6 +2,35 @@
 
 All notable changes to CFYL Youth League system are documented here.
 
+## [Phase 4D: Clean Public URLs / Short Slugs (Standings)] - 2026-06-21 ✅ COMPLETE
+
+### Shareable short URLs for standings — old query-string URLs still work
+
+Slugs are **derived** from existing data (no DB slug column):
+`/standings/{seasonYear}/{ageGroupCode}/{divisionCode}` — e.g. `/standings/2026/u14/d1`
+
+**`lib/public-slugs.ts`** (NEW): client helpers
+- `resolveStandingsSlug(year, ageCode, divCode?)` → resolves slugs to ids via existing
+  public APIs (seasons by `year`, age group by `code`, division `dN` by `sort_order` index, name fallback)
+- `buildStandingsPath()` / `divisionToCode()` / `divisionFromCode()`
+
+**`components/StandingsView.tsx`** (NEW): shared render component (extracted from the page)
+- Single-division mode (chips + table) or `allDivisions` mode (every division stacked)
+- Province rep shown only on the top division; optional 🔗 **Copy Link** button
+  copies the clean URL of the selected division
+
+**Routes:**
+- `app/standings/[seasonYear]/[ageGroupCode]/page.tsx` (NEW) → all divisions of the age group
+- `app/standings/[seasonYear]/[ageGroupCode]/[divisionCode]/page.tsx` (NEW) → single division
+- `app/standings/page.tsx` (query string) → slimmed to use `StandingsView`; now also
+  reads an optional `division` query param (additive). **Old URLs unchanged.**
+- Bad slug → graceful "ไม่พบหน้าที่ระบุ" + link back to `/standings` (no hard crash)
+
+Public nav keeps pointing at `/standings`. No change to standings calculation, public
+APIs, or admin pages. Verified d1/d2 → ดิวิชั่น 1/2 by sort_order for U14 & U17 (2026).
+
+- npm run build: ✅ PASSED (added 2 dynamic routes)
+
 ## [Phase 4C: Public UI/UX Polish + Admin Access Button] - 2026-06-21 ✅ COMPLETE
 
 ### Official, clean, mobile-first redesign (CSS / layout only — no logic touched)

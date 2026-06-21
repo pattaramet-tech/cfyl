@@ -252,6 +252,17 @@
 - [x] Client-side only — no API change; `/standings` public unaffected
 - [x] npm run build: ✅ PASSED
 
+### Phase 4D: Clean Public URLs / Short Slugs — Standings ✅ COMPLETE (2026-06-21)
+- [x] Clean URLs: `/standings/{year}/{ageCode}/{divCode}` (e.g. `/standings/2026/u14/d1`)
+- [x] Age-group-only URL shows all divisions stacked (`/standings/2026/u14`)
+- [x] `lib/public-slugs.ts` (NEW) — derive slug↔id (no DB column); `dN` via sort_order
+- [x] `components/StandingsView.tsx` (NEW) — shared single/all-divisions render + Copy Link
+- [x] Dynamic routes: `[seasonYear]/[ageGroupCode]` + `.../[divisionCode]`
+- [x] `app/standings/page.tsx` slimmed to use StandingsView; old `?season=&ageGroup=` still works (+ optional `division`)
+- [x] Bad slug → graceful not-found + link back; nav stays `/standings`
+- [x] No change to standings calc / public APIs / admin
+- [x] npm run build: ✅ PASSED
+
 ### Phase 4C: Public UI/UX Polish + Admin Access Button ✅ COMPLETE (2026-06-21)
 - [x] Whole-site font → **Prompt** (`next/font/google`, 400/500/600/700, thai+latin)
 - [x] `app/globals.css` — navy brand tokens + reusable `.cfyl-*` component classes (Tailwind v4 `@layer`)
