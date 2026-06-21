@@ -2,6 +2,37 @@
 
 All notable changes to CFYL Youth League system are documented here.
 
+## [Phase 4B: Discord Suspension Notification] - 2026-06-21 ✅ COMPLETE
+
+### Admin can push ban alerts to a Discord channel via webhook
+
+⚠️ Requires running `scripts/migration-phase4b-notification-settings.sql` in
+Supabase (adds ONE table `notification_settings`; no existing schema changed).
+
+- `lib/discord.ts`: `getDiscordSettings`, `isValidDiscordWebhook`,
+  `sendDiscordMessage` (server-side fetch), `packMessages` (split into parts
+  ≤8 players, under Discord's 2000-char limit, with `Part x/y`)
+- `GET/PUT /api/admin/settings/notifications` — load / upsert Discord webhook + enabled
+- `POST /api/admin/notifications/discord/test` — send a test message
+- `POST /api/admin/notifications/discord/suspensions` — body `{ seasonId,
+  ageGroupId('all'|id), statusFilter('all'|pending|active|no_next_match) }`
+  - derives lifecycle status via `lib/suspension-status.ts`; **sends only
+    pending / active / no_next_match** (never warning / served / normal)
+  - plain-text message grouped per รุ่น with trigger event, points, ban count,
+    and each banned fixture; empty → "✅ ไม่มีนักกีฬาติดโทษแบนในรายการที่เลือก"
+  - webhook sent **server-side only**
+- `/admin/settings` (NEW page): Discord section — Webhook URL, Enabled, Save, Test Send
+- `/admin/suspensions`: **📣 Send Discord Alert** button + confirm modal
+  (Age Group All/U14/U17, Status filter, preview count) + result summary
+- Audit (Phase 4F): logs `notification.discord.suspensions_send` /
+  `notification.discord.test` with counts + success/error (never blocks sending)
+- AdminNav already had ⚙️ Settings — now has a working page
+
+Security: webhook URL stored server-side (RLS no-policy table), never exposed to
+public/client; all endpoints auth-required; clear error when URL empty/disabled.
+No change to suspension/discipline/cards/goals/standings logic.
+- npm run build: ✅ PASSED
+
 ## [Phase 4F: Audit Log + Backup Center] - 2026-06-21 ✅ COMPLETE
 
 ### Audit trail of admin actions + CSV/Excel backup export

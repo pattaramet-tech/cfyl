@@ -252,6 +252,16 @@
 - [x] Client-side only — no API change; `/standings` public unaffected
 - [x] npm run build: ✅ PASSED
 
+### Phase 4B: Discord Suspension Notification ✅ COMPLETE (2026-06-21)
+- [x] ⚠️ Migration pending: `scripts/migration-phase4b-notification-settings.sql` (`notification_settings`, RLS no-policy)
+- [x] `lib/discord.ts` — settings loader + server-side send + message packing (Part x/y)
+- [x] `GET/PUT /api/admin/settings/notifications` · `POST /api/admin/notifications/discord/test`
+- [x] `POST /api/admin/notifications/discord/suspensions` — sends only pending/active/no_next_match (lifecycle status)
+- [x] `/admin/settings` (NEW): Discord webhook + enabled + Save + Test Send
+- [x] `/admin/suspensions`: 📣 Send Discord Alert button + confirm modal + result
+- [x] Audit log `notification.discord.*` (Phase 4F)
+- [x] Webhook server-side only; auth required; no suspension/discipline logic change; build ✅
+
 ### Phase 4F: Audit Log + Backup Center ✅ COMPLETE (2026-06-21)
 - [x] ⚠️ Migration pending: `scripts/migration-phase4f-audit-logs.sql` (adds `admin_audit_logs` table; RLS no-policy)
 - [x] `lib/audit-log.ts` — `logAdminAction` (service role, never throws)
