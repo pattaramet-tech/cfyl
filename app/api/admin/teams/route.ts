@@ -97,28 +97,69 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const { name, short_name, division_id, season_id, age_group_id, logo_url, team_color } = body;
 
-    if (!name || !division_id || !season_id || !age_group_id) {
+    if (!name || !season_id || !age_group_id) {
       return NextResponse.json(
-        { error: 'name, division_id, season_id, age_group_id จำเป็นต้องระบุ' },
+        { error: 'name, season_id, age_group_id จำเป็นต้องระบุ' },
         { status: 400 }
       );
     }
 
-    console.log(`[ADMIN_TEAMS_POST] Creating team: "${name}"`);
+    // Resolve competition type to decide whether a division is required
+    const { data: season } = await supabaseAdmin
+      .from('seasons')
+      .select('id, competition_type')
+      .eq('id', season_id)
+      .single();
+    if (!season) {
+      return NextResponse.json({ error: 'ไม่พบ Season' }, { status: 404 });
+    }
+    const compType = season.competition_type || 'league';
 
-    // Check name uniqueness within (season, age_group, division)
-    const { data: existing } = await supabaseAdmin
+    if (compType === 'league' && !division_id) {
+      return NextResponse.json({ error: 'กรุณาเลือกดิวิชั่น' }, { status: 400 });
+    }
+
+    const finalDivisionId = division_id || null;
+
+    // age_group must belong to this season
+    const { data: ag } = await supabaseAdmin
+      .from('age_groups')
+      .select('id, season_id')
+      .eq('id', age_group_id)
+      .single();
+    if (!ag || ag.season_id !== season_id) {
+      return NextResponse.json({ error: 'รุ่นอายุไม่ได้อยู่ในฤดูกาลนี้' }, { status: 400 });
+    }
+
+    // if a division is given, it must belong to this season + age group
+    if (finalDivisionId) {
+      const { data: div } = await supabaseAdmin
+        .from('divisions')
+        .select('id, season_id, age_group_id')
+        .eq('id', finalDivisionId)
+        .single();
+      if (!div || div.season_id !== season_id || div.age_group_id !== age_group_id) {
+        return NextResponse.json({ error: 'ดิวิชั่นไม่ได้อยู่ในฤดูกาล/รุ่นอายุนี้' }, { status: 400 });
+      }
+    }
+
+    console.log(`[ADMIN_TEAMS_POST] Creating team: "${name}" (${compType}, division=${finalDivisionId ?? 'none'})`);
+
+    // Check name uniqueness within (season, age_group, division) — handle null division
+    let dupQuery = supabaseAdmin
       .from('teams')
       .select('id, name')
       .eq('season_id', season_id)
       .eq('age_group_id', age_group_id)
-      .eq('division_id', division_id)
-      .eq('name', name.trim())
-      .maybeSingle();
+      .eq('name', name.trim());
+    dupQuery = finalDivisionId
+      ? dupQuery.eq('division_id', finalDivisionId)
+      : dupQuery.is('division_id', null);
+    const { data: existing } = await dupQuery.maybeSingle();
 
     if (existing) {
       return NextResponse.json(
-        { error: `ชื่อทีม "${name}" มีในดิวิชั่นนี้แล้ว` },
+        { error: `ชื่อทีม "${name}" มีอยู่แล้วในรุ่น/ดิวิชั่นนี้` },
         { status: 409 }
       );
     }
@@ -128,7 +169,7 @@ export async function POST(request: NextRequest) {
       .insert({
         name: name.trim(),
         short_name: short_name?.trim() || null,
-        division_id,
+        division_id: finalDivisionId,
         season_id,
         age_group_id,
         logo_url: logo_url?.trim() || null,
@@ -144,7 +185,10 @@ export async function POST(request: NextRequest) {
 
     if (error) {
       console.error('[ADMIN_TEAMS_POST] Insert error:', error);
-      return NextResponse.json({ error: error.message }, { status: 500 });
+      if ((error as any).code === '23502') {
+        return NextResponse.json({ error: 'ฐานข้อมูลยังบังคับ division_id — กรุณารัน migration phase 5A.2 (teams-division-optional) ก่อน' }, { status: 500 });
+      }
+      return NextResponse.json({ error: 'เพิ่มทีมไม่สำเร็จ กรุณาลองใหม่' }, { status: 500 });
     }
 
     console.log(`[ADMIN_TEAMS_POST] Created team id=${team.id}`);

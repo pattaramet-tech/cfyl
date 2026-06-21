@@ -2,6 +2,32 @@
 
 All notable changes to CFYL Youth League system are documented here.
 
+## [Phase 5A.2 Hotfix: Tournament teams without required division] - 2026-06-22 ✅ COMPLETE
+
+### Teams can belong to a tournament season without a Division
+
+⚠️ Run `scripts/migration-phase5a2-teams-division-optional.sql` in Supabase
+(`alter table teams alter column division_id drop not null`). FK + existing
+league teams unchanged.
+
+- POST/PUT /api/admin/teams resolve `season.competition_type`:
+  - league → division_id required ("กรุณาเลือกดิวิชั่น")
+  - tournament → division_id forced null (not required)
+  - mixed → division_id optional
+  - validates age_group ∈ season and (if given) division ∈ season+age_group
+  - name-uniqueness is null-aware (`.is('division_id', null)`); friendly errors only
+- `/admin/teams`: Division field is required for league, hidden+hint for tournament,
+  optional+hint for mixed; team list shows a "Tournament" badge when division is null
+- Backup teams export: null division already renders as a blank cell (no change)
+- tournament_groups already validates by season+age only → null-division teams can be
+  assigned to groups (no change)
+- schema.sql: teams.division_id made nullable for fresh installs
+- Note: players.division_id / matches.division_id are still NOT NULL (Phase 5A.3)
+
+No change to League Mode, standings, fixtures, top-scorers, discipline,
+goals/cards/suspensions, tournament groups, season slug, clean URLs, or backup.
+- npm run build: ✅ PASSED
+
 ## [Phase 5A.1: Season slug + multiple seasons per year] - 2026-06-21 ✅ COMPLETE
 
 ### Multiple competitions in the same year (e.g. CFYL 2026 + Chonburi PAO 2026)

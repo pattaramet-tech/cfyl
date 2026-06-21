@@ -40,7 +40,7 @@ CREATE TABLE teams (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   season_id UUID NOT NULL REFERENCES seasons(id) ON DELETE CASCADE,
   age_group_id UUID NOT NULL REFERENCES age_groups(id) ON DELETE CASCADE,
-  division_id UUID NOT NULL REFERENCES divisions(id) ON DELETE CASCADE,
+  division_id UUID REFERENCES divisions(id) ON DELETE CASCADE, -- nullable: tournament teams use tournament_groups instead
   name TEXT NOT NULL,
   short_name TEXT,
   logo_url TEXT,

@@ -252,6 +252,14 @@
 - [x] Client-side only — no API change; `/standings` public unaffected
 - [x] npm run build: ✅ PASSED
 
+### Phase 5A.2 Hotfix: Tournament teams without required division ✅ COMPLETE (2026-06-22)
+- [x] ⚠️ Migration pending: `scripts/migration-phase5a2-teams-division-optional.sql` (drop NOT NULL on teams.division_id)
+- [x] teams POST/PUT: division required only for league; optional/null for tournament/mixed; null-aware uniqueness; friendly errors
+- [x] /admin/teams: division field conditional by competition_type + hints; "Tournament" badge for null division
+- [x] tournament_groups + backup unaffected (null division = blank cell / assignable to groups)
+- [x] schema.sql nullable; build ✅; no League/standings/fixtures/etc. change
+- [ ] Phase 5A.3 (next): players.division_id (+ matches) optional for tournament
+
 ### Phase 5A.1: Season slug + multiple seasons per year ✅ COMPLETE (2026-06-21)
 - [x] ⚠️ Migration pending: `scripts/migration-phase5a1-season-slug.sql` (season_slug + backfill + unique; drops seasons_year_key)
 - [x] Multiple competitions per year (CFYL 2026 + Chonburi PAO 2026 + …)

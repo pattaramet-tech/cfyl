@@ -116,24 +116,51 @@ export async function PUT(
 
     const updates: Record<string, unknown> = { updated_at: new Date().toISOString() };
 
-    // Check name uniqueness if name or division changes
-    const newName = name !== undefined ? name.trim() : existing.name;
-    const newDivisionId = division_id !== undefined ? division_id : existing.division_id;
+    // Resolve competition type (division optional unless league)
+    const { data: season } = await supabaseAdmin
+      .from('seasons')
+      .select('competition_type')
+      .eq('id', existing.season_id)
+      .single();
+    const compType = season?.competition_type || 'league';
 
+    const newName = name !== undefined ? name.trim() : existing.name;
+    const newDivisionId =
+      division_id !== undefined ? (division_id || null) : existing.division_id;
+
+    if (division_id !== undefined) {
+      if (compType === 'league' && !newDivisionId) {
+        return NextResponse.json({ error: 'กรุณาเลือกดิวิชั่น' }, { status: 400 });
+      }
+      if (newDivisionId) {
+        const { data: div } = await supabaseAdmin
+          .from('divisions')
+          .select('id, season_id, age_group_id')
+          .eq('id', newDivisionId)
+          .single();
+        if (!div || div.season_id !== existing.season_id || div.age_group_id !== existing.age_group_id) {
+          return NextResponse.json({ error: 'ดิวิชั่นไม่ได้อยู่ในฤดูกาล/รุ่นอายุนี้' }, { status: 400 });
+        }
+      }
+    }
+
+    // Check name uniqueness if name or division changes (null-aware)
     if (name !== undefined || division_id !== undefined) {
-      const { data: conflict } = await supabaseAdmin
+      let dupQuery = supabaseAdmin
         .from('teams')
         .select('id, name')
         .eq('season_id', existing.season_id)
         .eq('age_group_id', existing.age_group_id)
-        .eq('division_id', newDivisionId)
         .eq('name', newName)
-        .neq('id', teamId)
-        .maybeSingle();
+        .neq('id', teamId);
+      dupQuery = newDivisionId
+        ? dupQuery.eq('division_id', newDivisionId)
+        : dupQuery.is('division_id', null);
+      const { data: conflict } = await dupQuery.maybeSingle();
 
       if (conflict) {
         return NextResponse.json(
-          { error: `ชื่อทีม "${newName}" มีในดิวิชั่นนี้แล้ว` },
+          { error: `ชื่อทีม "${newName}" มีอยู่แล้วในรุ่น/ดิวิชั่นนี้` },
           { status: 409 }
         );
       }
@@ -141,7 +168,7 @@ export async function PUT(
 
     if (name !== undefined) updates.name = newName;
     if (short_name !== undefined) updates.short_name = short_name?.trim() || null;
-    if (division_id !== undefined) updates.division_id = division_id;
+    if (division_id !== undefined) updates.division_id = newDivisionId;
     if (logo_url !== undefined) updates.logo_url = logo_url?.trim() || null;
     if (team_color !== undefined) updates.team_color = team_color || null;
     if (active !== undefined) updates.active = Boolean(active);
@@ -159,7 +186,7 @@ export async function PUT(
 
     if (error) {
       console.error('[ADMIN_TEAMS_ID_PUT] Update error:', error);
-      return NextResponse.json({ error: error.message }, { status: 500 });
+      return NextResponse.json({ error: 'แก้ไขทีมไม่สำเร็จ กรุณาลองใหม่' }, { status: 500 });
     }
 
     console.log(`[ADMIN_TEAMS_ID_PUT] Updated team=${teamId} active=${team.active}`);

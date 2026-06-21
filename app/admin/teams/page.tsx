@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 
-interface Season { id: string; name: string; year: number; }
+interface Season { id: string; name: string; year: number; competition_type?: 'league' | 'tournament' | 'mixed'; }
 interface AgeGroup { id: string; code: string; name: string; }
 interface Division { id: string; name: string; sort_order: number; }
 
@@ -15,7 +15,7 @@ interface Team {
   active: boolean;
   season_id: string;
   age_group_id: string;
-  division_id: string;
+  division_id: string | null;
   division: { id: string; name: string; sort_order: number } | null;
   player_count: number;
 }
@@ -219,7 +219,7 @@ export default function AdminTeamsPage() {
     setFormData({
       name: team.name,
       short_name: team.short_name || '',
-      division_id: team.division_id,
+      division_id: team.division_id || '',
       logo_url: team.logo_url || '',
       team_color: team.team_color || '#3b82f6',
       use_color: !!team.team_color,
@@ -244,8 +244,12 @@ export default function AdminTeamsPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!formData.name.trim() || !formData.division_id) {
-      setFormError('กรุณากรอกชื่อทีมและเลือกดิวิชั่น');
+    if (!formData.name.trim()) {
+      setFormError('กรุณากรอกชื่อทีม');
+      return;
+    }
+    if (divisionRequired && !formData.division_id) {
+      setFormError('กรุณาเลือกดิวิชั่น');
       return;
     }
 
@@ -261,7 +265,7 @@ export default function AdminTeamsPage() {
     const payload = {
       name: formData.name.trim(),
       short_name: formData.short_name.trim() || null,
-      division_id: formData.division_id,
+      division_id: compType === 'tournament' ? null : (formData.division_id || null),
       season_id: selectedSeason,
       age_group_id: selectedAgeGroup,
       logo_url: formData.logo_url.trim() || null,
@@ -345,6 +349,11 @@ export default function AdminTeamsPage() {
       setPageError(err instanceof Error ? err.message : 'เกิดข้อผิดพลาด');
     }
   };
+
+  const currentSeason = seasons.find((s) => s.id === selectedSeason);
+  const compType = currentSeason?.competition_type || 'league';
+  const divisionRequired = compType === 'league';
+  const divisionVisible = compType !== 'tournament';
 
   const isFormOpen = formMode !== 'closed';
 
@@ -521,22 +530,33 @@ export default function AdminTeamsPage() {
                   />
                 </div>
 
-                <div>
-                  <label className="block text-xs font-semibold text-gray-600 mb-1">
-                    ดิวิชั่น <span className="text-red-500">*</span>
-                  </label>
-                  <select
-                    value={formData.division_id}
-                    onChange={(e) => handleFormChange('division_id', e.target.value)}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    required
-                  >
-                    <option value="">เลือกดิวิชั่น...</option>
-                    {divisions.map((d) => (
-                      <option key={d.id} value={d.id}>{d.name}</option>
-                    ))}
-                  </select>
-                </div>
+                {divisionVisible ? (
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-600 mb-1">
+                      ดิวิชั่น {divisionRequired && <span className="text-red-500">*</span>}
+                    </label>
+                    <select
+                      value={formData.division_id}
+                      onChange={(e) => handleFormChange('division_id', e.target.value)}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      required={divisionRequired}
+                    >
+                      <option value="">{divisionRequired ? 'เลือกดิวิชั่น...' : '— ไม่ระบุ (ใช้กับ Tournament Groups) —'}</option>
+                      {divisions.map((d) => (
+                        <option key={d.id} value={d.id}>{d.name}</option>
+                      ))}
+                    </select>
+                    {compType === 'mixed' && (
+                      <p className="text-xs text-amber-600 mt-1">
+                        Mixed season เลือก Division ได้ หรือเว้นว่างเพื่อใช้กับ Tournament Groups
+                      </p>
+                    )}
+                  </div>
+                ) : (
+                  <div className="p-2.5 bg-blue-50 border border-blue-200 rounded-lg text-xs text-blue-700">
+                    🏆 Tournament season ไม่จำเป็นต้องเลือก Division — หลังเพิ่มทีมแล้วให้ไปจัดกลุ่มที่ Tournament Groups
+                  </div>
+                )}
 
                 {/* Team Color */}
                 <div>
@@ -681,7 +701,13 @@ export default function AdminTeamsPage() {
                           {team.short_name || '—'}
                         </td>
                         <td className="px-3 py-2.5 text-gray-600 text-xs hidden md:table-cell">
-                          {team.division?.name || '—'}
+                          {team.division?.name ? (
+                            team.division.name
+                          ) : compType === 'league' ? (
+                            '—'
+                          ) : (
+                            <span className="px-2 py-0.5 bg-gray-100 text-gray-500 rounded-full">Tournament</span>
+                          )}
                         </td>
                         <td className="px-3 py-2.5 text-center text-gray-600 text-xs hidden sm:table-cell">
                           {team.player_count > 0 ? (
