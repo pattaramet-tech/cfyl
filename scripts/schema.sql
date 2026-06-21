@@ -17,7 +17,7 @@ CREATE TABLE seasons (
 CREATE TABLE age_groups (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   season_id UUID NOT NULL REFERENCES seasons(id) ON DELETE CASCADE,
-  code TEXT NOT NULL CHECK (code IN ('U14', 'U17')),
+  code TEXT NOT NULL, -- e.g. U12, U14, U16, U17, U18 (no fixed list — tournaments vary)
   name TEXT NOT NULL,
   sort_order INT DEFAULT 1,
   created_at TIMESTAMP DEFAULT now(),
