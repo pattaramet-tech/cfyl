@@ -2,6 +2,39 @@
 
 All notable changes to CFYL Youth League system are documented here.
 
+## [Phase 5A: Tournament Mode Foundation] - 2026-06-21 ✅ COMPLETE
+
+### Group-stage foundation that coexists with League Mode (no League changes)
+
+⚠️ Requires `scripts/migration-phase5a-tournament-foundation.sql` in Supabase
+(additive: `seasons.competition_type` default 'league', `matches.stage` nullable,
+new `tournament_groups` + `tournament_group_teams`; existing data unaffected).
+
+- `competition_type` (league | tournament | mixed) — null/existing = league
+- `matches.stage` (nullable) — forward-prep for 5B knockout; 5A does not depend on it
+- Admin API (auth required):
+  - `GET/POST /api/admin/tournament-groups`, `PUT/DELETE /api/admin/tournament-groups/[groupId]`
+  - `GET/POST /api/admin/tournament-groups/[groupId]/teams`,
+    `DELETE /api/admin/tournament-groups/[groupId]/teams/[teamId]`
+  - `GET /api/admin/tournament-groups/[groupId]/standings`
+  - team assignment rules: same season+age; not already in another group of the age;
+    delete group with teams requires `?force=true`
+  - `PUT /api/admin/seasons/[seasonId]` extended to accept optional `competition_type`
+- Group standings reuse `calculateStandings()` — matches where **both teams are in
+  the group** + `status='finished' && scores not null` (0-0 safe); sort pts→GD→GF→name
+- `/admin/tournament-groups` page: season/age selectors, competition-type toggle,
+  create/edit/delete groups, assign/remove teams, group standings preview modal
+- AdminNav: 🏆 Tournaments link
+- Audit (4F): `tournament_group.create/update/delete`, `tournament_group_team.add/remove`
+- Backup Center: new `tournament-groups` export type (CSV/Excel + in "all")
+- RLS: new tables have public-read policy; writes via service role only
+
+Pre-migration safe: admin season GET/PUT use `select('*')` and only write
+`competition_type` when provided, so existing /admin/seasons editing is unaffected
+before the migration runs. No change to League Mode, fixtures, standings,
+top-scorers, discipline, matches/goals/cards, clean URLs, Discord, or backup logic.
+- npm run build: ✅ PASSED
+
 ## [Phase 4G: Admin Dashboard / Matchday Control Center] - 2026-06-21 ✅ COMPLETE
 
 ### /admin/dashboard rebuilt into a matchday control center

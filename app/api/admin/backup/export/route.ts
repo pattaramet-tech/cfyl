@@ -298,6 +298,50 @@ async function buildStandings(seasonId: string, ageGroupId?: string | null, divi
   };
 }
 
+async function buildTournamentGroups(seasonId: string, ageGroupId?: string | null): Promise<Sheet> {
+  let gq = supabaseAdmin
+    .from('tournament_groups')
+    .select('id, name, code, sort_order, age_group:age_group_id(code)')
+    .eq('season_id', seasonId)
+    .order('sort_order', { ascending: true });
+  if (ageGroupId) gq = gq.eq('age_group_id', ageGroupId);
+  const { data: groups } = await gq;
+
+  const ids = (groups || []).map((g: any) => g.id);
+  const teamsByGroup = new Map<string, string[]>();
+  if (ids.length) {
+    const { data: gt } = await supabaseAdmin
+      .from('tournament_group_teams')
+      .select('group_id, sort_order, team:team_id(name)')
+      .in('group_id', ids)
+      .order('sort_order', { ascending: true });
+    for (const row of gt || []) {
+      const arr = teamsByGroup.get((row as any).group_id) || [];
+      arr.push(rel((row as any).team, 'name'));
+      teamsByGroup.set((row as any).group_id, arr);
+    }
+  }
+
+  const rows: CsvRow[] = [];
+  for (const g of groups || []) {
+    const teams = teamsByGroup.get((g as any).id) || [];
+    const base = { group: (g as any).name, code: (g as any).code, age_group: rel((g as any).age_group, 'code') };
+    if (teams.length === 0) rows.push({ ...base, team: '' });
+    else for (const t of teams) rows.push({ ...base, team: t });
+  }
+
+  return {
+    name: 'tournament_groups',
+    columns: [
+      { key: 'group', header: 'group' },
+      { key: 'code', header: 'code' },
+      { key: 'age_group', header: 'age_group' },
+      { key: 'team', header: 'team' },
+    ],
+    rows,
+  };
+}
+
 async function buildSheets(type: string, seasonId: string, ageGroupId?: string | null, divisionId?: string | null): Promise<Sheet[]> {
   const needMatches = ['matches', 'goals', 'cards', 'all'].includes(type);
   const matches = needMatches ? await fetchMatches(seasonId, ageGroupId, divisionId) : [];
@@ -310,6 +354,7 @@ async function buildSheets(type: string, seasonId: string, ageGroupId?: string |
     case 'cards': return [await buildCards(matches)];
     case 'suspensions': return [await buildSuspensions(seasonId, ageGroupId)];
     case 'standings': return [await buildStandings(seasonId, ageGroupId, divisionId)];
+    case 'tournament-groups': return [await buildTournamentGroups(seasonId, ageGroupId)];
     case 'all':
       return [
         await buildTeams(seasonId, ageGroupId, divisionId),
@@ -319,6 +364,7 @@ async function buildSheets(type: string, seasonId: string, ageGroupId?: string |
         await buildCards(matches),
         await buildSuspensions(seasonId, ageGroupId),
         await buildStandings(seasonId, ageGroupId, divisionId),
+        await buildTournamentGroups(seasonId, ageGroupId),
       ];
     default:
       return [];

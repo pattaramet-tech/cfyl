@@ -252,6 +252,17 @@
 - [x] Client-side only — no API change; `/standings` public unaffected
 - [x] npm run build: ✅ PASSED
 
+### Phase 5A: Tournament Mode Foundation ✅ COMPLETE (2026-06-21)
+- [x] ⚠️ Migration pending: `scripts/migration-phase5a-tournament-foundation.sql` (competition_type, matches.stage, tournament_groups, tournament_group_teams)
+- [x] Coexists with League Mode — additive only, existing data = league
+- [x] Admin API: tournament-groups CRUD + teams add/remove + group standings (auth)
+- [x] Team rules: same season+age, no double-group per age, force-delete if has teams
+- [x] `/admin/tournament-groups` page: groups CRUD + team assignment + standings preview + competition-type toggle
+- [x] Group standings via calculateStandings (both teams in group, 0-0 safe)
+- [x] AdminNav 🏆 Tournaments; audit logs for group/team actions; Backup `tournament-groups` export
+- [x] Pre-migration safe (seasons GET/PUT use select('*')); no League/calc/public/backup logic change; build ✅
+- [ ] Phase 5B (future): knockout_rounds, bracket_matches, public tournament pages, stage tagging on matches
+
 ### Phase 4G: Admin Dashboard / Matchday Control Center ✅ COMPLETE (2026-06-21)
 - [x] `GET /api/admin/dashboard/summary` (auth) — one call: stats, season, recent/upcoming matches, matchday tally, top scorers U14/U17, active suspensions
 - [x] `/admin/dashboard` rebuilt: overview cards, season card (warn if >1 active), recent + upcoming, MatchDay summary selector, Top 5 U14/U17, active suspensions table, 8 quick actions

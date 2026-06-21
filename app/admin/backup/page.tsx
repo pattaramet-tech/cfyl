@@ -12,6 +12,7 @@ const TYPES: Array<{ key: string; label: string }> = [
   { key: 'cards', label: '🟨 Cards' },
   { key: 'suspensions', label: '🚨 Suspensions' },
   { key: 'standings', label: '📊 Standings' },
+  { key: 'tournament-groups', label: '🏆 Tournament Groups' },
 ];
 
 export default function BackupPage() {

@@ -14,6 +14,7 @@ const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey);
 export const dynamic = 'force-dynamic';
 
 const VALID_STATUSES = ['upcoming', 'active', 'completed'] as const;
+const VALID_COMPETITION_TYPES = ['league', 'tournament', 'mixed'] as const;
 
 async function getSeasonUsageCounts(seasonId: string) {
   const [
@@ -62,7 +63,7 @@ export async function GET(
 
     const { data: season, error } = await supabaseAdmin
       .from('seasons')
-      .select('id, name, year, start_date, end_date, status, created_at, updated_at')
+      .select('*')
       .eq('id', seasonId)
       .single();
 
@@ -91,7 +92,7 @@ export async function PUT(
 
     const { seasonId } = await params;
     const body = await request.json();
-    const { name, year, start_date, end_date, status } = body;
+    const { name, year, start_date, end_date, status, competition_type } = body;
 
     console.log(`[ADMIN_SEASONS_ID_PUT] Updating season=${seasonId}`);
 
@@ -135,6 +136,16 @@ export async function PUT(
 
     if (start_date !== undefined) updates.start_date = start_date || null;
     if (end_date !== undefined) updates.end_date = end_date || null;
+
+    if (competition_type !== undefined) {
+      if (!VALID_COMPETITION_TYPES.includes(competition_type)) {
+        return NextResponse.json(
+          { error: 'competition_type ต้องเป็น league, tournament, หรือ mixed' },
+          { status: 400 }
+        );
+      }
+      updates.competition_type = competition_type;
+    }
 
     // Check name+year uniqueness if either changed
     const newName = (updates.name as string) ?? existing.name;
@@ -183,7 +194,7 @@ export async function PUT(
       .from('seasons')
       .update(updates)
       .eq('id', seasonId)
-      .select('id, name, year, start_date, end_date, status, created_at, updated_at')
+      .select('*')
       .single();
 
     if (error) {
