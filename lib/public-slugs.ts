@@ -47,13 +47,45 @@ export function divisionToCode(divisions: Division[], divisionId: string): strin
   return idx >= 0 ? `d${idx + 1}` : null;
 }
 
-export function buildStandingsPath(
+export type PublicPage = 'standings' | 'fixtures' | 'top-scorers' | 'discipline';
+
+/** Generic clean-URL builder: /{page}/{year}/{ageCode}[/{sub}] */
+export function buildPath(
+  page: PublicPage,
   year: number | string,
   ageCode: string,
-  divCode?: string | null
+  sub?: string | null
 ): string {
-  const base = `/standings/${year}/${ageCode.toLowerCase()}`;
-  return divCode ? `${base}/${divCode.toLowerCase()}` : base;
+  const base = `/${page}/${year}/${ageCode.toLowerCase()}`;
+  return sub ? `${base}/${sub.toLowerCase()}` : base;
+}
+
+export function buildStandingsPath(year: number | string, ageCode: string, divCode?: string | null) {
+  return buildPath('standings', year, ageCode, divCode ?? undefined);
+}
+export function buildFixturesPath(year: number | string, ageCode: string, mdCode?: string | null) {
+  return buildPath('fixtures', year, ageCode, mdCode ?? undefined);
+}
+export function buildTopScorersPath(year: number | string, ageCode: string) {
+  return buildPath('top-scorers', year, ageCode);
+}
+export function buildDisciplinePath(year: number | string, ageCode: string) {
+  return buildPath('discipline', year, ageCode);
+}
+
+// ─── Matchday slug (client-safe; does NOT import suspension-calc) ────────────
+export function matchdayNumber(val: string | number | null | undefined): number {
+  if (val == null) return 0;
+  if (typeof val === 'number') return isNaN(val) ? 0 : val;
+  const m = String(val).match(/(\d+)/);
+  return m ? parseInt(m[1], 10) : 0;
+}
+export function matchdayToCode(val: string | number): string {
+  return `md${matchdayNumber(val)}`;
+}
+export function matchdayFromCode(code: string): number {
+  const m = String(code).match(/(\d+)/);
+  return m ? parseInt(m[1], 10) : 0;
 }
 
 export interface CurrentSeasonSlug {
@@ -136,4 +168,74 @@ export async function resolveStandingsSlug(
     ageGroupCode: ageGroup.code,
     divisions,
   };
+}
+
+/**
+ * Generic resolver for age-level pages (fixtures / top-scorers / discipline).
+ * Returns null when season or age group can't be found (route → not found).
+ */
+export async function resolvePublicSlug(
+  year: string,
+  ageCode: string
+): Promise<CurrentSeasonSlug | null> {
+  const seasons = await getJson<Season[]>('/api/public/seasons');
+  const season = seasons?.find((s) => String(s.year) === String(year));
+  if (!season) return null;
+
+  const ageGroups = await getJson<AgeGroup[]>(`/api/public/age-groups?seasonId=${season.id}`);
+  const ageGroup = ageGroups?.find((ag) => ag.code.toLowerCase() === ageCode.toLowerCase());
+  if (!ageGroup) return null;
+
+  return {
+    seasonId: season.id,
+    ageGroupId: ageGroup.id,
+    seasonYear: season.year,
+    ageGroupCode: ageGroup.code,
+  };
+}
+
+export type SubFilter =
+  | { kind: 'div'; code: string }
+  | { kind: 'md'; code: string }
+  | null
+  | undefined;
+
+/**
+ * Build the clean URL when switching season — best effort: keep the desired age
+ * group if it exists (else first), and keep the sub-filter (division/matchday)
+ * only if it also exists in the new season.
+ */
+export async function resolveSeasonSwitchPath(
+  page: PublicPage,
+  newSeason: Season,
+  desiredAgeCode: string,
+  sub?: SubFilter
+): Promise<string> {
+  const agsRaw = await getJson<AgeGroup[]>(`/api/public/age-groups?seasonId=${newSeason.id}`);
+  const ags = [...(agsRaw || [])].sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
+  if (ags.length === 0) return `/${page}`;
+  const ag =
+    ags.find((a) => a.code.toLowerCase() === desiredAgeCode.toLowerCase()) || ags[0];
+  const ageCode = ag.code;
+
+  if (!sub) return buildPath(page, newSeason.year, ageCode);
+
+  if (sub.kind === 'div') {
+    const divs = sortDivisions(
+      (await getJson<Division[]>(
+        `/api/public/divisions?seasonId=${newSeason.id}&ageGroupId=${ag.id}`
+      )) || []
+    );
+    const div = divisionFromCode(divs, sub.code);
+    return buildPath(page, newSeason.year, ageCode, div ? divisionToCode(divs, div.id)! : undefined);
+  }
+
+  // matchday
+  const matches =
+    (await getJson<Array<{ matchday: string | number }>>(
+      `/api/public/matches?seasonId=${newSeason.id}&ageGroupId=${ag.id}`
+    )) || [];
+  const want = matchdayFromCode(sub.code);
+  const exists = matches.some((m) => matchdayNumber(m.matchday) === want);
+  return buildPath(page, newSeason.year, ageCode, exists ? `md${want}` : undefined);
 }

@@ -252,6 +252,16 @@
 - [x] Client-side only — no API change; `/standings` public unaffected
 - [x] npm run build: ✅ PASSED
 
+### Phase 4E: Clean URLs + Season Selector for all public pages ✅ COMPLETE (2026-06-21)
+- [x] Clean URLs: `/fixtures/{year}/{age}[/md{n}]`, `/top-scorers/{year}/{age}`, `/discipline/{year}/{age}` (standings from 4D)
+- [x] `lib/public-slugs.ts`: generic `buildPath` + per-page builders, matchday helpers (client-safe), `resolvePublicSlug`, `resolveSeasonSwitchPath` (keep age + sub-filter best-effort)
+- [x] `lib/use-public-nav.ts` (NEW) shared hook; `components/PublicSeasonNav.tsx` (NEW) shared selector
+- [x] New views: FixturesView (matchday chips) / TopScorersView (division local filter) / DisciplineView (age-wide); StandingsView refactored onto shared nav
+- [x] New dynamic routes for fixtures/top-scorers/discipline; query pages slimmed (backward compatible)
+- [x] Navbar: all 4 menu items → current-season clean URLs (fallback base)
+- [x] Season selector on every page → pushes clean URL; bad slug → graceful not-found
+- [x] No calc/API/schema/admin changes; build ✅
+
 ### Phase 4D Hotfix: Navbar & Standings selector use clean URLs ✅ COMPLETE (2026-06-21)
 - [x] `resolveCurrentSeasonSlug()` helper (active/newest season + first age group)
 - [x] Navbar "ตารางคะแนน" → current-season clean URL (fallback `/standings`)

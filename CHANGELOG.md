@@ -2,6 +2,47 @@
 
 All notable changes to CFYL Youth League system are documented here.
 
+## [Phase 4E: Clean URLs + Season Selector for all public pages] - 2026-06-21 ✅ COMPLETE
+
+### Fixtures / Top Scorers / Discipline get clean URLs + a season selector
+
+Extends the Phase 4D standings pattern to every public page. Slugs derived from
+existing data (no DB column). Old query-string URLs still work.
+
+Clean URLs:
+- `/fixtures/{year}/{ageCode}` · `/fixtures/{year}/{ageCode}/md{n}`
+- `/top-scorers/{year}/{ageCode}`
+- `/discipline/{year}/{ageCode}`
+- (standings from 4D: `/standings/{year}/{ageCode}[/dN]`)
+
+**`lib/public-slugs.ts`**: `buildPath()` + `buildFixtures/TopScorers/DisciplinePath`,
+matchday helpers (`matchdayNumber/toCode/fromCode`, client-safe — no suspension-calc
+import), `resolvePublicSlug()`, and `resolveSeasonSwitchPath()` (keeps age + sub-filter
+when switching season, if they exist in the new season).
+
+**`lib/use-public-nav.ts`** (NEW): shared hook — loads seasons/age groups, `onSeasonChange`
+(→ clean URL of new season, preserving age + division/matchday best-effort) and
+`onAgeChange` (→ age-level clean URL).
+
+**`components/PublicSeasonNav.tsx`** (NEW): shared season dropdown + age-group chips
+(U14 amber / U17 blue) + Copy Link slot + sub-filter slot.
+
+**New views**: `FixturesView` (matchday chips), `TopScorersView` (division = local filter),
+`DisciplineView` (age-wide, lifecycle DisciplineTable). `StandingsView` refactored onto
+the shared nav (division chips still push clean URLs).
+
+**New routes**: `app/fixtures/[seasonYear]/[ageGroupCode]/(+[matchdayCode])`,
+`app/top-scorers/[seasonYear]/[ageGroupCode]`, `app/discipline/[seasonYear]/[ageGroupCode]`.
+
+**Query pages** (`/fixtures`, `/top-scorers`, `/discipline`) slimmed to use the views;
+read query ids when present, else resolve the current season. **Old URLs unchanged.**
+
+**`components/PublicChrome.tsx`**: all four menu items now resolve to current-season clean
+URLs (fallback base paths). Bad slug → graceful not-found + link back.
+
+No change to standings/top-scorers/discipline calculations, public APIs, schema, or admin.
+- npm run build: ✅ PASSED (added fixtures/top-scorers/discipline dynamic routes)
+
 ## [Phase 4D Hotfix: Navbar & Standings selector use clean URLs] - 2026-06-21 ✅ COMPLETE
 
 ### Navigation now routes to short slugs (old query URLs still work)

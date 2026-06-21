@@ -3,7 +3,13 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useEffect, useState } from 'react';
-import { resolveCurrentSeasonSlug, buildStandingsPath } from '@/lib/public-slugs';
+import {
+  resolveCurrentSeasonSlug,
+  buildStandingsPath,
+  buildFixturesPath,
+  buildTopScorersPath,
+  buildDisciplinePath,
+} from '@/lib/public-slugs';
 
 const NAV_LINKS = [
   { href: '/', label: 'หน้าหลัก' },
@@ -21,23 +27,30 @@ function isActive(pathname: string, href: string): boolean {
 export function PublicChrome({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const [menuOpen, setMenuOpen] = useState(false);
-  const [standingsHref, setStandingsHref] = useState('/standings');
+  const [cleanHrefs, setCleanHrefs] = useState<Record<string, string>>({});
 
   const onAdmin = pathname.startsWith('/admin');
 
-  // Point "ตารางคะแนน" at the current-season clean URL (fallback /standings)
+  // Point public menu items at the current-season clean URLs (fallback base paths)
   useEffect(() => {
     if (onAdmin) return;
     let active = true;
     resolveCurrentSeasonSlug().then((r) => {
-      if (active && r) setStandingsHref(buildStandingsPath(r.seasonYear, r.ageGroupCode));
+      if (!active || !r) return;
+      const { seasonYear: y, ageGroupCode: c } = r;
+      setCleanHrefs({
+        '/standings': buildStandingsPath(y, c),
+        '/fixtures': buildFixturesPath(y, c),
+        '/top-scorers': buildTopScorersPath(y, c),
+        '/discipline': buildDisciplinePath(y, c),
+      });
     });
     return () => {
       active = false;
     };
   }, [onAdmin]);
 
-  const hrefFor = (href: string) => (href === '/standings' ? standingsHref : href);
+  const hrefFor = (href: string) => cleanHrefs[href] || href;
 
   // Admin owns its own full-screen layout — render children through untouched.
   if (onAdmin) {
