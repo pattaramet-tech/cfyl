@@ -252,6 +252,13 @@
 - [x] Client-side only — no API change; `/standings` public unaffected
 - [x] npm run build: ✅ PASSED
 
+### Phase 4G: Admin Dashboard / Matchday Control Center ✅ COMPLETE (2026-06-21)
+- [x] `GET /api/admin/dashboard/summary` (auth) — one call: stats, season, recent/upcoming matches, matchday tally, top scorers U14/U17, active suspensions
+- [x] `/admin/dashboard` rebuilt: overview cards, season card (warn if >1 active), recent + upcoming, MatchDay summary selector, Top 5 U14/U17, active suspensions table, 8 quick actions
+- [x] Stats global; recent uses status=finished && scores not null (0-0 safe); top scorers aggregated by player.id; active suspensions via lifecycle (pending/active/no_next_match only)
+- [x] Verified vs DB (32/552/224 · 63 finished · 0-0 present · activeSusp 0); old /api/admin/stats untouched
+- [x] No calc/suspension/goals/cards/public/backup/discord change; build ✅
+
 ### Phase 4B: Discord Suspension Notification ✅ COMPLETE (2026-06-21)
 - [x] ⚠️ Migration pending: `scripts/migration-phase4b-notification-settings.sql` (`notification_settings`, RLS no-policy)
 - [x] `lib/discord.ts` — settings loader + server-side send + message packing (Part x/y)

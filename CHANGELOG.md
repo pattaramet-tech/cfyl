@@ -2,6 +2,34 @@
 
 All notable changes to CFYL Youth League system are documented here.
 
+## [Phase 4G: Admin Dashboard / Matchday Control Center] - 2026-06-21 ✅ COMPLETE
+
+### /admin/dashboard rebuilt into a matchday control center
+
+- `GET /api/admin/dashboard/summary` (NEW, auth required) — one call returns:
+  - global stats: teams, players, matches, finishedMatches, pendingMatches,
+    goals, cards, activeSuspensions
+  - active season block (name/year/status + age groups + divisions) +
+    `activeSeasonCount` (warn if >1)
+  - recentMatches (finished, `status='finished' && scores not null` — 0-0 safe),
+    upcomingMatches (not finished, by date)
+  - matchdays[] per-MatchDay tally (total/finished/pending/goals/cards)
+  - topScorers split U14 / U17, aggregated by **player.id** (not name)
+  - activeSuspensions via `lib/suspension-status.ts` — only pending / active /
+    no_next_match (never normal / warning / served)
+- `app/admin/dashboard/page.tsx` rebuilt: overview stat cards, season card,
+  recent + upcoming matches, MatchDay summary selector, Top 5 U14/U17, active
+  suspensions table, and 8 quick-action shortcuts
+- `/api/admin/stats` (old) left untouched
+- Read-only dashboard (no audit needed); Discord/recalc still via /admin/suspensions
+
+Verified vs production DB: stats 32 teams / 552 players / 224 matches (63 finished,
+161 pending) / 148 goals / 63 cards; recent includes 0-0; top scorers by id;
+active suspensions = 0 (warning 56 / normal 6 / served 1 correctly excluded).
+No change to calculations, suspension/lifecycle, goals/cards, public URLs, backup,
+or Discord logic.
+- npm run build: ✅ PASSED
+
 ## [Phase 4B: Discord Suspension Notification] - 2026-06-21 ✅ COMPLETE
 
 ### Admin can push ban alerts to a Discord channel via webhook
