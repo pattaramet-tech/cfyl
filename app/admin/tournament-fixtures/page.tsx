@@ -5,13 +5,18 @@ import * as XLSX from 'xlsx';
 
 interface Opt { id: string; name: string; code?: string }
 interface Group { id: string; name: string; code: string | null }
-interface TeamOpt { id: string; name: string }
+interface TeamOpt { id: string; name: string; short_name?: string | null }
 interface Fixture {
   id: string; match_code: string; matchday: string | null; stage: string | null;
   match_date: string | null; match_time: string | null; venue: string | null; status: string;
   home_score: number | null; away_score: number | null;
-  home_team: { name: string } | null; away_team: { name: string } | null; group: { name: string } | null;
+  home_team: { name: string; short_name?: string | null } | null;
+  away_team: { name: string; short_name?: string | null } | null;
+  group: { name: string } | null;
 }
+
+const teamLabel = (t: { name: string; short_name?: string | null } | null | undefined) =>
+  t ? (t.short_name ? `${t.name} (${t.short_name})` : t.name) : '';
 interface PreviewRow {
   row: number; status: 'valid' | 'error'; messages: string[];
   match_code: string; group: string; stage: string; datetime: string; venue: string; home: string; away: string;
@@ -251,14 +256,14 @@ export default function TournamentFixturesPage() {
               <label className="block text-xs text-slate-500 mb-1">Home Team *</label>
               <select value={manual.home_team_id} onChange={(e) => setManual({ ...manual, home_team_id: e.target.value })} className={`${sel} w-full`}>
                 <option value="">เลือกทีม...</option>
-                {teams.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+                {teams.map((t) => <option key={t.id} value={t.id}>{teamLabel(t)}</option>)}
               </select>
             </div>
             <div>
               <label className="block text-xs text-slate-500 mb-1">Away Team *</label>
               <select value={manual.away_team_id} onChange={(e) => setManual({ ...manual, away_team_id: e.target.value })} className={`${sel} w-full`}>
                 <option value="">เลือกทีม...</option>
-                {teams.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+                {teams.map((t) => <option key={t.id} value={t.id}>{teamLabel(t)}</option>)}
               </select>
             </div>
           </div>
@@ -349,7 +354,7 @@ export default function TournamentFixturesPage() {
                     <td className="py-2 pr-2 text-xs">{f.group?.name || <span className="text-slate-400">Group Stage</span>}</td>
                     <td className="py-2 pr-2 text-xs">{[f.match_date, f.match_time].filter(Boolean).join(' ') || 'TBD'}</td>
                     <td className="py-2 pr-2 text-xs">{f.venue || '—'}</td>
-                    <td className="py-2 pr-2">{f.home_team?.name} <span className="text-slate-400">vs</span> {f.away_team?.name}</td>
+                    <td className="py-2 pr-2">{teamLabel(f.home_team)} <span className="text-slate-400">vs</span> {teamLabel(f.away_team)}</td>
                     <td className="py-2 pr-2 font-bold">{f.home_score != null && f.away_score != null ? `${f.home_score}-${f.away_score}` : '—'}</td>
                     <td className="py-2 pr-2 text-xs">{f.status}</td>
                     <td className="py-2 text-right"><button onClick={() => deleteFixture(f)} className="text-xs text-red-600 hover:underline">ลบ</button></td>

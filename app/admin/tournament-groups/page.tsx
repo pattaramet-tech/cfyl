@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 
-interface Opt { id: string; name: string; code?: string }
+interface Opt { id: string; name: string; code?: string; short_name?: string | null }
 interface SeasonOpt extends Opt { competition_type?: string }
 interface Group { id: string; name: string; code: string | null; sort_order: number; team_count: number }
 interface GroupTeam { id: string; team_id: string; sort_order: number; team: { id: string; name: string; short_name: string | null } }
@@ -223,7 +223,7 @@ export default function TournamentGroupsPage() {
               <div className="flex gap-2 mb-3">
                 <select value={addTeamId} onChange={(e) => setAddTeamId(e.target.value)} className={`${selClass} flex-1`}>
                   <option value="">เลือกทีมที่จะเพิ่ม...</option>
-                  {teamOptions.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+                  {teamOptions.map((t) => <option key={t.id} value={t.id}>{t.name}{t.short_name ? ` (${t.short_name})` : ''}</option>)}
                 </select>
                 <button onClick={addTeam} disabled={!addTeamId} className="px-4 py-2 bg-green-700 hover:bg-green-800 disabled:bg-green-300 text-white rounded-lg text-sm font-semibold">+ เพิ่ม</button>
               </div>
@@ -233,7 +233,7 @@ export default function TournamentGroupsPage() {
                 <ul className="space-y-1">
                   {groupTeams.map((gt) => (
                     <li key={gt.id} className="flex items-center justify-between px-3 py-2 rounded-lg border border-slate-200">
-                      <span className="text-slate-800">{gt.team?.name}</span>
+                      <span className="text-slate-800">{gt.team?.name}{gt.team?.short_name ? ` (${gt.team.short_name})` : ''}</span>
                       <button onClick={() => removeTeam(gt.team_id)} className="text-xs text-red-600 hover:underline">เอาออก</button>
                     </li>
                   ))}

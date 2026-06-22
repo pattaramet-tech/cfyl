@@ -435,7 +435,7 @@ export default function AdminPlayersPage() {
           >
             <option value="">ทุกทีม</option>
             {teams.map((t) => (
-              <option key={t.id} value={t.id}>{t.name}</option>
+              <option key={t.id} value={t.id}>{t.name}{t.short_name ? ` (${t.short_name})` : ''}</option>
             ))}
           </select>
           <label className="flex items-center gap-2 text-sm text-gray-600 cursor-pointer select-none">
@@ -572,7 +572,7 @@ export default function AdminPlayersPage() {
                   >
                     <option value="">เลือกทีม...</option>
                     {teams.map((t) => (
-                      <option key={t.id} value={t.id}>{t.name}</option>
+                      <option key={t.id} value={t.id}>{t.name}{t.short_name ? ` (${t.short_name})` : ''}</option>
                     ))}
                   </select>
                 </div>

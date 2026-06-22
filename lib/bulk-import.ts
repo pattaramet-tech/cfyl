@@ -7,8 +7,9 @@ export const TEAM_HEADERS = [
   'season_slug', 'age_group', 'team_name', 'team_code', 'division', 'logo_url', 'team_color', 'active',
 ] as const;
 export const TEAM_SAMPLE: Record<string, string>[] = [
-  { season_slug: 'chonburi-pao-2026', age_group: 'U14', team_name: 'Monday', team_code: 'MON', division: '', logo_url: '', team_color: '', active: 'true' },
-  { season_slug: 'chonburi-pao-2026', age_group: 'U14', team_name: 'Tuesday', team_code: 'TUE', division: '', logo_url: '', team_color: '', active: 'true' },
+  // Same school across age groups — use age-specific team_code to avoid confusion
+  { season_slug: 'chonburi-pao-2026', age_group: 'U14', team_name: 'โรงเรียนหัวถนนวิทยา', team_code: 'HTN-U14', division: '', logo_url: '', team_color: '', active: 'true' },
+  { season_slug: 'chonburi-pao-2026', age_group: 'U16', team_name: 'โรงเรียนหัวถนนวิทยา', team_code: 'HTN-U16', division: '', logo_url: '', team_color: '', active: 'true' },
 ];
 
 export const PLAYER_HEADERS = [

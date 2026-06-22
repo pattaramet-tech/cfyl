@@ -2,6 +2,28 @@
 
 All notable changes to CFYL Youth League system are documented here.
 
+## [Hotfix: Multi-age school teams — team display by code] - 2026-06-22 ✅ COMPLETE
+
+### Same school across multiple age groups (U10/U12/U14/U16)
+
+Investigation: duplicate scope + import resolution were **already correct** — every
+admin view and import context is filtered by `season_id + age_group_id`, so:
+- team_name may repeat across age groups; is unique within season+age
+- team_code(short_name) is unique within season+age; may repeat across ages
+- import (teams/players/fixtures) resolves teams within the selected season+age,
+  by team_code first then team_name — never across age groups
+
+UI-only changes so multi-age schools are distinguishable:
+- Team dropdowns + lists now show the code: `ชื่อทีม (CODE)` in
+  /admin/tournament-fixtures, /admin/players, /admin/tournament-groups
+  (teams list already shows a short_name column)
+- Teams import template sample updated to demonstrate age-specific codes
+  (โรงเรียนหัวถนนวิทยา → HTN-U14 / HTN-U16)
+
+No DB/validation/schema change. No change to teams/players/fixtures/groups logic,
+League Mode, standings, goals/cards/suspensions, or backup.
+- npm run build: ✅ PASSED
+
 ## [Phase 5A.5: Bulk add / import — teams + players] - 2026-06-22 ✅ COMPLETE
 
 ### Add many teams/players at once (editable grid or XLSX/CSV import)
