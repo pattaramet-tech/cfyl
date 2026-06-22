@@ -87,6 +87,7 @@ CREATE TABLE matches (
   stage TEXT, -- nullable: null = league; group/round_of_16/quarter_final/semi_final/final/third_place
   tournament_group_id UUID REFERENCES tournament_groups(id) ON DELETE SET NULL, -- tournament group-stage matches
   venue TEXT,
+  winner_team_id UUID REFERENCES teams(id) ON DELETE SET NULL, -- knockout penalty/draw decider
   note TEXT,
   created_at TIMESTAMP DEFAULT now(),
   updated_at TIMESTAMP DEFAULT now(),

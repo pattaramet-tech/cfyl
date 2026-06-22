@@ -1,7 +1,7 @@
 # 📊 PROJECT_STATUS.md
 
 **Last Updated**: 2026-06-22 (Phase 5 Tournament Mode in progress)  
-**Current Phase**: 🏆 **Phase 5 — Tournament Mode** (5A foundation + 5A.1–5A.5 COMPLETE: season slug, flexible age codes, division-optional teams/players/matches, fixtures manual/import, bulk add/import teams+players; 5B knockout/bracket + public tournament pages next)  
+**Current Phase**: 🏆 **Phase 5 — Tournament Mode** (5A + 5A.1–5A.5 + 5B.1 COMPLETE: foundation, season slug, flexible age codes, division-optional, fixtures manual/import, bulk import, knockout bracket + advancement; 5B.2 public tournament pages next)  
 **Stable Tag**: `v0.3-admin-complete` (Phase 3 baseline)
 
 > ### 🏁 Phase 3 Closeout (2026-06-21)
@@ -251,6 +251,15 @@
 - [x] 0 / GD 0 / PTS 0 render correctly; Detailed/Compact unchanged
 - [x] Client-side only — no API change; `/standings` public unaffected
 - [x] npm run build: ✅ PASSED
+
+### Phase 5B.1: Knockout bracket + advancement (admin) ✅ COMPLETE (2026-06-22)
+- [x] ⚠️ Migration pending: `scripts/migration-phase5b1-knockout-bracket.sql` (knockout_rounds, bracket_matches, matches.winner_team_id)
+- [x] /admin/tournament-bracket: size 4/8/16, first-round source mapping (group rank / direct team), preview, generate, recalculate advancement
+- [x] lib/bracket: templates + group-rank resolve + decideWinner (penalty via winner_team_id) — unit-verified
+- [x] generate creates matches for resolved pairs; regenerate confirm + blocks if results exist; recalc idempotent + third-place from SF losers
+- [x] /api/admin/matches PUT accepts winner_team_id; backup += bracket sheet + matches.winner; audit 5 actions
+- [x] reuses matches table (scores/goals/cards/group standings unchanged); build ✅
+- [ ] Phase 5B.2 (next): public tournament pages (/tournaments/[slug]/[age]/groups|bracket)
 
 ### Phase 5A.5: Bulk add / import — teams + players ✅ COMPLETE (2026-06-22)
 - [x] No migration (reuses teams/players schema)

@@ -33,9 +33,9 @@ async function fetchMatches(seasonId: string, ageGroupId?: string | null, divisi
     .from('matches')
     .select(
       `id, match_code, matchday, match_date, match_time, home_score, away_score, status,
-       stage, venue, division_id, tournament_group_id, home_team_id, away_team_id,
+       stage, venue, division_id, tournament_group_id, home_team_id, away_team_id, winner_team_id,
        division:division_id(name), group:tournament_group_id(name),
-       home_team:home_team_id(name), away_team:away_team_id(name)`
+       home_team:home_team_id(name), away_team:away_team_id(name), winner:winner_team_id(name)`
     )
     .eq('season_id', seasonId);
   if (ageGroupId) q = q.eq('age_group_id', ageGroupId);
@@ -126,6 +126,7 @@ function matchesSheet(matches: any[]): Sheet {
       { key: 'away_team', header: 'away_team' },
       { key: 'home_score', header: 'home_score' },
       { key: 'away_score', header: 'away_score' },
+      { key: 'winner', header: 'winner' },
       { key: 'status', header: 'status' },
     ],
     rows: matches.map((m: any) => ({
@@ -141,6 +142,7 @@ function matchesSheet(matches: any[]): Sheet {
       away_team: rel(m.away_team, 'name'),
       home_score: m.home_score, // keeps 0
       away_score: m.away_score,
+      winner: rel(m.winner, 'name'),
       status: m.status,
     })),
   };
@@ -349,6 +351,42 @@ async function buildTournamentGroups(seasonId: string, ageGroupId?: string | nul
   };
 }
 
+async function buildBracket(seasonId: string, ageGroupId?: string | null): Promise<Sheet> {
+  let q = supabaseAdmin
+    .from('bracket_matches')
+    .select(`bracket_position, status, round:round_id(name, stage, sort_order),
+      home_team:home_team_id(name), away_team:away_team_id(name),
+      match:match_id(match_code, home_score, away_score, status)`)
+    .eq('season_id', seasonId);
+  if (ageGroupId) q = q.eq('age_group_id', ageGroupId);
+  const { data } = await q.order('bracket_position', { ascending: true });
+  return {
+    name: 'bracket',
+    columns: [
+      { key: 'round', header: 'round' },
+      { key: 'stage', header: 'stage' },
+      { key: 'position', header: 'position' },
+      { key: 'match_code', header: 'match_code' },
+      { key: 'home_team', header: 'home_team' },
+      { key: 'away_team', header: 'away_team' },
+      { key: 'home_score', header: 'home_score' },
+      { key: 'away_score', header: 'away_score' },
+      { key: 'status', header: 'status' },
+    ],
+    rows: (data || []).map((b: any) => ({
+      round: rel(b.round, 'name'),
+      stage: rel(b.round, 'stage'),
+      position: b.bracket_position,
+      match_code: b.match ? (b.match as any).match_code : '',
+      home_team: rel(b.home_team, 'name'),
+      away_team: rel(b.away_team, 'name'),
+      home_score: b.match ? (b.match as any).home_score : '',
+      away_score: b.match ? (b.match as any).away_score : '',
+      status: b.status,
+    })),
+  };
+}
+
 async function buildSheets(type: string, seasonId: string, ageGroupId?: string | null, divisionId?: string | null): Promise<Sheet[]> {
   const needMatches = ['matches', 'goals', 'cards', 'all'].includes(type);
   const matches = needMatches ? await fetchMatches(seasonId, ageGroupId, divisionId) : [];
@@ -362,6 +400,7 @@ async function buildSheets(type: string, seasonId: string, ageGroupId?: string |
     case 'suspensions': return [await buildSuspensions(seasonId, ageGroupId)];
     case 'standings': return [await buildStandings(seasonId, ageGroupId, divisionId)];
     case 'tournament-groups': return [await buildTournamentGroups(seasonId, ageGroupId)];
+    case 'bracket': return [await buildBracket(seasonId, ageGroupId)];
     case 'all':
       return [
         await buildTeams(seasonId, ageGroupId, divisionId),
@@ -372,6 +411,7 @@ async function buildSheets(type: string, seasonId: string, ageGroupId?: string |
         await buildSuspensions(seasonId, ageGroupId),
         await buildStandings(seasonId, ageGroupId, divisionId),
         await buildTournamentGroups(seasonId, ageGroupId),
+        await buildBracket(seasonId, ageGroupId),
       ];
     default:
       return [];

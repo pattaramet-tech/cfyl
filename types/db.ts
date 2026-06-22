@@ -75,7 +75,44 @@ export interface Match {
   home_score: number | null;
   away_score: number | null;
   status: 'scheduled' | 'finished' | 'postponed' | 'cancelled';
+  stage?: string | null;
+  tournament_group_id?: string | null;
+  venue?: string | null;
+  winner_team_id?: string | null;
   note: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface KnockoutRound {
+  id: string;
+  season_id: string;
+  age_group_id: string;
+  name: string;
+  stage: string;
+  sort_order: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface BracketMatch {
+  id: string;
+  season_id: string;
+  age_group_id: string;
+  round_id: string;
+  match_id: string | null;
+  bracket_position: number;
+  home_source_type: string | null;
+  home_source_ref: string | null;
+  away_source_type: string | null;
+  away_source_ref: string | null;
+  home_team_id: string | null;
+  away_team_id: string | null;
+  winner_to_bracket_match_id: string | null;
+  winner_to_slot: 'home' | 'away' | null;
+  loser_to_bracket_match_id: string | null;
+  loser_to_slot: 'home' | 'away' | null;
+  status: string;
   created_at: string;
   updated_at: string;
 }

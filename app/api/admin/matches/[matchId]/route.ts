@@ -41,7 +41,7 @@ export async function PUT(
 
     // Parse request body
     const body = await request.json();
-    const { home_score, away_score, status } = body;
+    const { home_score, away_score, status, winner_team_id } = body;
 
     // Validate inputs
     if (home_score == null || away_score == null) {
@@ -78,6 +78,15 @@ export async function PUT(
       );
     }
 
+    // winner_team_id (knockout draw / penalty decider) — must be one of the two teams or null
+    let winnerUpdate: Record<string, unknown> = {};
+    if (winner_team_id !== undefined) {
+      if (winner_team_id && winner_team_id !== currentMatch.home_team_id && winner_team_id !== currentMatch.away_team_id) {
+        return badRequestResponse('winner_team_id must be the home or away team');
+      }
+      winnerUpdate = { winner_team_id: winner_team_id || null };
+    }
+
     // Update match
     const { data: updatedMatch, error: updateError } = await supabaseAdmin
       .from('matches')
@@ -85,6 +94,7 @@ export async function PUT(
         home_score,
         away_score,
         status: status || currentMatch.status,
+        ...winnerUpdate,
         updated_at: new Date().toISOString(),
       })
       .eq('id', matchId)
