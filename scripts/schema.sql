@@ -84,6 +84,9 @@ CREATE TABLE matches (
   home_score INT,
   away_score INT,
   status TEXT NOT NULL DEFAULT 'scheduled' CHECK (status IN ('scheduled', 'finished', 'postponed', 'cancelled')),
+  stage TEXT, -- nullable: null = league; group/round_of_16/quarter_final/semi_final/final/third_place
+  tournament_group_id UUID REFERENCES tournament_groups(id) ON DELETE SET NULL, -- tournament group-stage matches
+  venue TEXT,
   note TEXT,
   created_at TIMESTAMP DEFAULT now(),
   updated_at TIMESTAMP DEFAULT now(),

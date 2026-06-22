@@ -1,7 +1,7 @@
 # 📊 PROJECT_STATUS.md
 
 **Last Updated**: 2026-06-22 (Phase 5 Tournament Mode in progress)  
-**Current Phase**: 🏆 **Phase 5 — Tournament Mode** (5A foundation + 5A.1 season slug + 5A.2 teams + 5A.3 players/matches division-optional COMPLETE; 5B knockout/bracket next)  
+**Current Phase**: 🏆 **Phase 5 — Tournament Mode** (5A foundation + 5A.1 season slug + 5A.2 teams + 5A.3 players/matches division-optional + 5A.4 fixtures manual/import COMPLETE; 5A.5 auto-generator + 5B knockout/bracket next)  
 **Stable Tag**: `v0.3-admin-complete` (Phase 3 baseline)
 
 > ### 🏁 Phase 3 Closeout (2026-06-21)
@@ -251,6 +251,14 @@
 - [x] 0 / GD 0 / PTS 0 render correctly; Detailed/Compact unchanged
 - [x] Client-side only — no API change; `/standings` public unaffected
 - [x] npm run build: ✅ PASSED
+
+### Phase 5A.4: Tournament fixtures — manual + XLSX/CSV import ✅ COMPLETE (2026-06-22)
+- [x] ⚠️ Migration pending: `scripts/migration-phase5a4-tournament-fixtures.sql` (matches.tournament_group_id + matches.venue)
+- [x] /admin/tournament-fixtures: filters + manual add + XLSX/CSV import (template, preview, save valid) + list/delete
+- [x] lib/tournament-fixtures shared validation (team by code→name, group membership, stage, dup match_code/pair/slot) — unit-verified
+- [x] API: GET/POST + PUT/DELETE [matchId] + import/preview + import/save + template (auth); audit 5 actions
+- [x] backup matches export += stage/group/venue; venue = free text; build ✅
+- [ ] Phase 5A.5 (next): optional group-fixtures auto-generator (round-robin preview/save)
 
 ### Phase 5A.3: Tournament players + matches without required division ✅ COMPLETE (2026-06-22)
 - [x] ⚠️ Migration pending: `scripts/migration-phase5a3-players-matches-division-optional.sql` (drop NOT NULL on players.division_id + matches.division_id)

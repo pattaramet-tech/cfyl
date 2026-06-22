@@ -2,6 +2,36 @@
 
 All notable changes to CFYL Youth League system are documented here.
 
+## [Phase 5A.4: Tournament fixtures — manual + XLSX/CSV import] - 2026-06-22 ✅ COMPLETE
+
+### Build tournament programmes after the group draw (manual entry or Excel import)
+
+⚠️ Run `scripts/migration-phase5a4-tournament-fixtures.sql` in Supabase
+(adds `matches.tournament_group_id` + `matches.venue`; `stage` already exists).
+
+- New page `/admin/tournament-fixtures` (filters: season / age / group / stage):
+  - **Manual add**: group(optional)/stage/match_code/matchday/date/time/venue/home/away
+  - **Import XLSX/CSV**: download template, pick file (parsed client-side via `xlsx`),
+    preview with per-row valid/error + messages, then "Save valid rows"
+  - fixtures list with delete (blocked if goals/cards exist)
+- Shared validation (`lib/tournament-fixtures.ts`, unit-checked):
+  - team match by code (= team short_name) first, else by name; ambiguous/not-found = error
+  - group resolved by name/code; both teams must belong to the group; no auto-create
+  - stage ∈ group/round_of_16/quarter_final/semi_final/final/third_place (default group)
+  - division_id = null; season_slug/age_group must match the selected season/age
+  - duplicate protection: match_code unique per season; pair A-vs-B == B-vs-A per
+    stage+group; same date+time+venue — all errors (checked vs DB and within the batch)
+  - venue stored as free text (no venues table); friendly errors only
+- API (auth): GET/POST `/api/admin/tournament-fixtures`, PUT/DELETE `[matchId]`,
+  POST `import/preview`, POST `import/save`, GET `template` (xlsx)
+- Audit: tournament_fixture.create/update/delete/import_preview/import_save
+- Backup matches export now includes `stage, group, venue` columns
+- Optional auto-generator deferred to Phase 5A.5
+
+No change to League Mode, fixtures, standings, top-scorers, discipline,
+goals/cards/suspensions, tournament groups, season slug, clean URLs, or audit.
+- npm run build: ✅ PASSED
+
 ## [Phase 5A.3: Tournament players + matches without required division] - 2026-06-22 ✅ COMPLETE
 
 ### players.division_id and matches.division_id are now optional

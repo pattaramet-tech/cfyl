@@ -33,8 +33,9 @@ async function fetchMatches(seasonId: string, ageGroupId?: string | null, divisi
     .from('matches')
     .select(
       `id, match_code, matchday, match_date, match_time, home_score, away_score, status,
-       division_id, home_team_id, away_team_id,
-       division:division_id(name), home_team:home_team_id(name), away_team:away_team_id(name)`
+       stage, venue, division_id, tournament_group_id, home_team_id, away_team_id,
+       division:division_id(name), group:tournament_group_id(name),
+       home_team:home_team_id(name), away_team:away_team_id(name)`
     )
     .eq('season_id', seasonId);
   if (ageGroupId) q = q.eq('age_group_id', ageGroupId);
@@ -115,8 +116,11 @@ function matchesSheet(matches: any[]): Sheet {
     columns: [
       { key: 'match_code', header: 'match_code' },
       { key: 'matchday', header: 'matchday' },
+      { key: 'stage', header: 'stage' },
+      { key: 'group', header: 'group' },
       { key: 'date', header: 'date' },
       { key: 'time', header: 'time' },
+      { key: 'venue', header: 'venue' },
       { key: 'division', header: 'division' },
       { key: 'home_team', header: 'home_team' },
       { key: 'away_team', header: 'away_team' },
@@ -127,8 +131,11 @@ function matchesSheet(matches: any[]): Sheet {
     rows: matches.map((m: any) => ({
       match_code: m.match_code,
       matchday: m.matchday,
+      stage: m.stage,
+      group: rel(m.group, 'name'),
       date: m.match_date,
       time: m.match_time,
+      venue: m.venue,
       division: rel(m.division, 'name'),
       home_team: rel(m.home_team, 'name'),
       away_team: rel(m.away_team, 'name'),
