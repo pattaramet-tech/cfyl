@@ -56,7 +56,7 @@ CREATE TABLE players (
   player_code TEXT NOT NULL,
   season_id UUID NOT NULL REFERENCES seasons(id) ON DELETE CASCADE,
   age_group_id UUID NOT NULL REFERENCES age_groups(id) ON DELETE CASCADE,
-  division_id UUID NOT NULL REFERENCES divisions(id) ON DELETE CASCADE,
+  division_id UUID REFERENCES divisions(id) ON DELETE CASCADE, -- nullable: tournament players (division-less teams)
   team_id UUID NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
   shirt_no INT,
   full_name TEXT NOT NULL,
@@ -74,7 +74,7 @@ CREATE TABLE matches (
   match_code TEXT NOT NULL,
   season_id UUID NOT NULL REFERENCES seasons(id) ON DELETE CASCADE,
   age_group_id UUID NOT NULL REFERENCES age_groups(id) ON DELETE CASCADE,
-  division_id UUID NOT NULL REFERENCES divisions(id) ON DELETE CASCADE,
+  division_id UUID REFERENCES divisions(id) ON DELETE CASCADE, -- nullable: tournament group-stage matches
   matchday TEXT NOT NULL,
   match_no INT,
   match_date DATE NOT NULL,

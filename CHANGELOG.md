@@ -2,6 +2,31 @@
 
 All notable changes to CFYL Youth League system are documented here.
 
+## [Phase 5A.3: Tournament players + matches without required division] - 2026-06-22 ✅ COMPLETE
+
+### players.division_id and matches.division_id are now optional
+
+⚠️ Run `scripts/migration-phase5a3-players-matches-division-optional.sql` in Supabase
+(`alter table players/matches alter column division_id drop not null`). FK + existing
+league data unchanged.
+
+- Players: POST /api/admin/players/manage and PUT /api/admin/players/[playerId]
+  already derive division_id from the team — a division-less tournament team now
+  yields player.division_id = NULL. Added friendly errors (no raw DB; 23502 →
+  run-migration hint). player_code stays unique per season.
+- /admin/matches: division is optional for tournament/mixed seasons — matches load
+  by season+age (no division filter required) and null-division rows show a
+  "Group Stage" badge. League path is unchanged (division still required). 0-0 safe.
+- Matches API (GET/PUT), /api/public/matches, and backup (players/matches) were
+  already null-safe (blank division cell); no change needed there.
+- tournament_groups already validates by season+age only (no division dependency).
+- types/db: Team/Player/Match `division_id` → `string | null`; schema.sql nullable.
+- Tournament match *generation* and public tournament pages remain Phase 5B.
+
+No change to League Mode, fixtures, standings, top-scorers, discipline,
+goals/cards/suspensions, tournament groups, season slug, clean URLs, backup, or audit.
+- npm run build: ✅ PASSED
+
 ## [Phase 5A.2 Hotfix: Tournament teams without required division] - 2026-06-22 ✅ COMPLETE
 
 ### Teams can belong to a tournament season without a Division

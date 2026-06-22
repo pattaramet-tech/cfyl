@@ -7,6 +7,7 @@ import type { Match } from '@/types/db';
 interface MatchWithTeams extends Match {
   home_team?: { name: string };
   away_team?: { name: string };
+  division?: { name: string } | null;
 }
 
 export default function AdminMatchesPage() {
@@ -20,6 +21,9 @@ export default function AdminMatchesPage() {
   const [seasons, setSeasons] = useState<any[]>([]);
   const [ageGroups, setAgeGroups] = useState<any[]>([]);
   const [divisions, setDivisions] = useState<any[]>([]);
+
+  const compType: string = seasons.find((s) => s.id === seasonId)?.competition_type || 'league';
+  const divisionRequired = compType === 'league';
 
   // Load seasons on mount
   useEffect(() => {
@@ -68,31 +72,33 @@ export default function AdminMatchesPage() {
         );
         const data = await res.json();
         setDivisions(data);
-        if (data.length > 0) {
-          setDivisionId(data[0].id);
-        }
+        // Auto-select first division only for league seasons; tournament/mixed start "all"
+        const ct = seasons.find((s) => s.id === seasonId)?.competition_type || 'league';
+        setDivisionId(ct === 'league' && data.length > 0 ? data[0].id : '');
       } catch (error) {
         console.error('[ADMIN_MATCHES_PAGE] Load divisions error:', error);
       }
     };
     loadDivisions();
-  }, [seasonId, ageGroupId]);
+  }, [seasonId, ageGroupId, seasons]);
 
-  // Load matches when division changes
+  // Load matches when filters change
   useEffect(() => {
-    if (!seasonId || !ageGroupId || !divisionId) return;
+    if (!seasonId || !ageGroupId) return;
+    const ct = seasons.find((s) => s.id === seasonId)?.competition_type || 'league';
+    // League requires a division; tournament/mixed may load without one
+    if (ct === 'league' && !divisionId) return;
 
     const loadMatches = async () => {
       setIsLoading(true);
       setError(null);
       try {
         const token = localStorage.getItem('admin_token');
-        const res = await fetch(
-          `/api/public/matches?seasonId=${seasonId}&ageGroupId=${ageGroupId}&divisionId=${divisionId}`,
-          {
-            headers: token ? { 'Authorization': `Bearer ${token}` } : {},
-          }
-        );
+        let url = `/api/public/matches?seasonId=${seasonId}&ageGroupId=${ageGroupId}`;
+        if (divisionId) url += `&divisionId=${divisionId}`;
+        const res = await fetch(url, {
+          headers: token ? { 'Authorization': `Bearer ${token}` } : {},
+        });
 
         if (!res.ok) throw new Error('Failed to load matches');
 
@@ -107,7 +113,7 @@ export default function AdminMatchesPage() {
     };
 
     loadMatches();
-  }, [seasonId, ageGroupId, divisionId]);
+  }, [seasonId, ageGroupId, divisionId, seasons]);
 
   return (
     <div className="space-y-6">
@@ -163,7 +169,7 @@ export default function AdminMatchesPage() {
           {/* Division Select */}
           <div>
             <label className="block text-sm font-semibold text-gray-700 mb-2">
-              Division
+              Division {divisionRequired ? '' : <span className="text-gray-400 font-normal">(optional)</span>}
             </label>
             <select
               value={divisionId}
@@ -171,13 +177,16 @@ export default function AdminMatchesPage() {
               disabled={!ageGroupId}
               className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-600 disabled:bg-gray-100"
             >
-              <option value="">Select division</option>
+              <option value="">{divisionRequired ? 'Select division' : 'ทุกแมตช์ (รวม Group Stage)'}</option>
               {divisions.map((d) => (
                 <option key={d.id} value={d.id}>
                   {d.name}
                 </option>
               ))}
             </select>
+            {!divisionRequired && (
+              <p className="text-xs text-blue-600 mt-1">Tournament season — เลือก Division หรือดูทุกแมตช์ (Group Stage)</p>
+            )}
           </div>
         </div>
       </div>
@@ -212,6 +221,9 @@ export default function AdminMatchesPage() {
                 <th className="px-6 py-3 text-left text-sm font-semibold text-gray-700">
                   Match
                 </th>
+                <th className="px-6 py-3 text-left text-sm font-semibold text-gray-700">
+                  Division
+                </th>
                 <th className="px-6 py-3 text-center text-sm font-semibold text-gray-700">
                   Score
                 </th>
@@ -241,6 +253,11 @@ export default function AdminMatchesPage() {
                     <div className="text-sm font-semibold text-gray-800">
                       {match.away_team?.name || 'Team B'}
                     </div>
+                  </td>
+                  <td className="px-6 py-4 text-sm text-gray-600">
+                    {match.division?.name || (
+                      <span className="px-2 py-0.5 bg-gray-100 text-gray-500 rounded-full text-xs">Group Stage</span>
+                    )}
                   </td>
                   <td className="px-6 py-4 text-center">
                     <div className="text-lg font-bold text-blue-600">
@@ -289,7 +306,7 @@ export default function AdminMatchesPage() {
       {!isLoading && matches.length === 0 && !error && (
         <div className="bg-white rounded-lg shadow p-12 text-center">
           <p className="text-gray-500 text-lg">
-            {divisionId ? 'No matches found' : 'Select a division to view matches'}
+            {divisionRequired && !divisionId ? 'Select a division to view matches' : 'No matches found'}
           </p>
         </div>
       )}

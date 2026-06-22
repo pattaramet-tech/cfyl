@@ -18,7 +18,7 @@ interface Team {
   id: string;
   name: string;
   short_name: string;
-  division_id: string;
+  division_id: string | null;
 }
 
 interface Player {
@@ -31,7 +31,7 @@ interface Player {
   active: boolean;
   season_id: string;
   age_group_id: string;
-  division_id: string;
+  division_id: string | null;
   team_id: string;
   team: { id: string; name: string; short_name: string } | null;
 }

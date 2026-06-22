@@ -137,7 +137,10 @@ export async function POST(request: NextRequest) {
 
     if (error) {
       console.error('[PLAYERS_MANAGE_POST] Insert error:', error);
-      return NextResponse.json({ error: error.message }, { status: 500 });
+      if ((error as any).code === '23502') {
+        return NextResponse.json({ error: 'ฐานข้อมูลยังบังคับ division_id — กรุณารัน migration phase 5A.3 (players-matches-division-optional) ก่อน' }, { status: 500 });
+      }
+      return NextResponse.json({ error: 'เพิ่มผู้เล่นไม่สำเร็จ กรุณาลองใหม่' }, { status: 500 });
     }
 
     console.log(`[PLAYERS_MANAGE_POST] Created player id=${player.id}`);

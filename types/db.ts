@@ -35,7 +35,7 @@ export interface Team {
   id: string;
   season_id: string;
   age_group_id: string;
-  division_id: string;
+  division_id: string | null;
   name: string;
   short_name: string | null;
   logo_url: string | null;
@@ -49,7 +49,7 @@ export interface Player {
   player_code: string;
   season_id: string;
   age_group_id: string;
-  division_id: string;
+  division_id: string | null;
   team_id: string;
   shirt_no: number | null;
   full_name: string;
@@ -65,7 +65,7 @@ export interface Match {
   match_code: string;
   season_id: string;
   age_group_id: string;
-  division_id: string;
+  division_id: string | null;
   matchday: string;
   match_no: number | null;
   match_date: string;

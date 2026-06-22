@@ -1,8 +1,8 @@
 # 📊 PROJECT_STATUS.md
 
-**Last Updated**: 2026-06-21 (Phase 3 Closed + Phase 4A Complete)  
-**Current Phase**: 🏁 **Phase 3 COMPLETE** — production-ready standalone admin system  
-**Stable Tag**: `v0.3-admin-complete`
+**Last Updated**: 2026-06-22 (Phase 5 Tournament Mode in progress)  
+**Current Phase**: 🏆 **Phase 5 — Tournament Mode** (5A foundation + 5A.1 season slug + 5A.2 teams + 5A.3 players/matches division-optional COMPLETE; 5B knockout/bracket next)  
+**Stable Tag**: `v0.3-admin-complete` (Phase 3 baseline)
 
 > ### 🏁 Phase 3 Closeout (2026-06-21)
 > Phase 3G tested and passed in production. The full admin system is live and verified.
@@ -251,6 +251,14 @@
 - [x] 0 / GD 0 / PTS 0 render correctly; Detailed/Compact unchanged
 - [x] Client-side only — no API change; `/standings` public unaffected
 - [x] npm run build: ✅ PASSED
+
+### Phase 5A.3: Tournament players + matches without required division ✅ COMPLETE (2026-06-22)
+- [x] ⚠️ Migration pending: `scripts/migration-phase5a3-players-matches-division-optional.sql` (drop NOT NULL on players.division_id + matches.division_id)
+- [x] players POST/PUT already derive division from team → null passes through; friendly errors added (23502 → run-migration hint)
+- [x] /admin/matches: division optional for tournament/mixed (load by season+age; "Group Stage" badge for null division); league path unchanged; 0-0 preserved
+- [x] players page null-safe (no division column; filters by team); matches API/GET/PUT + backup already null-safe (blank)
+- [x] types/db Team/Player/Match division_id → string | null; schema.sql nullable; build ✅
+- [ ] Phase 5B (next): knockout_rounds, bracket_matches, tournament match generation, public tournament pages
 
 ### Phase 5A.2 Hotfix: Tournament teams without required division ✅ COMPLETE (2026-06-22)
 - [x] ⚠️ Migration pending: `scripts/migration-phase5a2-teams-division-optional.sql` (drop NOT NULL on teams.division_id)

@@ -139,7 +139,7 @@ export async function PUT(
 
     if (error) {
       console.error('[PLAYERS_ID_PUT] Update error:', error);
-      return NextResponse.json({ error: error.message }, { status: 500 });
+      return NextResponse.json({ error: 'แก้ไขผู้เล่นไม่สำเร็จ กรุณาลองใหม่' }, { status: 500 });
     }
 
     console.log(`[PLAYERS_ID_PUT] Updated player=${playerId} active=${player.active}`);
