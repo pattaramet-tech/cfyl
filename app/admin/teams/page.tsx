@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { BulkImportPanel } from '@/components/BulkImportPanel';
 
 interface Season { id: string; name: string; year: number; competition_type?: 'league' | 'tournament' | 'mixed'; }
 interface AgeGroup { id: string; code: string; name: string; }
@@ -467,6 +468,32 @@ export default function AdminTeamsPage() {
             </button>
           )}
         </div>
+      )}
+
+      {/* Bulk add / import */}
+      {selectedSeason && selectedAgeGroup && (
+        <BulkImportPanel
+          title="Bulk Add / Import Teams"
+          seasonId={selectedSeason}
+          ageGroupId={selectedAgeGroup}
+          columns={[
+            { key: 'team_name', label: 'team_name', placeholder: 'ชื่อทีม' },
+            { key: 'team_code', label: 'team_code', placeholder: 'short' },
+            { key: 'division', label: 'division', placeholder: divisionRequired ? 'ต้องระบุ' : '(optional)' },
+            { key: 'logo_url', label: 'logo_url', placeholder: 'url' },
+            { key: 'team_color', label: 'team_color', placeholder: '#3b82f6' },
+            { key: 'active', label: 'active' },
+          ]}
+          previewUrl="/api/admin/teams/bulk/preview"
+          saveUrl="/api/admin/teams/bulk/save"
+          templateUrl="/api/admin/teams/bulk/template"
+          templateFilename="teams_template.xlsx"
+          hints={[
+            compType === 'league' ? 'League season: ต้องระบุ Division ทุกทีม' : 'Tournament/Mixed season: ไม่จำเป็นต้องระบุ Division',
+            'team_name ห้ามซ้ำในรุ่นนี้ · team_code ห้ามซ้ำ',
+          ]}
+          onSaved={loadTeams}
+        />
       )}
 
       {/* Main content */}

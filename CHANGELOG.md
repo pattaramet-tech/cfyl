@@ -2,6 +2,36 @@
 
 All notable changes to CFYL Youth League system are documented here.
 
+## [Phase 5A.5: Bulk add / import — teams + players] - 2026-06-22 ✅ COMPLETE
+
+### Add many teams/players at once (editable grid or XLSX/CSV import)
+
+No migration (reuses existing teams/players schema).
+
+- `/admin/teams` + `/admin/players`: new collapsible **Bulk Add / Import** panel
+  (shared `components/BulkImportPanel.tsx`): editable multi-row grid (+ add/clear),
+  Download Template, Import .xlsx/.csv (client-parsed via `xlsx`), per-row preview
+  (valid/warning/error + message), then "Save valid rows" → refreshes the list.
+- Shared validation `lib/bulk-import.ts` (unit-verified):
+  - Teams: season_slug/age must match selection; team_name required + unique per
+    season+age; team_code(short_name) unique; league → division required (must exist
+    in season+age), tournament/mixed → division optional/null.
+  - Players: team matched by team_code(=short_name) first then team_name
+    (ambiguous/not-found = error); full_name required; player_code unique per season
+    (auto-generated `{AGE}-{TEAM}-NNN` when blank); duplicate name in same team =
+    warning; division derived from team (null ok). shirt_no non-numeric = warning.
+  - Duplicate protection vs DB and within the same batch; friendly errors only.
+- API (auth): `POST teams/bulk/preview|save`, `GET teams/bulk/template`, and the
+  same trio under `players/bulk/*` (xlsx templates with Thai-safe encoding).
+- Audit: team.bulk_preview / team.bulk_create / player.bulk_preview /
+  player.bulk_create (seasonId, ageGroupId, totalRows, validRows, errorRows,
+  createdCount, createdIds).
+- Backup teams/players already handle null division (no change).
+
+No change to single add/edit, tournament groups/fixtures, League Mode, standings,
+goals/cards/suspensions, clean URLs, backup, audit, or Discord.
+- npm run build: ✅ PASSED
+
 ## [Phase 5A.4: Tournament fixtures — manual + XLSX/CSV import] - 2026-06-22 ✅ COMPLETE
 
 ### Build tournament programmes after the group draw (manual entry or Excel import)

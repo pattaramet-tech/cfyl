@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { BulkImportPanel } from '@/components/BulkImportPanel';
 
 interface Season {
   id: string;
@@ -455,6 +456,32 @@ export default function AdminPlayersPage() {
             </button>
           )}
         </div>
+      )}
+
+      {/* Bulk add / import */}
+      {selectedSeason && selectedAgeGroup && (
+        <BulkImportPanel
+          title="Bulk Add / Import Players"
+          seasonId={selectedSeason}
+          ageGroupId={selectedAgeGroup}
+          columns={[
+            { key: 'team_code', label: 'team_code', placeholder: 'short' },
+            { key: 'team_name', label: 'team_name', placeholder: 'หรือชื่อทีม' },
+            { key: 'player_code', label: 'player_code', placeholder: 'เว้นว่าง=auto' },
+            { key: 'shirt_no', label: 'shirt_no', placeholder: 'เบอร์' },
+            { key: 'full_name', label: 'full_name', placeholder: 'ชื่อ-สกุล' },
+            { key: 'active', label: 'active' },
+          ]}
+          previewUrl="/api/admin/players/bulk/preview"
+          saveUrl="/api/admin/players/bulk/save"
+          templateUrl="/api/admin/players/bulk/template"
+          templateFilename="players_template.xlsx"
+          hints={[
+            'Players ต้องอิง Team ที่มีอยู่แล้ว — ใช้ team_code (short_name) ก่อน ไม่มีจึงใช้ team_name',
+            'player_code เว้นว่าง = สร้างอัตโนมัติ ({AGE}-{TEAM}-001) · ห้ามซ้ำในฤดูกาล',
+          ]}
+          onSaved={loadPlayers}
+        />
       )}
 
       {/* Main content */}
