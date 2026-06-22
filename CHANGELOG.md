@@ -2,6 +2,48 @@
 
 All notable changes to CFYL Youth League system are documented here.
 
+## [Hotfix: Province-rep badge only for U17 Division 1] - 2026-06-22 ✅ COMPLETE
+
+Public /standings showed the 🏆 "ตัวแทนจังหวัด" badge in every top division
+(including U14 Division 1). It now appears only for **U17 + top division (Division 1)
++ rank 1**. StandingsView gates `showProvinceRep` with an `isU17` check (age code from
+usePublicNav); the badge + legend follow that flag, so U14 (all divisions) and U17
+Division 2 show nothing. No change to standings calculation or to the
+Champions-League / relegation highlights.
+- npm run build: ✅ PASSED
+
+## [Phase 5B.1: Knockout bracket + advancement (admin)] - 2026-06-22 ✅ COMPLETE
+
+### Knockout brackets built from group standings, with winner advancement
+
+⚠️ Run `scripts/migration-phase5b1-knockout-bracket.sql` in Supabase
+(adds `knockout_rounds`, `bracket_matches`, `matches.winner_team_id`; +RLS public read).
+
+- `/admin/tournament-bracket`: pick season+age, choose size (4/8/16), map each
+  first-round slot (group rank e.g. A1/B2, or a direct team), Preview, then Generate.
+  Shows the live bracket per round + "Recalculate Advancement".
+- `lib/bracket.ts` (unit-verified): standard single-elim templates (4/8/16 + third
+  place) with winner/loser wiring; group-rank resolution via `calculateStandings`;
+  `decideWinner` (score → winner; draw → `winner_team_id` or "can't advance").
+- Generate: creates knockout_rounds + bracket_matches; creates real `matches` only
+  for first-round pairs whose teams resolve (others stay pending). Regenerate needs
+  confirm and refuses if any linked match already has goals/cards.
+- Recalculate advancement (idempotent): resolves first-round group ranks, pushes
+  winners to the next round (losers of SF → third place), creates matches when both
+  teams are known; never overwrites a played match; warns on draws without a winner.
+- Penalty/draw (Option A): `matches.winner_team_id` — `/api/admin/matches/[id]` PUT
+  accepts it (must be home/away team) so a drawn knockout can still advance.
+- API (auth): GET tournament-bracket; POST preview/generate/recalculate-advancement;
+  PUT/DELETE [bracketMatchId] (delete blocked if results exist).
+- Audit: tournament_bracket.preview/generate/update/delete/recalculate_advancement.
+- Backup: new `bracket` export sheet; matches export += `winner`.
+- Public tournament pages are Phase 5B.2.
+
+Knockout matches reuse the matches table → scores via /admin/matches, goals/cards,
+and group standings all work unchanged. No change to League Mode, public pages,
+clean URLs, tournament groups/fixtures, bulk import, or Discord.
+- npm run build: ✅ PASSED
+
 ## [Hotfix: Multi-age school teams — team display by code] - 2026-06-22 ✅ COMPLETE
 
 ### Same school across multiple age groups (U10/U12/U14/U16)

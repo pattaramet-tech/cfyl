@@ -88,6 +88,9 @@ export function StandingsView({ seasonId, ageGroupId, divisionId, allDivisions =
     };
   }, [seasonId, ageGroupId, allDivisions, divisions]);
 
+  // ตัวแทนจังหวัด: เฉพาะ U17 ดิวิชั่น 1 (top division) อันดับ 1 เท่านั้น
+  const isU17 = (code || '').toLowerCase() === 'u17';
+
   const canNav = !!seg && !!code;
   const goAll = () => canNav && router.push(buildStandingsPath(seg!, code!));
   const goDiv = (d: Division) =>
@@ -145,7 +148,7 @@ export function StandingsView({ seasonId, ageGroupId, divisionId, allDivisions =
                 <div key={div.id} className="cfyl-section">
                   <h2 className="cfyl-section-title mb-3">{div.name}</h2>
                   {rows.length > 0 ? (
-                    <StandingsTable standings={rows} showProvinceRep={div.id === topDivisionId} />
+                    <StandingsTable standings={rows} showProvinceRep={isU17 && div.id === topDivisionId} />
                   ) : (
                     <p className="cfyl-empty">ไม่พบข้อมูลตารางคะแนน</p>
                   )}
@@ -162,7 +165,7 @@ export function StandingsView({ seasonId, ageGroupId, divisionId, allDivisions =
               กำลังโหลดข้อมูล...
             </div>
           ) : standings.length > 0 ? (
-            <StandingsTable standings={standings} showProvinceRep={currentDivisionId === topDivisionId} />
+            <StandingsTable standings={standings} showProvinceRep={isU17 && currentDivisionId === topDivisionId} />
           ) : (
             <p className="cfyl-empty">ไม่พบข้อมูลตารางคะแนน</p>
           )}
