@@ -63,6 +63,14 @@ function getCardPointsValue(cardType: string): number {
   }
 }
 
+function getCardMatchdayNumber(card: CardDetail): number {
+  const raw = card.match?.matchday;
+  if (raw == null) return 999;
+  if (typeof raw === 'number') return raw;
+  const m = String(raw).match(/\d+/);
+  return m ? parseInt(m[0], 10) : 999;
+}
+
 function NextMatchBadge({ match, is_home }: { match: SuspendedMatchDetail; is_home: boolean }) {
   return (
     <span className="inline-flex items-center gap-1 text-xs">
@@ -146,18 +154,25 @@ export function DisciplineTable({ records }: DisciplineTableProps) {
               {record.ban_matches > 0 && cardDetails.length > 0 && (
                 <div className="mt-3 pt-3 border-t border-slate-100 space-y-1.5">
                   <p className="text-xs font-semibold text-slate-600 mb-1">สาเหตุโทษแบน:</p>
-                  {cardDetails.map((card) => {
-                    const matchdayNum = typeof card.match?.matchday === 'string'
-                      ? card.match.matchday.replace(/\D/g, '')
-                      : card.match?.matchday;
-                    const minuteText = card.minute ? `นาที ${card.minute}` : 'ไม่ระบุนาที';
-                    const pointsValue = getCardPointsValue(card.card_type);
-                    return (
-                      <div key={card.id} className="text-xs text-slate-600">
-                        MD{matchdayNum} · {getCardTypeLabel(card.card_type)} · {minuteText} · +{pointsValue}
-                      </div>
-                    );
-                  })}
+                  {(() => {
+                    const sortedCardDetails = [...cardDetails].sort((a, b) => {
+                      const mdDiff = getCardMatchdayNumber(a) - getCardMatchdayNumber(b);
+                      if (mdDiff !== 0) return mdDiff;
+                      return (a.minute ?? 999) - (b.minute ?? 999);
+                    });
+                    return sortedCardDetails.map((card) => {
+                      const matchdayNum = typeof card.match?.matchday === 'string'
+                        ? card.match.matchday.replace(/\D/g, '')
+                        : card.match?.matchday;
+                      const minuteText = card.minute ? `นาที ${card.minute}` : 'ไม่ระบุนาที';
+                      const pointsValue = getCardPointsValue(card.card_type);
+                      return (
+                        <div key={card.id} className="text-xs text-slate-600">
+                          MD{matchdayNum} · {getCardTypeLabel(card.card_type)} · {minuteText} · +{pointsValue}
+                        </div>
+                      );
+                    });
+                  })()}
                 </div>
               )}
 
@@ -222,18 +237,25 @@ export function DisciplineTable({ records }: DisciplineTableProps) {
                       {hasCardDetails && (
                         <div className="mb-2 pb-2 border-b border-slate-200">
                           <p className="text-xs font-semibold text-slate-600 mb-1">สาเหตุโทษแบน:</p>
-                          {cardDetails.map((card) => {
-                            const matchdayNum = typeof card.match?.matchday === 'string'
-                              ? card.match.matchday.replace(/\D/g, '')
-                              : card.match?.matchday;
-                            const minuteText = card.minute ? `นาที ${card.minute}` : 'ไม่ระบุ';
-                            const pointsValue = getCardPointsValue(card.card_type);
-                            return (
-                              <div key={card.id} className="text-xs text-slate-600">
-                                MD{matchdayNum} · {getCardTypeLabel(card.card_type)} · {minuteText} · +{pointsValue}
-                              </div>
-                            );
-                          })}
+                          {(() => {
+                            const sortedCardDetails = [...cardDetails].sort((a, b) => {
+                              const mdDiff = getCardMatchdayNumber(a) - getCardMatchdayNumber(b);
+                              if (mdDiff !== 0) return mdDiff;
+                              return (a.minute ?? 999) - (b.minute ?? 999);
+                            });
+                            return sortedCardDetails.map((card) => {
+                              const matchdayNum = typeof card.match?.matchday === 'string'
+                                ? card.match.matchday.replace(/\D/g, '')
+                                : card.match?.matchday;
+                              const minuteText = card.minute ? `นาที ${card.minute}` : 'ไม่ระบุ';
+                              const pointsValue = getCardPointsValue(card.card_type);
+                              return (
+                                <div key={card.id} className="text-xs text-slate-600">
+                                  MD{matchdayNum} · {getCardTypeLabel(card.card_type)} · {minuteText} · +{pointsValue}
+                                </div>
+                              );
+                            });
+                          })()}
                         </div>
                       )}
                       {suspendedMatches.length > 0 ? (
