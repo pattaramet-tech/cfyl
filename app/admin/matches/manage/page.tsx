@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { GoalsList } from '@/components/GoalsList';
 import type { Match } from '@/types/db';
 
@@ -42,10 +42,28 @@ interface Card {
     id: string;
     full_name: string;
     shirt_no?: number;
+    team_id?: string;
+    team?: {
+      name: string;
+      short_name?: string;
+    };
   };
-  team?: {
+  match?: {
     id: string;
+    matchday: string | number;
+    home_team_id?: string;
+    away_team_id?: string;
+  };
+}
+
+interface Player {
+  id: string;
+  full_name: string;
+  shirt_no?: number;
+  team_id: string;
+  team?: {
     name: string;
+    short_name?: string;
   };
 }
 
@@ -66,6 +84,14 @@ export default function MatchManagePage() {
   const [matchStatus, setMatchStatus] = useState<string>('scheduled');
   const [goals, setGoals] = useState<Goal[]>([]);
   const [cards, setCards] = useState<Card[]>([]);
+  const [players, setPlayers] = useState<Player[]>([]);
+
+  // Card form states
+  const [cardPlayerId, setCardPlayerId] = useState<string>('');
+  const [cardType, setCardType] = useState<string>('yellow');
+  const [cardMinute, setCardMinute] = useState<string>('');
+  const [cardNote, setCardNote] = useState<string>('');
+  const [addingCard, setAddingCard] = useState(false);
 
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -147,16 +173,6 @@ export default function MatchManagePage() {
         if (!res.ok) throw new Error('Failed to load matches');
         const data = await res.json();
         setMatches(data);
-
-        // Preserve selected match
-        const stillExists = data.find((m: MatchWithTeams) => m.id === selectedMatchId);
-        if (stillExists) {
-          setSelectedMatch(stillExists);
-          loadMatchData(stillExists);
-        } else {
-          setSelectedMatch(null);
-          setSelectedMatchId('');
-        }
       } catch (err) {
         console.error('[MATCH_MANAGE] Load matches error:', err);
         setError('Failed to load matches');
@@ -166,44 +182,69 @@ export default function MatchManagePage() {
     };
 
     loadMatches();
-  }, [seasonId, ageGroupId, divisionId, selectedMatchId]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [seasonId, ageGroupId, divisionId]);
 
-  const loadMatchData = async (match: MatchWithTeams) => {
-    try {
-      const token = localStorage.getItem('admin_token');
+  // Load match data when selectedMatch changes
+  useEffect(() => {
+    if (!selectedMatch) return;
+    loadMatchDataCallback(selectedMatch);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedMatchId]);
 
-      // Load goals and cards
-      const [goalsRes, cardsRes] = await Promise.all([
-        fetch(`/api/admin/goals?match_id=${match.id}`, {
-          headers: token ? { 'Authorization': `Bearer ${token}` } : {},
-        }),
-        fetch(`/api/admin/cards?match_id=${match.id}`, {
-          headers: token ? { 'Authorization': `Bearer ${token}` } : {},
-        }),
-      ]);
 
-      if (goalsRes.ok) {
-        const goalsData = await goalsRes.json();
-        setGoals(goalsData);
+  const loadMatchDataCallback = useCallback(
+    async (match: MatchWithTeams) => {
+      try {
+        const token = localStorage.getItem('admin_token');
+
+        // Load goals, cards, and players
+        const [goalsRes, cardsRes, playersRes] = await Promise.all([
+          fetch(`/api/admin/goals?match_id=${match.id}`, {
+            headers: token ? { 'Authorization': `Bearer ${token}` } : {},
+          }),
+          fetch(`/api/admin/cards?matchId=${match.id}`, {
+            headers: token ? { 'Authorization': `Bearer ${token}` } : {},
+          }),
+          fetch(`/api/admin/players?teamIds=${match.home_team_id},${match.away_team_id}`, {
+            headers: token ? { 'Authorization': `Bearer ${token}` } : {},
+          }),
+        ]);
+
+        if (goalsRes.ok) {
+          const goalsData = await goalsRes.json();
+          setGoals(goalsData);
+        }
+        if (cardsRes.ok) {
+          const cardsData = await cardsRes.json();
+          setCards(cardsData);
+        }
+        if (playersRes.ok) {
+          const playersData = await playersRes.json();
+          setPlayers(playersData);
+        }
+
+        // Set score and status
+        setHomeScore((match.home_score ?? 0).toString());
+        setAwayScore((match.away_score ?? 0).toString());
+        setMatchStatus(match.status || 'scheduled');
+
+        // Reset card form
+        setCardPlayerId('');
+        setCardType('yellow');
+        setCardMinute('');
+        setCardNote('');
+      } catch (err) {
+        console.error('[MATCH_MANAGE] Load match data error:', err);
       }
-      if (cardsRes.ok) {
-        const cardsData = await cardsRes.json();
-        setCards(cardsData);
-      }
-
-      // Set score and status
-      setHomeScore((match.home_score ?? 0).toString());
-      setAwayScore((match.away_score ?? 0).toString());
-      setMatchStatus(match.status || 'scheduled');
-    } catch (err) {
-      console.error('[MATCH_MANAGE] Load match data error:', err);
-    }
-  };
+    },
+    []
+  );
 
   const handleMatchSelect = (match: MatchWithTeams) => {
     setSelectedMatch(match);
     setSelectedMatchId(match.id);
-    loadMatchData(match);
+    loadMatchDataCallback(match);
   };
 
   const handleSaveScore = async () => {
@@ -246,6 +287,163 @@ export default function MatchManagePage() {
       const updated = await res.json();
       setSelectedMatch(updated);
       setSuccess('✓ Score saved');
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : 'An error occurred';
+      setError(errorMsg);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleAddCard = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedMatch || !cardPlayerId) {
+      setError('Please select a player');
+      return;
+    }
+
+    setAddingCard(true);
+    setError(null);
+
+    try {
+      const token = localStorage.getItem('admin_token');
+      const cardMinuteNum = cardMinute ? parseInt(cardMinute) : null;
+
+      const res = await fetch('/api/admin/cards', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          match_id: selectedMatch.id,
+          player_id: cardPlayerId,
+          card_type: cardType,
+          minute: cardMinuteNum,
+          note: cardNote || null,
+        }),
+      });
+
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || 'Failed to add card');
+      }
+
+      setSuccess('✓ Card added');
+      // Reload cards
+      setTimeout(() => {
+        loadMatchDataCallback(selectedMatch);
+      }, 500);
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : 'An error occurred';
+      setError(errorMsg);
+    } finally {
+      setAddingCard(false);
+    }
+  };
+
+  const handleDeleteCard = async (cardId: string) => {
+    if (!selectedMatch || !window.confirm('Delete this card?')) return;
+
+    setSaving(true);
+    setError(null);
+
+    try {
+      const token = localStorage.getItem('admin_token');
+      const res = await fetch(`/api/admin/cards/${cardId}`, {
+        method: 'DELETE',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
+      });
+
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || 'Failed to delete card');
+      }
+
+      setSuccess('✓ Card deleted');
+      // Reload cards
+      setTimeout(() => {
+        loadMatchDataCallback(selectedMatch);
+      }, 500);
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : 'An error occurred';
+      setError(errorMsg);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const calculateGoalConsistency = () => {
+    if (!selectedMatch) return null;
+
+    const homeGoalSum = goals
+      .filter((g) => g.team_id === selectedMatch.home_team_id)
+      .reduce((sum, g) => sum + g.goals, 0);
+
+    const awayGoalSum = goals
+      .filter((g) => g.team_id === selectedMatch.away_team_id)
+      .reduce((sum, g) => sum + g.goals, 0);
+
+    const homeScoreNum = parseInt(homeScore);
+    const awayScoreNum = parseInt(awayScore);
+
+    return {
+      homeMatches: homeGoalSum === homeScoreNum,
+      awayMatches: awayGoalSum === awayScoreNum,
+      homeGoalSum,
+      awayGoalSum,
+      homeScoreNum,
+      awayScoreNum,
+    };
+  };
+
+  const handleFinishMatch = async () => {
+    if (!selectedMatch) return;
+
+    const consistency = calculateGoalConsistency();
+    if (!consistency) return;
+
+    const { homeMatches, awayMatches, homeGoalSum, awayGoalSum, homeScoreNum, awayScoreNum } = consistency;
+
+    if (!homeMatches || !awayMatches) {
+      const warnings = [];
+      if (!homeMatches) warnings.push(`Home: ${homeGoalSum} goals ≠ ${homeScoreNum} score`);
+      if (!awayMatches) warnings.push(`Away: ${awayGoalSum} goals ≠ ${awayScoreNum} score`);
+
+      const msg = `Goal/Score mismatch:\n${warnings.join('\n')}\n\nContinue anyway?`;
+      if (!window.confirm(msg)) return;
+    }
+
+    setSaving(true);
+    setError(null);
+    setSuccess(null);
+
+    try {
+      const token = localStorage.getItem('admin_token');
+      const res = await fetch(`/api/admin/matches/${selectedMatch.id}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          home_score: parseInt(homeScore),
+          away_score: parseInt(awayScore),
+          status: 'finished',
+        }),
+      });
+
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || 'Failed to finish match');
+      }
+
+      const updated = await res.json();
+      setSelectedMatch(updated);
+      setMatchStatus('finished');
+      setSuccess('✓ Match finished');
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : 'An error occurred';
       setError(errorMsg);
@@ -397,8 +595,8 @@ export default function MatchManagePage() {
 
           {/* Score Editor */}
           <div className="bg-white rounded-lg shadow p-6">
-            <h2 className="text-lg font-semibold text-gray-800 mb-4">Score</h2>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <h2 className="text-lg font-semibold text-gray-800 mb-4">Score & Status</h2>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4">
               <div>
                 <label className="block text-sm font-semibold text-gray-700 mb-2">
                   {selectedMatch.home_team?.name}
@@ -442,13 +640,20 @@ export default function MatchManagePage() {
               </div>
             </div>
 
-            <div className="mt-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <button
                 onClick={handleSaveScore}
                 disabled={saving}
-                className="w-full bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 disabled:opacity-50"
+                className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 disabled:opacity-50"
               >
                 {saving ? 'Saving...' : 'Save Score'}
+              </button>
+              <button
+                onClick={handleFinishMatch}
+                disabled={saving || matchStatus === 'finished'}
+                className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 disabled:opacity-50"
+              >
+                {saving ? 'Processing...' : 'จบการแข่งขัน'}
               </button>
             </div>
           </div>
@@ -462,8 +667,115 @@ export default function MatchManagePage() {
               awayTeamId={selectedMatch.away_team_id}
               goals={goals}
               isLoading={false}
-              onGoalsChange={() => loadMatchData(selectedMatch)}
+              onGoalsChange={() => selectedMatch && loadMatchDataCallback(selectedMatch)}
             />
+          </div>
+
+          {/* Cards Manager */}
+          <div className="bg-white rounded-lg shadow p-6">
+            <h2 className="text-lg font-semibold text-gray-800 mb-4">Cards</h2>
+
+            {/* Card Form */}
+            <form onSubmit={handleAddCard} className="mb-6 p-4 bg-blue-50 rounded-lg border border-blue-200 space-y-4">
+              <h3 className="font-semibold text-gray-800">➕ Add Card</h3>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                <div>
+                  <label className="block text-sm font-semibold text-gray-700 mb-2">Player</label>
+                  <select
+                    value={cardPlayerId}
+                    onChange={(e) => setCardPlayerId(e.target.value)}
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-600"
+                  >
+                    <option value="">-- Select player --</option>
+                    {players.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        #{p.shirt_no} {p.full_name} ({p.team?.short_name || p.team?.name})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-semibold text-gray-700 mb-2">Card Type</label>
+                  <select
+                    value={cardType}
+                    onChange={(e) => setCardType(e.target.value)}
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-600"
+                  >
+                    <option value="yellow">ใบเหลือง</option>
+                    <option value="second_yellow">ใบเหลืองที่ 2</option>
+                    <option value="red">ใบแดง</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-semibold text-gray-700 mb-2">Minute</label>
+                  <input
+                    type="number"
+                    min="0"
+                    max="120"
+                    value={cardMinute}
+                    onChange={(e) => setCardMinute(e.target.value)}
+                    placeholder="optional"
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-600"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-semibold text-gray-700 mb-2">Note</label>
+                  <input
+                    type="text"
+                    value={cardNote}
+                    onChange={(e) => setCardNote(e.target.value)}
+                    placeholder="optional"
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-600"
+                  />
+                </div>
+              </div>
+
+              <button
+                type="submit"
+                disabled={addingCard || !cardPlayerId}
+                className="w-full bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 disabled:opacity-50"
+              >
+                {addingCard ? 'Adding...' : 'Add Card'}
+              </button>
+            </form>
+
+            {/* Cards List */}
+            <div className="space-y-2">
+              <h3 className="font-semibold text-gray-800">Cards ({cards.length})</h3>
+              {cards.length === 0 ? (
+                <p className="text-slate-500 text-sm">No cards yet</p>
+              ) : (
+                <div className="space-y-2">
+                  {cards.map((card) => (
+                    <div key={card.id} className="flex items-center justify-between p-3 bg-slate-50 rounded border border-slate-200">
+                      <div className="min-w-0 flex-1">
+                        <p className="font-semibold text-sm text-slate-800">
+                          #{card.player?.shirt_no} {card.player?.full_name}
+                        </p>
+                        <p className="text-xs text-slate-600">
+                          {card.card_type === 'yellow' && '🟨 ใบเหลือง'}
+                          {card.card_type === 'second_yellow' && '🟨🟨 ใบเหลืองที่ 2'}
+                          {card.card_type === 'red' && '🟥 ใบแดง'}
+                          {card.minute && ` · นาที ${card.minute}`}
+                          {card.note && ` · ${card.note}`}
+                        </p>
+                      </div>
+                      <button
+                        onClick={() => handleDeleteCard(card.id)}
+                        disabled={saving}
+                        className="ml-3 px-3 py-1 text-sm bg-red-100 text-red-700 rounded hover:bg-red-200 disabled:opacity-50"
+                      >
+                        ลบ
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
         </>
       )}
