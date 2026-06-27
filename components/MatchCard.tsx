@@ -17,33 +17,36 @@ function formatDate(dateStr?: string | null): string {
   return d.toLocaleDateString('th-TH', { day: 'numeric', month: 'short' });
 }
 
-export function MatchCard({ match, variant = 'future', badgeText }: MatchCardProps) {
+export function MatchCard({ match, variant, badgeText }: MatchCardProps) {
   const isFinished = match.status === 'finished';
+  const isInactive = match.status === 'postponed' || match.status === 'cancelled';
+  const effectiveVariant = variant ?? (isInactive ? 'inactive' : isFinished ? 'finished' : 'future');
+
   const homeTeam = match.home_team?.name || match.home_team?.short_name || 'ทีมเหย้า';
   const awayTeam = match.away_team?.name || match.away_team?.short_name || 'ทีมเยือน';
   const date = formatDate(match.match_date);
 
-  const cardClass = variant === 'highlight'
+  const cardClass = effectiveVariant === 'highlight'
     ? 'border-l-4 border-blue-600 bg-blue-50/30'
-    : variant === 'finished'
+    : effectiveVariant === 'finished'
     ? 'opacity-75'
-    : variant === 'inactive'
+    : effectiveVariant === 'inactive'
     ? 'border border-amber-200 bg-amber-50/30'
     : '';
 
   const getBadgeClass = () => {
-    if (variant === 'highlight') return 'bg-blue-100 text-blue-700';
-    if (variant === 'finished') return 'bg-slate-100 text-slate-600';
-    if (variant === 'inactive') return 'bg-amber-100 text-amber-700';
+    if (effectiveVariant === 'highlight') return 'bg-blue-100 text-blue-700';
+    if (effectiveVariant === 'finished') return 'bg-slate-100 text-slate-600';
+    if (effectiveVariant === 'inactive') return 'bg-amber-100 text-amber-700';
     return 'bg-blue-50 text-blue-700';
   };
 
   const getDefaultBadgeText = () => {
-    if (variant === 'inactive') {
+    if (effectiveVariant === 'inactive') {
       return match.status === 'postponed' ? '⚠️ เลื่อนการแข่งขัน' : '✕ ยกเลิก';
     }
-    if (variant === 'finished') return '✓ แข่งจบแล้ว';
-    if (variant === 'highlight') return isFinished ? '✓ แข่งจบแล้ว' : '🔥 โปรแกรมวันนี้';
+    if (effectiveVariant === 'finished') return '✓ แข่งจบแล้ว';
+    if (effectiveVariant === 'highlight') return isFinished ? '✓ แข่งจบแล้ว' : '🔥 โปรแกรมวันนี้';
     return '⏰ ยังไม่แข่ง';
   };
 

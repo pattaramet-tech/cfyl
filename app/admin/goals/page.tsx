@@ -33,6 +33,7 @@ interface Goal {
 export default function GoalsPage() {
   const [matches, setMatches] = useState<MatchWithTeams[]>([]);
   const [selectedMatch, setSelectedMatch] = useState<MatchWithTeams | null>(null);
+  const [selectedMatchId, setSelectedMatchId] = useState<string>('');
   const [goals, setGoals] = useState<Goal[]>([]);
   const [isLoadingMatches, setIsLoadingMatches] = useState(true);
   const [isLoadingGoals, setIsLoadingGoals] = useState(false);
@@ -41,9 +42,9 @@ export default function GoalsPage() {
   const [seasonId, setSeasonId] = useState<string>('');
   const [ageGroupId, setAgeGroupId] = useState<string>('');
   const [divisionId, setDivisionId] = useState<string>('');
-  const [seasons, setSeasons] = useState<any[]>([]);
-  const [ageGroups, setAgeGroups] = useState<any[]>([]);
-  const [divisions, setDivisions] = useState<any[]>([]);
+  const [seasons, setSeasons] = useState<Array<{ id: string; name: string; year: number }>>([]);
+  const [ageGroups, setAgeGroups] = useState<Array<{ id: string; code: string; name: string }>>([]);
+  const [divisions, setDivisions] = useState<Array<{ id: string; name: string }>>([]);
 
   // Load seasons
   useEffect(() => {
@@ -107,6 +108,7 @@ export default function GoalsPage() {
     if (!seasonId || !ageGroupId || !divisionId) {
       setMatches([]);
       setSelectedMatch(null);
+      setSelectedMatchId('');
       return;
     }
 
@@ -127,10 +129,15 @@ export default function GoalsPage() {
         const data = await res.json();
         setMatches(data);
 
-        // Select first match
-        if (data.length > 0) {
-          setSelectedMatch(data[0]);
-          loadGoals(data[0].id);
+        // Preserve selected match if it still exists, otherwise keep empty
+        const stillExists = data.find((m: MatchWithTeams) => m.id === selectedMatchId);
+        if (stillExists) {
+          setSelectedMatch(stillExists);
+          loadGoals(stillExists.id);
+        } else {
+          setSelectedMatch(null);
+          setSelectedMatchId('');
+          setGoals([]);
         }
       } catch (err) {
         console.error('[GOALS_PAGE] Load matches error:', err);
@@ -141,7 +148,7 @@ export default function GoalsPage() {
     };
 
     loadMatches();
-  }, [seasonId, ageGroupId, divisionId]);
+  }, [seasonId, ageGroupId, divisionId, selectedMatchId]);
 
   // Load goals for selected match
   const loadGoals = async (matchId: string) => {
@@ -166,6 +173,7 @@ export default function GoalsPage() {
 
   const handleMatchSelect = (match: MatchWithTeams) => {
     setSelectedMatch(match);
+    setSelectedMatchId(match.id);
     loadGoals(match.id);
   };
 
@@ -252,30 +260,25 @@ export default function GoalsPage() {
             <label className="block text-sm font-semibold text-gray-700 mb-3">
               Select Match
             </label>
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-2 lg:grid-cols-3 gap-2 sm:gap-3">
+            <select
+              value={selectedMatchId}
+              onChange={(e) => {
+                const match = matches.find((m) => m.id === e.target.value);
+                if (match) {
+                  handleMatchSelect(match);
+                }
+              }}
+              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-600"
+            >
+              <option value="">-- Select a match --</option>
               {matches.map((match) => (
-                <button
-                  key={match.id}
-                  onClick={() => handleMatchSelect(match)}
-                  className={`p-4 rounded-lg border-2 text-left transition ${
-                    selectedMatch?.id === match.id
-                      ? 'border-blue-600 bg-blue-50'
-                      : 'border-gray-200 bg-white hover:border-gray-300'
-                  }`}
-                >
-                  <p className="font-semibold text-gray-800">
-                    {match.home_team?.name} vs {match.away_team?.name}
-                  </p>
-                  <p className="text-sm text-gray-600 mt-1">
-                    [{match.match_code}] | MD{match.matchday}
-                    {match.match_time && ` | ${match.match_time.substring(0, 5)}`}
-                  </p>
-                  <p className="text-xs text-gray-500 mt-1">
-                    {new Date(match.match_date).toLocaleDateString('th-TH')}
-                  </p>
-                </button>
+                <option key={match.id} value={match.id}>
+                  MD{match.matchday} | {new Date(match.match_date).toLocaleDateString('th-TH')}
+                  {match.match_time && ` ${match.match_time.substring(0, 5)}`} | {match.home_team?.name} vs{' '}
+                  {match.away_team?.name}
+                </option>
               ))}
-            </div>
+            </select>
           </div>
         ) : (
           <div className="text-center py-8">
