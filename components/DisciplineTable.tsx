@@ -14,7 +14,7 @@ interface CardDetail {
   } | null;
 }
 
-interface Suspension {
+export interface Suspension {
   player_id: string;
   full_name: string;
   team_name: string;

@@ -6,6 +6,7 @@ import { PublicSeasonNav } from '@/components/PublicSeasonNav';
 import { usePublicNav } from '@/lib/use-public-nav';
 import { buildDisciplinePath } from '@/lib/public-slugs';
 import type { SuspensionDetails } from '@/lib/suspension-calc';
+import type { Suspension } from '@/components/DisciplineTable';
 
 interface DisciplineViewProps {
   seasonId: string;
@@ -36,29 +37,7 @@ interface ApiSuspensionRecord {
 }
 
 export function DisciplineView({ seasonId, ageGroupId }: DisciplineViewProps) {
-  const [records, setRecords] = useState<Array<{
-    player_id: string;
-    full_name: string;
-    team_name: string;
-    shirt_no?: number;
-    total_points: number;
-    ban_matches: number;
-    point_sources: unknown[];
-    suspension_reason: string | null;
-    suspension_details: SuspensionDetails | null;
-    card_details: Array<{
-      id: string;
-      card_type: string;
-      minute?: number | null;
-      note?: string | null;
-      match_id: string;
-      match?: {
-        matchday: string | number;
-        match_date?: string | null;
-        match_time?: string | null;
-      } | null;
-    }>;
-  }>([]);
+  const [records, setRecords] = useState<Suspension[]>([]);
   const [loading, setLoading] = useState(true);
 
   const { seasons, ageGroups, seg, code, onSeasonChange, onAgeChange } = usePublicNav(
@@ -83,7 +62,7 @@ export function DisciplineView({ seasonId, ageGroupId }: DisciplineViewProps) {
             total_points: s.total_points,
             ban_matches: s.ban_matches,
             point_sources: s.point_sources || [],
-            suspension_reason: s.suspension_reason,
+            suspension_reason: s.suspension_reason ?? null,
             suspension_details: s.suspension_details || null,
             card_details: s.card_details || [],
           }))
