@@ -94,9 +94,26 @@ export default function MatchManagePage() {
   const [addingCard, setAddingCard] = useState(false);
 
   const [loading, setLoading] = useState(false);
+  const [loadingMatchData, setLoadingMatchData] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  const [showFinishValidation, setShowFinishValidation] = useState(false);
+
+  // Auto-hide success/error messages
+  useEffect(() => {
+    if (success) {
+      const timer = setTimeout(() => setSuccess(null), 3500);
+      return () => clearTimeout(timer);
+    }
+  }, [success]);
+
+  useEffect(() => {
+    if (error) {
+      const timer = setTimeout(() => setError(null), 4000);
+      return () => clearTimeout(timer);
+    }
+  }, [error]);
 
   // Load seasons
   useEffect(() => {
@@ -175,7 +192,7 @@ export default function MatchManagePage() {
         setMatches(data);
       } catch (err) {
         console.error('[MATCH_MANAGE] Load matches error:', err);
-        setError('Failed to load matches');
+        setError('ไม่สามารถโหลดข้อมูลแมตช์ได้');
       } finally {
         setLoading(false);
       }
@@ -195,6 +212,7 @@ export default function MatchManagePage() {
 
   const loadMatchDataCallback = useCallback(
     async (match: MatchWithTeams) => {
+      setLoadingMatchData(true);
       try {
         const token = localStorage.getItem('admin_token');
 
@@ -236,6 +254,8 @@ export default function MatchManagePage() {
         setCardNote('');
       } catch (err) {
         console.error('[MATCH_MANAGE] Load match data error:', err);
+      } finally {
+        setLoadingMatchData(false);
       }
     },
     []
@@ -259,10 +279,10 @@ export default function MatchManagePage() {
       const awayScoreNum = parseInt(awayScore);
 
       if (isNaN(homeScoreNum) || isNaN(awayScoreNum)) {
-        throw new Error('Score must be a number');
+        throw new Error('กรุณากรอกสกอร์เป็นตัวเลข');
       }
       if (homeScoreNum < 0 || awayScoreNum < 0) {
-        throw new Error('Score cannot be negative');
+        throw new Error('สกอร์ต้องไม่ติดลบ');
       }
 
       const token = localStorage.getItem('admin_token');
@@ -281,12 +301,12 @@ export default function MatchManagePage() {
 
       if (!res.ok) {
         const data = await res.json();
-        throw new Error(data.error || 'Failed to save score');
+        throw new Error(data.error || 'ไม่สามารถบันทึกสกอร์ได้');
       }
 
       const updated = await res.json();
       setSelectedMatch(updated);
-      setSuccess('✓ Score saved');
+      setSuccess('✓ บันทึกสกอร์เรียบร้อย');
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : 'An error occurred';
       setError(errorMsg);
@@ -298,7 +318,7 @@ export default function MatchManagePage() {
   const handleAddCard = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedMatch || !cardPlayerId) {
-      setError('Please select a player');
+      setError('กรุณาเลือกนักเตะ');
       return;
     }
 
@@ -326,10 +346,10 @@ export default function MatchManagePage() {
 
       if (!res.ok) {
         const data = await res.json();
-        throw new Error(data.error || 'Failed to add card');
+        throw new Error(data.error || 'ไม่สามารถเพิ่มใบได้');
       }
 
-      setSuccess('✓ Card added');
+      setSuccess('✓ เพิ่มใบเรียบร้อย');
       // Reload cards
       setTimeout(() => {
         loadMatchDataCallback(selectedMatch);
@@ -343,7 +363,7 @@ export default function MatchManagePage() {
   };
 
   const handleDeleteCard = async (cardId: string) => {
-    if (!selectedMatch || !window.confirm('Delete this card?')) return;
+    if (!selectedMatch || !window.confirm('ยืนยันการลบใบนี้?')) return;
 
     setSaving(true);
     setError(null);
@@ -359,10 +379,10 @@ export default function MatchManagePage() {
 
       if (!res.ok) {
         const data = await res.json();
-        throw new Error(data.error || 'Failed to delete card');
+        throw new Error(data.error || 'ไม่สามารถลบใบได้');
       }
 
-      setSuccess('✓ Card deleted');
+      setSuccess('✓ ลบใบเรียบร้อย');
       // Reload cards
       setTimeout(() => {
         loadMatchDataCallback(selectedMatch);
@@ -399,21 +419,19 @@ export default function MatchManagePage() {
     };
   };
 
-  const handleFinishMatch = async () => {
+  const handleFinishMatch = async (confirmed = false) => {
     if (!selectedMatch) return;
 
     const consistency = calculateGoalConsistency();
     if (!consistency) return;
 
-    const { homeMatches, awayMatches, homeGoalSum, awayGoalSum, homeScoreNum, awayScoreNum } = consistency;
+    const { homeMatches, awayMatches } = consistency;
 
     if (!homeMatches || !awayMatches) {
-      const warnings = [];
-      if (!homeMatches) warnings.push(`Home: ${homeGoalSum} goals ≠ ${homeScoreNum} score`);
-      if (!awayMatches) warnings.push(`Away: ${awayGoalSum} goals ≠ ${awayScoreNum} score`);
-
-      const msg = `Goal/Score mismatch:\n${warnings.join('\n')}\n\nContinue anyway?`;
-      if (!window.confirm(msg)) return;
+      if (!confirmed) {
+        setShowFinishValidation(true);
+        return;
+      }
     }
 
     setSaving(true);
@@ -437,15 +455,16 @@ export default function MatchManagePage() {
 
       if (!res.ok) {
         const data = await res.json();
-        throw new Error(data.error || 'Failed to finish match');
+        throw new Error(data.error || 'ไม่สามารถจบการแข่งขันได้');
       }
 
       const updated = await res.json();
       setSelectedMatch(updated);
       setMatchStatus('finished');
-      setSuccess('✓ Match finished');
+      setShowFinishValidation(false);
+      setSuccess(`✓ จบการแข่งขันเรียบร้อย (${updated.home_score}-${updated.away_score}) · ข้อมูล Sync ไปยังหน้า Public`);
     } catch (err) {
-      const errorMsg = err instanceof Error ? err.message : 'An error occurred';
+      const errorMsg = err instanceof Error ? err.message : 'เกิดข้อผิดพลาด';
       setError(errorMsg);
     } finally {
       setSaving(false);
@@ -460,18 +479,18 @@ export default function MatchManagePage() {
       </div>
 
       {/* Filters */}
-      <div className="bg-white rounded-lg shadow p-6">
-        <h2 className="text-lg font-semibold text-gray-800 mb-4">Select Match</h2>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mb-6">
+      <div className="bg-white rounded-lg shadow p-4 sm:p-6">
+        <h2 className="text-lg font-semibold text-gray-800 mb-4">เลือกแมตช์</h2>
+        <div className="space-y-3 sm:space-y-4 mb-4 sm:mb-6">
           {/* Season */}
           <div>
-            <label className="block text-sm font-semibold text-gray-700 mb-2">Season</label>
+            <label className="block text-sm font-semibold text-gray-700 mb-2">ฤดูกาล</label>
             <select
               value={seasonId}
               onChange={(e) => setSeasonId(e.target.value)}
-              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-600"
+              className="w-full px-3 sm:px-4 py-2.5 sm:py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-600 text-sm sm:text-base"
             >
-              <option value="">Select season</option>
+              <option value="">-- เลือกฤดูกาล --</option>
               {seasons.map((s) => (
                 <option key={s.id} value={s.id}>
                   {s.name} ({s.year})
@@ -482,14 +501,14 @@ export default function MatchManagePage() {
 
           {/* Age Group */}
           <div>
-            <label className="block text-sm font-semibold text-gray-700 mb-2">Age Group</label>
+            <label className="block text-sm font-semibold text-gray-700 mb-2">ระดับอายุ</label>
             <select
               value={ageGroupId}
               onChange={(e) => setAgeGroupId(e.target.value)}
               disabled={!seasonId}
-              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-600 disabled:bg-gray-100"
+              className="w-full px-3 sm:px-4 py-2.5 sm:py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-600 disabled:bg-gray-100 text-sm sm:text-base"
             >
-              <option value="">Select age group</option>
+              <option value="">-- เลือกระดับอายุ --</option>
               {ageGroups.map((ag) => (
                 <option key={ag.id} value={ag.id}>
                   {ag.code} - {ag.name}
@@ -500,14 +519,14 @@ export default function MatchManagePage() {
 
           {/* Division */}
           <div>
-            <label className="block text-sm font-semibold text-gray-700 mb-2">Division</label>
+            <label className="block text-sm font-semibold text-gray-700 mb-2">สัญชาติ</label>
             <select
               value={divisionId}
               onChange={(e) => setDivisionId(e.target.value)}
               disabled={!ageGroupId}
-              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-600 disabled:bg-gray-100"
+              className="w-full px-3 sm:px-4 py-2.5 sm:py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-600 disabled:bg-gray-100 text-sm sm:text-base"
             >
-              <option value="">Select division</option>
+              <option value="">-- เลือกสัญชาติ --</option>
               {divisions.map((d) => (
                 <option key={d.id} value={d.id}>
                   {d.name}
@@ -519,13 +538,13 @@ export default function MatchManagePage() {
 
         {/* Match Dropdown */}
         {loading ? (
-          <div className="flex items-center justify-center py-4">
-            <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-600 mr-2"></div>
-            <span className="text-gray-600">Loading matches...</span>
+          <div className="flex items-center justify-center py-6">
+            <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-blue-600 mr-2"></div>
+            <span className="text-gray-600 text-sm">กำลังโหลดแมตช์...</span>
           </div>
         ) : matches.length > 0 ? (
           <div>
-            <label className="block text-sm font-semibold text-gray-700 mb-3">Select Match</label>
+            <label className="block text-sm font-semibold text-gray-700 mb-3">เลือกแมตช์</label>
             <select
               value={selectedMatchId}
               onChange={(e) => {
@@ -534,14 +553,14 @@ export default function MatchManagePage() {
                   handleMatchSelect(match);
                 }
               }}
-              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-600"
+              className="w-full px-3 sm:px-4 py-2.5 sm:py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-600 text-sm sm:text-base"
             >
-              <option value="">-- Select a match --</option>
+              <option value="">-- เลือกแมตช์ --</option>
               {matches.map((match) => (
                 <option key={match.id} value={match.id}>
                   MD{match.matchday} | {new Date(match.match_date).toLocaleDateString('th-TH')}
-                  {match.match_time && ` ${match.match_time.substring(0, 5)}`} | {match.home_team?.name} vs{' '}
-                  {match.away_team?.name}
+                  {match.match_time && ` ${match.match_time.substring(0, 5)}`} | {match.home_team?.name || 'ทีมเหย้า'} vs{' '}
+                  {match.away_team?.name || 'ทีมเยือน'}
                   {match.status === 'finished' && match.home_score != null && match.away_score != null
                     ? ` (${match.home_score}-${match.away_score})`
                     : ''}
@@ -550,56 +569,136 @@ export default function MatchManagePage() {
             </select>
           </div>
         ) : (
-          <div className="text-center py-8">
-            <p className="text-gray-500">No matches found. Select division to view matches.</p>
+          <div className="text-center py-6 sm:py-8">
+            <p className="text-gray-500 text-sm">ไม่พบแมตช์ กรุณาเลือกสัญชาติ</p>
           </div>
         )}
       </div>
 
       {/* Error/Success */}
       {error && (
-        <div className="p-4 bg-red-50 border border-red-200 rounded-lg">
-          <p className="text-red-700">❌ {error}</p>
+        <div className="p-3 sm:p-4 bg-red-50 border border-red-200 rounded-lg animate-in fade-in">
+          <p className="text-red-700 text-sm sm:text-base">❌ {error}</p>
         </div>
       )}
       {success && (
-        <div className="p-4 bg-green-50 border border-green-200 rounded-lg">
-          <p className="text-green-700">{success}</p>
+        <div className="p-3 sm:p-4 bg-green-50 border border-green-200 rounded-lg animate-in fade-in">
+          <p className="text-green-700 text-sm sm:text-base font-semibold">{success}</p>
         </div>
       )}
+
+      {/* Finish Match Validation Modal */}
+      {showFinishValidation && selectedMatch && (() => {
+        const consistency = calculateGoalConsistency();
+        if (!consistency) return null;
+        const { homeMatches, awayMatches, homeGoalSum, awayGoalSum, homeScoreNum, awayScoreNum } = consistency;
+        const hasError = !homeMatches || !awayMatches;
+
+        return (
+          <div className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-50">
+            <div className="bg-white rounded-t-2xl sm:rounded-2xl w-full sm:w-full max-w-md p-4 sm:p-6 space-y-4">
+              <h3 className="text-lg sm:text-xl font-bold text-gray-800">ตรวจสอบก่อนจบการแข่งขัน</h3>
+
+              <div className="space-y-3 sm:space-y-4 py-2">
+                {/* Home Team */}
+                <div className="p-3 sm:p-4 rounded-lg border-2" style={{ borderColor: homeMatches ? '#10b981' : '#ef4444', backgroundColor: homeMatches ? '#ecfdf5' : '#fef2f2' }}>
+                  <div className="flex items-center justify-between">
+                    <span className="font-semibold text-gray-800">{selectedMatch.home_team?.name || 'ทีมเหย้า'}</span>
+                    <span className="text-2xl">{homeMatches ? '✅' : '⚠️'}</span>
+                  </div>
+                  <div className="text-sm text-gray-600 mt-2">
+                    <p>Score: <span className="font-bold text-gray-800">{homeScoreNum}</span></p>
+                    <p>Goals: <span className="font-bold text-gray-800">{homeGoalSum}</span></p>
+                    {homeMatches ? (
+                      <p className="text-green-600 font-semibold mt-1">✓ ตรงกัน</p>
+                    ) : (
+                      <p className="text-red-600 font-semibold mt-1">✗ ไม่ตรงกัน</p>
+                    )}
+                  </div>
+                </div>
+
+                {/* Away Team */}
+                <div className="p-3 sm:p-4 rounded-lg border-2" style={{ borderColor: awayMatches ? '#10b981' : '#ef4444', backgroundColor: awayMatches ? '#ecfdf5' : '#fef2f2' }}>
+                  <div className="flex items-center justify-between">
+                    <span className="font-semibold text-gray-800">{selectedMatch.away_team?.name || 'ทีมเยือน'}</span>
+                    <span className="text-2xl">{awayMatches ? '✅' : '⚠️'}</span>
+                  </div>
+                  <div className="text-sm text-gray-600 mt-2">
+                    <p>Score: <span className="font-bold text-gray-800">{awayScoreNum}</span></p>
+                    <p>Goals: <span className="font-bold text-gray-800">{awayGoalSum}</span></p>
+                    {awayMatches ? (
+                      <p className="text-green-600 font-semibold mt-1">✓ ตรงกัน</p>
+                    ) : (
+                      <p className="text-red-600 font-semibold mt-1">✗ ไม่ตรงกัน</p>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              <div className="bg-slate-100 p-3 sm:p-4 rounded-lg text-sm text-slate-700">
+                {hasError ? (
+                  <p>ข้อมูลประตูไม่ตรงกับสกอร์ ตรวจสอบข้อมูลการลงทะเบียนของผู้เล่นหรือปรับสกอร์</p>
+                ) : (
+                  <p className="text-green-700 font-semibold">✓ ข้อมูลถูกต้อง พร้อมจบการแข่งขัน</p>
+                )}
+              </div>
+
+              <div className="space-y-2 sm:space-y-0 sm:flex sm:gap-3">
+                <button
+                  onClick={() => setShowFinishValidation(false)}
+                  className="w-full sm:flex-1 px-4 py-3 sm:py-2 bg-gray-300 text-gray-800 rounded-lg hover:bg-gray-400 font-semibold text-sm sm:text-base transition"
+                >
+                  ยกเลิก
+                </button>
+                <button
+                  onClick={() => handleFinishMatch(true)}
+                  disabled={saving}
+                  className={`w-full sm:flex-1 px-4 py-3 sm:py-2 rounded-lg font-semibold text-sm sm:text-base transition ${
+                    hasError
+                      ? 'bg-orange-600 text-white hover:bg-orange-700 disabled:opacity-50'
+                      : 'bg-green-600 text-white hover:bg-green-700 disabled:opacity-50'
+                  }`}
+                >
+                  {saving ? 'กำลังประมวลผล...' : (hasError ? '🚨 จบแมตช์แม้ไม่ตรง' : '✓ จบการแข่งขัน')}
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Match Detail & Management */}
       {selectedMatch && (
         <>
           {/* Match Summary */}
-          <div className="bg-white rounded-lg shadow p-6">
-            <h2 className="text-lg font-semibold text-gray-800 mb-4">Match Summary</h2>
-            <div className="space-y-2 text-sm">
+          <div className="bg-white rounded-lg shadow p-4 sm:p-6">
+            <h2 className="text-lg font-semibold text-gray-800 mb-4">สรุปการแข่งขัน</h2>
+            <div className="space-y-2 text-sm sm:text-base">
               <p>
-                <span className="font-semibold">MatchDay:</span> MD{selectedMatch.matchday}
+                <span className="font-semibold">นัด:</span> MD{selectedMatch.matchday}
               </p>
               <p>
-                <span className="font-semibold">Date:</span>{' '}
+                <span className="font-semibold">วันที่:</span>{' '}
                 {new Date(selectedMatch.match_date).toLocaleDateString('th-TH')}
                 {selectedMatch.match_time && ` ${selectedMatch.match_time.substring(0, 5)}`}
               </p>
               <p>
-                <span className="font-semibold">Division:</span> {selectedMatch.division?.name}
+                <span className="font-semibold">สัญชาติ:</span> {selectedMatch.division?.name || 'ไม่ระบุ'}
               </p>
               <p>
-                <span className="font-semibold">Teams:</span> {selectedMatch.home_team?.name} vs{' '}
-                {selectedMatch.away_team?.name}
+                <span className="font-semibold">ทีม:</span> {selectedMatch.home_team?.name || 'ทีมเหย้า'} vs{' '}
+                {selectedMatch.away_team?.name || 'ทีมเยือน'}
               </p>
             </div>
           </div>
 
           {/* Score Editor */}
-          <div className="bg-white rounded-lg shadow p-6">
-            <h2 className="text-lg font-semibold text-gray-800 mb-4">Score & Status</h2>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4">
+          <div className="bg-white rounded-lg shadow p-4 sm:p-6">
+            <h2 className="text-lg font-semibold text-gray-800 mb-4">สกอร์ & สถานะ</h2>
+            <div className="space-y-3 sm:space-y-4 mb-4">
               <div>
                 <label className="block text-sm font-semibold text-gray-700 mb-2">
-                  {selectedMatch.home_team?.name}
+                  {selectedMatch.home_team?.name || 'ทีมเหย้า'}
                 </label>
                 <input
                   type="number"
@@ -607,27 +706,29 @@ export default function MatchManagePage() {
                   max="99"
                   value={homeScore}
                   onChange={(e) => setHomeScore(e.target.value)}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-600"
+                  disabled={matchStatus === 'finished' || loadingMatchData}
+                  className="w-full px-3 sm:px-4 py-3 sm:py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-600 disabled:bg-gray-100 text-base sm:text-sm"
                 />
               </div>
 
               <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-2">Status</label>
+                <label className="block text-sm font-semibold text-gray-700 mb-2">สถานะ</label>
                 <select
                   value={matchStatus}
                   onChange={(e) => setMatchStatus(e.target.value)}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-600"
+                  disabled={matchStatus === 'finished'}
+                  className="w-full px-3 sm:px-4 py-3 sm:py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-600 disabled:bg-gray-100 text-sm sm:text-base"
                 >
-                  <option value="scheduled">Scheduled</option>
-                  <option value="finished">Finished</option>
-                  <option value="postponed">Postponed</option>
-                  <option value="cancelled">Cancelled</option>
+                  <option value="scheduled">ยังไม่แข่ง</option>
+                  <option value="finished">แข่งจบแล้ว</option>
+                  <option value="postponed">เลื่อนการแข่ง</option>
+                  <option value="cancelled">ยกเลิก</option>
                 </select>
               </div>
 
               <div>
                 <label className="block text-sm font-semibold text-gray-700 mb-2">
-                  {selectedMatch.away_team?.name}
+                  {selectedMatch.away_team?.name || 'ทีมเยือน'}
                 </label>
                 <input
                   type="number"
@@ -635,32 +736,41 @@ export default function MatchManagePage() {
                   max="99"
                   value={awayScore}
                   onChange={(e) => setAwayScore(e.target.value)}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-600"
+                  disabled={matchStatus === 'finished' || loadingMatchData}
+                  className="w-full px-3 sm:px-4 py-3 sm:py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-600 disabled:bg-gray-100 text-base sm:text-sm"
                 />
               </div>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div className="space-y-2 sm:space-y-0 sm:grid sm:grid-cols-2 sm:gap-3">
               <button
                 onClick={handleSaveScore}
-                disabled={saving}
-                className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 disabled:opacity-50"
+                disabled={saving || matchStatus === 'finished'}
+                className="bg-blue-600 text-white px-4 py-3 sm:py-2 rounded-lg hover:bg-blue-700 disabled:opacity-50 font-semibold text-sm sm:text-base transition"
               >
-                {saving ? 'Saving...' : 'Save Score'}
+                {saving ? 'กำลังบันทึก...' : 'บันทึกสกอร์'}
               </button>
               <button
-                onClick={handleFinishMatch}
+                onClick={() => handleFinishMatch()}
                 disabled={saving || matchStatus === 'finished'}
-                className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 disabled:opacity-50"
+                className="bg-green-600 text-white px-4 py-3 sm:py-2 rounded-lg hover:bg-green-700 disabled:opacity-50 font-semibold text-sm sm:text-base transition"
               >
-                {saving ? 'Processing...' : 'จบการแข่งขัน'}
+                {saving ? 'กำลังประมวลผล...' : '🏁 จบการแข่งขัน'}
               </button>
             </div>
           </div>
 
+          {/* Loading indicator for match data */}
+          {loadingMatchData && (
+            <div className="flex items-center justify-center py-6 bg-blue-50 rounded-lg border border-blue-200">
+              <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-blue-600 mr-3"></div>
+              <span className="text-blue-600 font-semibold text-sm">กำลังโหลดข้อมูลแมตช์...</span>
+            </div>
+          )}
+
           {/* Goals */}
-          <div className="bg-white rounded-lg shadow p-6">
-            <h2 className="text-lg font-semibold text-gray-800 mb-4">Goals</h2>
+          <div className="bg-white rounded-lg shadow p-4 sm:p-6">
+            <h2 className="text-lg font-semibold text-gray-800 mb-4">ประตู</h2>
             <GoalsList
               matchId={selectedMatch.id}
               homeTeamId={selectedMatch.home_team_id}
@@ -672,36 +782,39 @@ export default function MatchManagePage() {
           </div>
 
           {/* Cards Manager */}
-          <div className="bg-white rounded-lg shadow p-6">
-            <h2 className="text-lg font-semibold text-gray-800 mb-4">Cards</h2>
+          <div className="bg-white rounded-lg shadow p-4 sm:p-6">
+            <h2 className="text-lg font-semibold text-gray-800 mb-4">ใบเรียบร้อย</h2>
 
             {/* Card Form */}
-            <form onSubmit={handleAddCard} className="mb-6 p-4 bg-blue-50 rounded-lg border border-blue-200 space-y-4">
-              <h3 className="font-semibold text-gray-800">➕ Add Card</h3>
+            <form onSubmit={handleAddCard} className="mb-6 p-3 sm:p-4 bg-blue-50 rounded-lg border border-blue-200 space-y-3 sm:space-y-4">
+              <h3 className="font-semibold text-gray-800 text-sm sm:text-base">➕ เพิ่มใบ</h3>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              <div className="space-y-3 sm:space-y-0 sm:grid sm:grid-cols-2 lg:grid-cols-4 sm:gap-3 lg:gap-4">
                 <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-2">Player</label>
+                  <label className="block text-sm font-semibold text-gray-700 mb-2">นักเตะ</label>
                   <select
                     value={cardPlayerId}
                     onChange={(e) => setCardPlayerId(e.target.value)}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-600"
+                    disabled={players.length === 0}
+                    className="w-full px-3 sm:px-4 py-2.5 sm:py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-600 disabled:bg-gray-100 text-sm sm:text-base"
                   >
-                    <option value="">-- Select player --</option>
+                    <option value="">
+                      {players.length === 0 ? '-- โหลดนักเตะ --' : '-- เลือกนักเตะ --'}
+                    </option>
                     {players.map((p) => (
                       <option key={p.id} value={p.id}>
-                        #{p.shirt_no} {p.full_name} ({p.team?.short_name || p.team?.name})
+                        #{p.shirt_no || '?'} {p.full_name} ({p.team?.short_name || p.team?.name || 'ไม่ระบุทีม'})
                       </option>
                     ))}
                   </select>
                 </div>
 
                 <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-2">Card Type</label>
+                  <label className="block text-sm font-semibold text-gray-700 mb-2">ประเภท</label>
                   <select
                     value={cardType}
                     onChange={(e) => setCardType(e.target.value)}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-600"
+                    className="w-full px-3 sm:px-4 py-2.5 sm:py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-600 text-sm sm:text-base"
                   >
                     <option value="yellow">ใบเหลือง</option>
                     <option value="second_yellow">ใบเหลืองที่ 2</option>
@@ -710,26 +823,26 @@ export default function MatchManagePage() {
                 </div>
 
                 <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-2">Minute</label>
+                  <label className="block text-sm font-semibold text-gray-700 mb-2">นาที</label>
                   <input
                     type="number"
                     min="0"
                     max="120"
                     value={cardMinute}
                     onChange={(e) => setCardMinute(e.target.value)}
-                    placeholder="optional"
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-600"
+                    placeholder="ไม่บังคับ"
+                    className="w-full px-3 sm:px-4 py-2.5 sm:py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-600 text-sm sm:text-base"
                   />
                 </div>
 
                 <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-2">Note</label>
+                  <label className="block text-sm font-semibold text-gray-700 mb-2">หมายเหตุ</label>
                   <input
                     type="text"
                     value={cardNote}
                     onChange={(e) => setCardNote(e.target.value)}
-                    placeholder="optional"
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-600"
+                    placeholder="ไม่บังคับ"
+                    className="w-full px-3 sm:px-4 py-2.5 sm:py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-600 text-sm sm:text-base"
                   />
                 </div>
               </div>
@@ -737,37 +850,37 @@ export default function MatchManagePage() {
               <button
                 type="submit"
                 disabled={addingCard || !cardPlayerId}
-                className="w-full bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 disabled:opacity-50"
+                className="w-full bg-blue-600 text-white px-4 py-3 sm:py-2 rounded-lg hover:bg-blue-700 disabled:opacity-50 font-semibold text-sm sm:text-base transition"
               >
-                {addingCard ? 'Adding...' : 'Add Card'}
+                {addingCard ? 'กำลังเพิ่ม...' : 'เพิ่มใบ'}
               </button>
             </form>
 
             {/* Cards List */}
-            <div className="space-y-2">
-              <h3 className="font-semibold text-gray-800">Cards ({cards.length})</h3>
+            <div className="space-y-2 sm:space-y-3">
+              <h3 className="font-semibold text-gray-800 text-base sm:text-lg">ใบแสดง ({cards.length})</h3>
               {cards.length === 0 ? (
-                <p className="text-slate-500 text-sm">No cards yet</p>
+                <p className="text-slate-500 text-sm">ยังไม่มีใบแสดง</p>
               ) : (
-                <div className="space-y-2">
+                <div className="space-y-2 sm:space-y-3">
                   {cards.map((card) => (
-                    <div key={card.id} className="flex items-center justify-between p-3 bg-slate-50 rounded border border-slate-200">
+                    <div key={card.id} className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 p-3 sm:p-4 bg-slate-50 rounded border border-slate-200">
                       <div className="min-w-0 flex-1">
-                        <p className="font-semibold text-sm text-slate-800">
-                          #{card.player?.shirt_no} {card.player?.full_name}
+                        <p className="font-semibold text-sm sm:text-base text-slate-800">
+                          #{card.player?.shirt_no} {card.player?.full_name || 'ไม่ระบุ'}
                         </p>
-                        <p className="text-xs text-slate-600">
+                        <p className="text-xs sm:text-sm text-slate-600 mt-1">
                           {card.card_type === 'yellow' && '🟨 ใบเหลือง'}
                           {card.card_type === 'second_yellow' && '🟨🟨 ใบเหลืองที่ 2'}
                           {card.card_type === 'red' && '🟥 ใบแดง'}
-                          {card.minute && ` · นาที ${card.minute}`}
+                          {card.minute !== null && card.minute !== undefined ? ` · นาที ${card.minute}` : ' · ไม่ระบุนาที'}
                           {card.note && ` · ${card.note}`}
                         </p>
                       </div>
                       <button
                         onClick={() => handleDeleteCard(card.id)}
                         disabled={saving}
-                        className="ml-3 px-3 py-1 text-sm bg-red-100 text-red-700 rounded hover:bg-red-200 disabled:opacity-50"
+                        className="w-full sm:w-auto px-3 sm:px-4 py-2 sm:py-1 text-sm bg-red-100 text-red-700 rounded hover:bg-red-200 disabled:opacity-50 font-semibold transition"
                       >
                         ลบ
                       </button>
