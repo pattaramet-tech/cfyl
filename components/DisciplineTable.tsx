@@ -1,6 +1,19 @@
 import type { SuspensionDetails, SuspendedMatchDetail } from '@/lib/suspension-calc';
 import { getSuspensionStatus, getBangkokToday } from '@/lib/suspension-status';
 
+interface CardDetail {
+  id: string;
+  card_type: string;
+  minute?: number | null;
+  note?: string | null;
+  match_id: string;
+  match?: {
+    matchday: string | number;
+    match_date?: string | null;
+    match_time?: string | null;
+  } | null;
+}
+
 interface Suspension {
   player_id: string;
   full_name: string;
@@ -10,6 +23,7 @@ interface Suspension {
   ban_matches: number;
   suspension_reason: string | null;
   suspension_details?: SuspensionDetails | null;
+  card_details?: CardDetail[];
 }
 
 interface DisciplineTableProps {
@@ -21,6 +35,32 @@ function pointColorClass(points: number): string {
   if (points >= 6) return 'bg-orange-500';
   if (points > 0) return 'bg-amber-500';
   return 'bg-slate-300';
+}
+
+function getCardTypeLabel(cardType: string): string {
+  switch (cardType) {
+    case 'yellow':
+      return 'ใบเหลือง';
+    case 'second_yellow':
+      return 'ใบเหลืองที่ 2';
+    case 'red':
+      return 'ใบแดง';
+    default:
+      return cardType;
+  }
+}
+
+function getCardPointsValue(cardType: string): number {
+  switch (cardType) {
+    case 'yellow':
+      return 2;
+    case 'second_yellow':
+      return 4;
+    case 'red':
+      return 6;
+    default:
+      return 0;
+  }
 }
 
 function NextMatchBadge({ match, is_home }: { match: SuspendedMatchDetail; is_home: boolean }) {
@@ -76,6 +116,7 @@ export function DisciplineTable({ records }: DisciplineTableProps) {
         {visible.map((record) => {
           const status = getSuspensionStatus(record, today);
           const suspendedMatches = record.suspension_details?.suspended_matches || [];
+          const cardDetails = record.card_details || [];
           return (
             <div key={record.player_id} className="cfyl-card p-4">
               <div className="flex items-start justify-between gap-3">
@@ -102,8 +143,27 @@ export function DisciplineTable({ records }: DisciplineTableProps) {
                 )}
               </div>
 
+              {record.ban_matches > 0 && cardDetails.length > 0 && (
+                <div className="mt-3 pt-3 border-t border-slate-100 space-y-1.5">
+                  <p className="text-xs font-semibold text-slate-600 mb-1">สาเหตุโทษแบน:</p>
+                  {cardDetails.map((card) => {
+                    const matchdayNum = typeof card.match?.matchday === 'string'
+                      ? card.match.matchday.replace(/\D/g, '')
+                      : card.match?.matchday;
+                    const minuteText = card.minute ? `นาที ${card.minute}` : 'ไม่ระบุนาที';
+                    const pointsValue = getCardPointsValue(card.card_type);
+                    return (
+                      <div key={card.id} className="text-xs text-slate-600">
+                        MD{matchdayNum} · {getCardTypeLabel(card.card_type)} · {minuteText} · +{pointsValue}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
               {suspendedMatches.length > 0 && (
                 <div className="mt-3 pt-3 border-t border-slate-100 space-y-1">
+                  <p className="text-xs font-semibold text-slate-600 mb-1">นัดที่ถูกแบน:</p>
                   {suspendedMatches.map((m) => (
                     <NextMatchBadge key={m.match_id} match={m} is_home={m.is_home} />
                   ))}
@@ -132,10 +192,13 @@ export function DisciplineTable({ records }: DisciplineTableProps) {
             {visible.map((record, index) => {
               const status = getSuspensionStatus(record, today);
               const suspendedMatches = record.suspension_details?.suspended_matches || [];
+              const cardDetails = record.card_details || [];
+              const isEvenRow = index % 2 === 0;
+              const hasCardDetails = record.ban_matches > 0 && cardDetails.length > 0;
               return (
                 <tr
                   key={record.player_id}
-                  className={`transition hover:bg-slate-50 ${index % 2 === 0 ? 'bg-white' : 'bg-slate-50/50'}`}
+                  className={`transition hover:bg-slate-50 ${isEvenRow ? 'bg-white' : 'bg-slate-50/50'}`}
                 >
                   <td className="px-3 py-3 font-semibold text-slate-800">{record.full_name}</td>
                   <td className="px-3 py-3 text-slate-600 text-xs">{record.team_name}</td>
@@ -155,17 +218,36 @@ export function DisciplineTable({ records }: DisciplineTableProps) {
                     )}
                   </td>
                   <td className="px-3 py-3">
-                    {suspendedMatches.length > 0 ? (
-                      <div className="space-y-0.5">
-                        {suspendedMatches.map((m) => (
-                          <NextMatchBadge key={m.match_id} match={m} is_home={m.is_home} />
-                        ))}
-                      </div>
-                    ) : record.ban_matches > 0 ? (
-                      <span className="text-xs text-slate-400 italic">ไม่พบโปรแกรมแข่งขันนัดถัดไป</span>
-                    ) : (
-                      <span className="text-slate-300">—</span>
-                    )}
+                    <div className="space-y-1.5">
+                      {hasCardDetails && (
+                        <div className="mb-2 pb-2 border-b border-slate-200">
+                          <p className="text-xs font-semibold text-slate-600 mb-1">สาเหตุโทษแบน:</p>
+                          {cardDetails.map((card) => {
+                            const matchdayNum = typeof card.match?.matchday === 'string'
+                              ? card.match.matchday.replace(/\D/g, '')
+                              : card.match?.matchday;
+                            const minuteText = card.minute ? `นาที ${card.minute}` : 'ไม่ระบุ';
+                            const pointsValue = getCardPointsValue(card.card_type);
+                            return (
+                              <div key={card.id} className="text-xs text-slate-600">
+                                MD{matchdayNum} · {getCardTypeLabel(card.card_type)} · {minuteText} · +{pointsValue}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                      {suspendedMatches.length > 0 ? (
+                        <div className="space-y-0.5">
+                          {suspendedMatches.map((m) => (
+                            <NextMatchBadge key={m.match_id} match={m} is_home={m.is_home} />
+                          ))}
+                        </div>
+                      ) : record.ban_matches > 0 ? (
+                        <span className="text-xs text-slate-400 italic">ไม่พบโปรแกรมแข่งขันนัดถัดไป</span>
+                      ) : (
+                        <span className="text-slate-300">—</span>
+                      )}
+                    </div>
                   </td>
                   <td className="px-3 py-3 text-center">
                     <span className={`cfyl-badge ${status.color}`}>

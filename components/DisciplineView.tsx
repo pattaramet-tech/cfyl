@@ -5,14 +5,60 @@ import { DisciplineTable } from '@/components/DisciplineTable';
 import { PublicSeasonNav } from '@/components/PublicSeasonNav';
 import { usePublicNav } from '@/lib/use-public-nav';
 import { buildDisciplinePath } from '@/lib/public-slugs';
+import type { SuspensionDetails } from '@/lib/suspension-calc';
 
 interface DisciplineViewProps {
   seasonId: string;
   ageGroupId: string;
 }
 
+interface ApiSuspensionRecord {
+  player_id: string;
+  player?: { full_name?: string; shirt_no?: number };
+  team?: { name?: string };
+  total_points: number;
+  ban_matches: number;
+  point_sources?: unknown[];
+  suspension_reason?: string | null;
+  suspension_details?: SuspensionDetails | null;
+  card_details?: Array<{
+    id: string;
+    card_type: string;
+    minute?: number | null;
+    note?: string | null;
+    match_id: string;
+    match?: {
+      matchday: string | number;
+      match_date?: string | null;
+      match_time?: string | null;
+    } | null;
+  }>;
+}
+
 export function DisciplineView({ seasonId, ageGroupId }: DisciplineViewProps) {
-  const [records, setRecords] = useState<any[]>([]);
+  const [records, setRecords] = useState<Array<{
+    player_id: string;
+    full_name: string;
+    team_name: string;
+    shirt_no?: number;
+    total_points: number;
+    ban_matches: number;
+    point_sources: unknown[];
+    suspension_reason: string | null;
+    suspension_details: SuspensionDetails | null;
+    card_details: Array<{
+      id: string;
+      card_type: string;
+      minute?: number | null;
+      note?: string | null;
+      match_id: string;
+      match?: {
+        matchday: string | number;
+        match_date?: string | null;
+        match_time?: string | null;
+      } | null;
+    }>;
+  }>([]);
   const [loading, setLoading] = useState(true);
 
   const { seasons, ageGroups, seg, code, onSeasonChange, onAgeChange } = usePublicNav(
@@ -26,7 +72,7 @@ export function DisciplineView({ seasonId, ageGroupId }: DisciplineViewProps) {
     setLoading(true);
     fetch(`/api/public/suspensions?seasonId=${seasonId}&ageGroupId=${ageGroupId}`)
       .then((r) => (r.ok ? r.json() : []))
-      .then((data: any[]) => {
+      .then((data: ApiSuspensionRecord[]) => {
         if (!active) return;
         setRecords(
           (data || []).map((s) => ({
@@ -39,6 +85,7 @@ export function DisciplineView({ seasonId, ageGroupId }: DisciplineViewProps) {
             point_sources: s.point_sources || [],
             suspension_reason: s.suspension_reason,
             suspension_details: s.suspension_details || null,
+            card_details: s.card_details || [],
           }))
         );
       })

@@ -5,16 +5,11 @@ import { MatchCard } from '@/components/MatchCard';
 import { PublicSeasonNav } from '@/components/PublicSeasonNav';
 import { usePublicNav } from '@/lib/use-public-nav';
 import { buildFixturesPath, matchdayNumber } from '@/lib/public-slugs';
+import { getBangkokToday } from '@/lib/suspension-status';
 import type { Match } from '@/types/db';
 
 function getDateKey(match: Match): string {
   return match.match_date?.slice(0, 10) || '';
-}
-
-function isToday(match: Match): boolean {
-  const dateKey = getDateKey(match);
-  const today = new Date().toISOString().slice(0, 10);
-  return dateKey === today;
 }
 
 function isFinished(match: Match): boolean {
@@ -26,7 +21,7 @@ function isInactive(match: Match): boolean {
 }
 
 function getHighlightDateKey(matches: Match[]): string {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = getBangkokToday();
   if (matches.some((m) => getDateKey(m) === today)) {
     return today;
   }
@@ -79,7 +74,10 @@ export function FixturesView({ seasonId, ageGroupId, matchdayCode }: FixturesVie
     : matches;
 
   const groupedMatches = useMemo(() => {
+    const today = getBangkokToday();
     const highlightDateKey = getHighlightDateKey(filtered);
+    const isTodayHighlight = highlightDateKey === today;
+
     const highlight = filtered.filter(
       (m) => getDateKey(m) === highlightDateKey && !isFinished(m) && !isInactive(m)
     );
@@ -88,7 +86,7 @@ export function FixturesView({ seasonId, ageGroupId, matchdayCode }: FixturesVie
     );
     const finished = filtered.filter((m) => isFinished(m));
     const inactive = filtered.filter((m) => isInactive(m));
-    return { highlight, future, finished, inactive, highlightDateKey };
+    return { highlight, future, finished, inactive, highlightDateKey, isTodayHighlight, today };
   }, [filtered]);
 
   const canNav = !!seg && !!code;
@@ -144,12 +142,20 @@ export function FixturesView({ seasonId, ageGroupId, matchdayCode }: FixturesVie
             {groupedMatches.highlight.length > 0 && (
               <div className="cfyl-section border-l-4 border-blue-600 bg-linear-to-r from-blue-50 to-transparent">
                 <h3 className="cfyl-section-title mb-3">
-                  {isToday(groupedMatches.highlight[0]) ? '🔥 โปรแกรมวันนี้' : '⏰ โปรแกรมที่กำลังจะมาถึง'}
+                  {groupedMatches.isTodayHighlight ? '🔥 โปรแกรมวันนี้' : '⏰ โปรแกรมที่กำลังจะมาถึง'}
                 </h3>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
-                  {groupedMatches.highlight.map((match) => (
-                    <MatchCard key={match.id} match={match} variant="highlight" />
-                  ))}
+                  {groupedMatches.highlight.map((match) => {
+                    const badgeText = groupedMatches.isTodayHighlight ? '🔥 โปรแกรมวันนี้' : '⏰ โปรแกรมที่กำลังจะมาถึง';
+                    return (
+                      <MatchCard
+                        key={match.id}
+                        match={match}
+                        variant="highlight"
+                        badgeText={badgeText}
+                      />
+                    );
+                  })}
                 </div>
               </div>
             )}

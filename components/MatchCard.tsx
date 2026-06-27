@@ -7,6 +7,7 @@ interface MatchCardProps {
     division?: { name: string };
   };
   variant?: 'highlight' | 'future' | 'finished' | 'inactive';
+  badgeText?: string;
 }
 
 function formatDate(dateStr?: string | null): string {
@@ -16,7 +17,7 @@ function formatDate(dateStr?: string | null): string {
   return d.toLocaleDateString('th-TH', { day: 'numeric', month: 'short' });
 }
 
-export function MatchCard({ match, variant = 'future' }: MatchCardProps) {
+export function MatchCard({ match, variant = 'future', badgeText }: MatchCardProps) {
   const isFinished = match.status === 'finished';
   const homeTeam = match.home_team?.name || match.home_team?.short_name || 'ทีมเหย้า';
   const awayTeam = match.away_team?.name || match.away_team?.short_name || 'ทีมเยือน';
@@ -37,7 +38,7 @@ export function MatchCard({ match, variant = 'future' }: MatchCardProps) {
     return 'bg-blue-50 text-blue-700';
   };
 
-  const getBadgeText = () => {
+  const getDefaultBadgeText = () => {
     if (variant === 'inactive') {
       return match.status === 'postponed' ? '⚠️ เลื่อนการแข่งขัน' : '✕ ยกเลิก';
     }
@@ -85,7 +86,7 @@ export function MatchCard({ match, variant = 'future' }: MatchCardProps) {
 
       {/* Status */}
       <div className="mt-3 flex justify-center">
-        <span className={`cfyl-badge ${getBadgeClass()}`}>{getBadgeText()}</span>
+        <span className={`cfyl-badge ${getBadgeClass()}`}>{badgeText || getDefaultBadgeText()}</span>
       </div>
     </div>
   );

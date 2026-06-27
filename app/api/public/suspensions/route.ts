@@ -68,7 +68,39 @@ export async function GET(request: NextRequest) {
 
     console.log('[SUSPENSIONS_GET] Fetched', suspensions?.length || 0, 'suspensions');
 
-    return NextResponse.json(suspensions || [], { status: 200 });
+    // Enrich suspensions with card details for display
+    const enriched = await Promise.all(
+      (suspensions || []).map(async (suspension) => {
+        // Only fetch card details if player has cards to display
+        if (!suspension.player_id || !suspension.season_id) {
+          return suspension;
+        }
+
+        const { data: cards, error: cardsError } = await supabaseAnon
+          .from('cards')
+          .select(
+            'id, card_type, minute, note, match_id, match:match_id(matchday, match_date, match_time)'
+          )
+          .eq('player_id', suspension.player_id)
+          .order('match_id', { ascending: true });
+
+        if (cardsError) {
+          console.warn(
+            '[SUSPENSIONS_GET] Failed to fetch cards for player',
+            suspension.player_id,
+            cardsError
+          );
+          return suspension;
+        }
+
+        return {
+          ...suspension,
+          card_details: cards || [],
+        };
+      })
+    );
+
+    return NextResponse.json(enriched, { status: 200 });
   } catch (error) {
     const errorMsg = error instanceof Error ? error.message : String(error);
     console.error('[SUSPENSIONS_GET] Error:', errorMsg);
