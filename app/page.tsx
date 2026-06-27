@@ -152,7 +152,7 @@ export default function Home() {
             <h3 className="cfyl-section-title mb-4">📊 ตารางคะแนน Top 4</h3>
             {standings.length > 0 ? (
               <>
-                <StandingsTable standings={standings} />
+                <StandingsTable standings={standings} showProvinceRep={false} />
                 <a href="/standings" className="block text-center text-blue-800 hover:text-blue-900 font-semibold mt-4">
                   ดูตารางคะแนนทั้งหมด →
                 </a>

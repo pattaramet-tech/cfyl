@@ -12,7 +12,7 @@ const CHAMPIONS_COUNT = 4; // top 4 → Champions League (blue)
 const RELEGATION_COUNT = 2; // bottom 2 → relegation (red)
 const PROVINCE_REP_RANK = 1; // rank 1 → ตัวแทนจังหวัด
 
-export function StandingsTable({ standings, showProvinceRep = true }: StandingsTableProps) {
+export function StandingsTable({ standings, showProvinceRep = false }: StandingsTableProps) {
   if (standings.length === 0) {
     return <div className="cfyl-empty">ไม่มีข้อมูลตารางคะแนน</div>;
   }

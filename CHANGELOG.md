@@ -2,6 +2,32 @@
 
 All notable changes to CFYL Youth League system are documented here.
 
+## [Phase 5B.2: Public tournament pages + bracket display] - 2026-06-22 ✅ COMPLETE
+
+### Public-facing tournament pages (overview / groups / fixtures / bracket)
+
+No migration (read-only over existing tables; RLS public-read already in 5A/5B.1).
+
+- Clean URLs (slug-or-year): `/tournaments`,
+  `/tournaments/[seasonSlug]/[ageGroupCode]` (overview) + `/groups` `/fixtures` `/bracket`
+- Public APIs (anon): `GET /api/public/tournaments` (tournament/mixed seasons + age
+  groups) and `.../[slug]/[age]/{overview,groups,fixtures,bracket}` — resolve via
+  `lib/public-tournament.ts` (slug-or-year + group standings via `calculateStandings`)
+- Pages (client, mobile-first, `.cfyl-*` styling):
+  - Overview: counts (teams/groups/matches/finished) + recent / upcoming
+  - Groups: per-group standings P/W/D/L/GD/PTS (0-0 safe; top-2 highlight)
+  - Fixtures: filter All / each Group / Knockout; group + knockout cards
+  - Bracket: cards per round (mobile) / columns (desktop) with TBD / source labels,
+    score, 🏆 winner badge
+- `TournamentSubNav` (ภาพรวม | กลุ่ม | โปรแกรม | สายแข่งขัน) + season/age selector
+  filtered to tournament/mixed
+- Public navbar: added "ทัวร์นาเมนต์" → /tournaments
+- empty / loading / not-found states on every page
+
+No change to /standings, /fixtures, /top-scorers, /discipline, clean URLs,
+admin tournament pages, matches/goals/cards/suspensions, backup, or Discord.
+- npm run build: ✅ PASSED
+
 ## [Hotfix: Province-rep badge only for U17 Division 1] - 2026-06-22 ✅ COMPLETE
 
 Public /standings showed the 🏆 "ตัวแทนจังหวัด" badge in every top division

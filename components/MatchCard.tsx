@@ -6,6 +6,7 @@ interface MatchCardProps {
     away_team?: { name: string; short_name?: string; logo_url?: string };
     division?: { name: string };
   };
+  variant?: 'highlight' | 'future' | 'finished' | 'inactive';
 }
 
 function formatDate(dateStr?: string | null): string {
@@ -15,14 +16,38 @@ function formatDate(dateStr?: string | null): string {
   return d.toLocaleDateString('th-TH', { day: 'numeric', month: 'short' });
 }
 
-export function MatchCard({ match }: MatchCardProps) {
+export function MatchCard({ match, variant = 'future' }: MatchCardProps) {
   const isFinished = match.status === 'finished';
   const homeTeam = match.home_team?.name || match.home_team?.short_name || 'ทีมเหย้า';
   const awayTeam = match.away_team?.name || match.away_team?.short_name || 'ทีมเยือน';
   const date = formatDate(match.match_date);
 
+  const cardClass = variant === 'highlight'
+    ? 'border-l-4 border-blue-600 bg-blue-50/30'
+    : variant === 'finished'
+    ? 'opacity-75'
+    : variant === 'inactive'
+    ? 'border border-amber-200 bg-amber-50/30'
+    : '';
+
+  const getBadgeClass = () => {
+    if (variant === 'highlight') return 'bg-blue-100 text-blue-700';
+    if (variant === 'finished') return 'bg-slate-100 text-slate-600';
+    if (variant === 'inactive') return 'bg-amber-100 text-amber-700';
+    return 'bg-blue-50 text-blue-700';
+  };
+
+  const getBadgeText = () => {
+    if (variant === 'inactive') {
+      return match.status === 'postponed' ? '⚠️ เลื่อนการแข่งขัน' : '✕ ยกเลิก';
+    }
+    if (variant === 'finished') return '✓ แข่งจบแล้ว';
+    if (variant === 'highlight') return isFinished ? '✓ แข่งจบแล้ว' : '🔥 โปรแกรมวันนี้';
+    return '⏰ ยังไม่แข่ง';
+  };
+
   return (
-    <div className="cfyl-card p-4 hover:shadow-md transition">
+    <div className={`cfyl-card p-4 hover:shadow-md transition ${cardClass}`}>
       {/* Meta row */}
       <div className="flex items-center justify-between gap-2 mb-3 text-xs">
         <div className="flex items-center gap-2 text-slate-500 min-w-0">
@@ -60,13 +85,7 @@ export function MatchCard({ match }: MatchCardProps) {
 
       {/* Status */}
       <div className="mt-3 flex justify-center">
-        <span
-          className={`cfyl-badge ${
-            isFinished ? 'bg-slate-100 text-slate-600' : 'bg-blue-50 text-blue-700'
-          }`}
-        >
-          {isFinished ? '✓ แข่งจบแล้ว' : '⏰ ยังไม่แข่ง'}
-        </span>
+        <span className={`cfyl-badge ${getBadgeClass()}`}>{getBadgeText()}</span>
       </div>
     </div>
   );

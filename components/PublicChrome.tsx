@@ -17,6 +17,7 @@ const NAV_LINKS = [
   { href: '/standings', label: 'ตารางคะแนน' },
   { href: '/top-scorers', label: 'ดาวซัลโว' },
   { href: '/discipline', label: 'ระเบียบวินัย' },
+  { href: '/tournaments', label: 'ทัวร์นาเมนต์' },
 ];
 
 function isActive(pathname: string, href: string): boolean {

@@ -1,7 +1,7 @@
 # 📊 PROJECT_STATUS.md
 
 **Last Updated**: 2026-06-22 (Phase 5 Tournament Mode in progress)  
-**Current Phase**: 🏆 **Phase 5 — Tournament Mode** (5A + 5A.1–5A.5 + 5B.1 COMPLETE: foundation, season slug, flexible age codes, division-optional, fixtures manual/import, bulk import, knockout bracket + advancement; 5B.2 public tournament pages next)  
+**Current Phase**: 🏆 **Phase 5 — Tournament Mode COMPLETE** (5A + 5A.1–5A.5 + 5B.1 + 5B.2: foundation, season slug, flexible age codes, division-optional, fixtures manual/import, bulk import, knockout bracket + advancement, public tournament pages)  
 **Stable Tag**: `v0.3-admin-complete` (Phase 3 baseline)
 
 > ### 🏁 Phase 3 Closeout (2026-06-21)
@@ -251,6 +251,14 @@
 - [x] 0 / GD 0 / PTS 0 render correctly; Detailed/Compact unchanged
 - [x] Client-side only — no API change; `/standings` public unaffected
 - [x] npm run build: ✅ PASSED
+
+### Phase 5B.2: Public tournament pages + bracket display ✅ COMPLETE (2026-06-22)
+- [x] No migration (read-only; RLS public-read from 5A/5B.1)
+- [x] Clean URLs /tournaments + /[slug]/[age]/{,groups,fixtures,bracket} (slug-or-year)
+- [x] Public APIs: /api/public/tournaments + /[slug]/[age]/{overview,groups,fixtures,bracket}; lib/public-tournament (resolve + group standings via calculateStandings)
+- [x] Pages mobile-first (.cfyl-*): overview counts+recent/upcoming, group standings (0-0 safe), fixtures filter (all/group/knockout), bracket cards + winner badge + TBD labels
+- [x] TournamentSubNav + season/age selector (tournament/mixed); navbar "ทัวร์นาเมนต์"; empty/loading/notfound states; build ✅
+- [x] No change to league public/admin/backup/discord/clean-URL
 
 ### Phase 5B.1: Knockout bracket + advancement (admin) ✅ COMPLETE (2026-06-22)
 - [x] ⚠️ Migration pending: `scripts/migration-phase5b1-knockout-bracket.sql` (knockout_rounds, bracket_matches, matches.winner_team_id)

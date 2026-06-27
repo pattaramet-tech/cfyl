@@ -7,6 +7,35 @@ import { usePublicNav } from '@/lib/use-public-nav';
 import { buildFixturesPath, matchdayNumber } from '@/lib/public-slugs';
 import type { Match } from '@/types/db';
 
+function getDateKey(match: Match): string {
+  return match.match_date?.slice(0, 10) || '';
+}
+
+function isToday(match: Match): boolean {
+  const dateKey = getDateKey(match);
+  const today = new Date().toISOString().slice(0, 10);
+  return dateKey === today;
+}
+
+function isFinished(match: Match): boolean {
+  return match.status === 'finished';
+}
+
+function isInactive(match: Match): boolean {
+  return match.status === 'postponed' || match.status === 'cancelled';
+}
+
+function getHighlightDateKey(matches: Match[]): string {
+  const today = new Date().toISOString().slice(0, 10);
+  if (matches.some((m) => getDateKey(m) === today)) {
+    return today;
+  }
+  const futureMatches = matches
+    .filter((m) => !isFinished(m) && !isInactive(m))
+    .sort((a, b) => (getDateKey(a) || '').localeCompare(getDateKey(b) || ''));
+  return futureMatches[0] ? getDateKey(futureMatches[0]) : '';
+}
+
 interface FixturesViewProps {
   seasonId: string;
   ageGroupId: string;
@@ -49,6 +78,19 @@ export function FixturesView({ seasonId, ageGroupId, matchdayCode }: FixturesVie
     ? matches.filter((m) => matchdayNumber(m.matchday) === selectedMd)
     : matches;
 
+  const groupedMatches = useMemo(() => {
+    const highlightDateKey = getHighlightDateKey(filtered);
+    const highlight = filtered.filter(
+      (m) => getDateKey(m) === highlightDateKey && !isFinished(m) && !isInactive(m)
+    );
+    const future = filtered.filter(
+      (m) => getDateKey(m) !== highlightDateKey && !isFinished(m) && !isInactive(m)
+    );
+    const finished = filtered.filter((m) => isFinished(m));
+    const inactive = filtered.filter((m) => isInactive(m));
+    return { highlight, future, finished, inactive, highlightDateKey };
+  }, [filtered]);
+
   const canNav = !!seg && !!code;
   const goAll = () => canNav && router.push(buildFixturesPath(seg!, code!));
   const goMd = (n: number) => canNav && router.push(buildFixturesPath(seg!, code!, `md${n}`));
@@ -89,20 +131,66 @@ export function FixturesView({ seasonId, ageGroupId, matchdayCode }: FixturesVie
         )}
       </PublicSeasonNav>
 
-      <div className="cfyl-section">
+      <div className="space-y-6">
         {loading ? (
-          <div className="cfyl-loading">
-            <span className="cfyl-spinner w-5 h-5" />
-            กำลังโหลดข้อมูล...
+          <div className="cfyl-section">
+            <div className="cfyl-loading">
+              <span className="cfyl-spinner w-5 h-5" />
+              กำลังโหลดข้อมูล...
+            </div>
           </div>
         ) : filtered.length > 0 ? (
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
-            {filtered.map((match) => (
-              <MatchCard key={match.id} match={match} />
-            ))}
-          </div>
+          <>
+            {groupedMatches.highlight.length > 0 && (
+              <div className="cfyl-section border-l-4 border-blue-600 bg-linear-to-r from-blue-50 to-transparent">
+                <h3 className="cfyl-section-title mb-3">
+                  {isToday(groupedMatches.highlight[0]) ? '🔥 โปรแกรมวันนี้' : '⏰ โปรแกรมที่กำลังจะมาถึง'}
+                </h3>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
+                  {groupedMatches.highlight.map((match) => (
+                    <MatchCard key={match.id} match={match} variant="highlight" />
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {groupedMatches.future.length > 0 && (
+              <div className="cfyl-section">
+                <h3 className="cfyl-section-title mb-3">📅 โปรแกรมถัดไป</h3>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
+                  {groupedMatches.future.map((match) => (
+                    <MatchCard key={match.id} match={match} variant="future" />
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {groupedMatches.finished.length > 0 && (
+              <div className="cfyl-section">
+                <h3 className="cfyl-section-title mb-3">✅ แข่งจบแล้ว</h3>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
+                  {groupedMatches.finished.map((match) => (
+                    <MatchCard key={match.id} match={match} variant="finished" />
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {groupedMatches.inactive.length > 0 && (
+              <div className="cfyl-section">
+                <h3 className="cfyl-section-title mb-3">⚠️ เลื่อน/ยกเลิก</h3>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
+                  {groupedMatches.inactive.map((match) => (
+                    <MatchCard key={match.id} match={match} variant="inactive" />
+                  ))}
+                </div>
+              </div>
+            )}
+          </>
         ) : (
-          <p className="cfyl-empty">ไม่พบข้อมูลแมตช์</p>
+          <div className="cfyl-section">
+            <p className="cfyl-empty">ไม่พบข้อมูลแมตช์</p>
+          </div>
         )}
       </div>
     </div>
