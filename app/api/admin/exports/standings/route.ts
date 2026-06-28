@@ -42,11 +42,30 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: 'Season not found' }, { status: 404 });
   }
 
-  // Fetch age groups sorted by sort_order then code
+  // Fetch divisions for this season to get unique age_group_ids
+  const { data: allDivisions, error: divError } = await supabaseAdmin
+    .from('divisions')
+    .select('id, age_group_id')
+    .eq('season_id', seasonId);
+
+  if (divError) {
+    return NextResponse.json({ error: 'Failed to fetch divisions' }, { status: 500 });
+  }
+
+  if (!allDivisions?.length) {
+    return NextResponse.json({ season, groups: [] });
+  }
+
+  // Get unique age_group_ids from divisions
+  const uniqueAgeGroupIds = Array.from(
+    new Set(allDivisions.map((d) => d.age_group_id))
+  );
+
+  // Fetch age groups by those IDs, sorted by sort_order then code
   const { data: ageGroups, error: agError } = await supabaseAdmin
     .from('age_groups')
     .select('id, code, name, sort_order')
-    .eq('season_id', seasonId)
+    .in('id', uniqueAgeGroupIds)
     .order('sort_order', { ascending: true })
     .order('code', { ascending: true });
 
