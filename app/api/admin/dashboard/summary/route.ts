@@ -92,6 +92,7 @@ export async function GET(request: NextRequest) {
   let matchdays: any[] = [];
   const topScorers: { U14: any[]; U17: any[] } = { U14: [], U17: [] };
   let activeSuspensions: any[] = [];
+  let matchScoreGoals = 0;
 
   if (season) {
     const seasonId = season.id;
@@ -128,6 +129,19 @@ export async function GET(request: NextRequest) {
       )
       .eq('season_id', seasonId);
     const matches = matchesRaw || [];
+
+    // Calculate goals from match scores (not from goals table)
+    const matchScoreGoals = matches
+      .filter(
+        (m) =>
+          m.status === 'finished' &&
+          m.home_score !== null &&
+          m.away_score !== null
+      )
+      .reduce(
+        (sum, m) => sum + Number(m.home_score || 0) + Number(m.away_score || 0),
+        0
+      );
 
     const byDateDesc = (a: any, b: any) =>
       String(b.match_date || '').localeCompare(String(a.match_date || '')) ||
@@ -259,6 +273,18 @@ export async function GET(request: NextRequest) {
       });
   }
 
+  // Calculate goals from match scores (for season without active season, or fallback)
+  let matchScoreGoalsOverall = 0;
+  if (!season) {
+    const { data: allMatchesRaw } = await supabaseAdmin
+      .from('matches')
+      .select('status, home_score, away_score');
+    const allMatches = allMatchesRaw || [];
+    matchScoreGoalsOverall = allMatches
+      .filter((m) => m.status === 'finished' && m.home_score !== null && m.away_score !== null)
+      .reduce((sum, m) => sum + Number(m.home_score || 0) + Number(m.away_score || 0), 0);
+  }
+
   const response: any = {
     season: seasonBlock,
     activeSeasonCount,
@@ -268,7 +294,7 @@ export async function GET(request: NextRequest) {
       matches: matchesTotal,
       finishedMatches,
       pendingMatches: matchesTotal - finishedMatches,
-      goals: goalsTotal,
+      goals: season ? matchScoreGoals : matchScoreGoalsOverall,
       cards: cardsTotal,
       activeSuspensions: activeSuspensions.length,
     },
@@ -279,17 +305,25 @@ export async function GET(request: NextRequest) {
     activeSuspensions,
   };
 
-  if (debug && matchdays.length > 0) {
-    response.debug = {
-      matchdays: matchdays.map((md) => ({
+  if (debug) {
+    const debugObj: any = {};
+    if (matchdays.length > 0) {
+      debugObj.matchdays = matchdays.map((md) => ({
         matchday: md.matchday,
         total: md.total,
         finished: md.finished,
         pending: md.pending,
         goalsFromScore: md.goals,
         cardsCount: md.cards,
-      })),
-    };
+      }));
+    }
+    if (season) {
+      debugObj.goals = {
+        goalsFromScore: matchScoreGoals,
+        goalsFromGoalRows: goalsTotal,
+      };
+    }
+    response.debug = debugObj;
   }
 
   return NextResponse.json(response);
