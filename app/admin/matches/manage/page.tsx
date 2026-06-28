@@ -267,7 +267,6 @@ export default function MatchManagePage() {
     setSelectedMatch(match);
     setSelectedMatchId(match.id);
     setIsEditingFinishedMatch(false);
-    loadMatchDataCallback(match);
   };
 
   const handleSaveScore = async () => {
@@ -552,14 +551,14 @@ export default function MatchManagePage() {
 
           {/* Division */}
           <div>
-            <label className="block text-sm font-semibold text-gray-700 mb-2">สัญชาติ</label>
+            <label className="block text-sm font-semibold text-gray-700 mb-2">ดิวิชั่น</label>
             <select
               value={divisionId}
               onChange={(e) => setDivisionId(e.target.value)}
               disabled={!ageGroupId}
               className="w-full px-3 sm:px-4 py-2.5 sm:py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-600 disabled:bg-gray-100 text-sm sm:text-base"
             >
-              <option value="">-- เลือกสัญชาติ --</option>
+              <option value="">-- เลือกดิวิชั่น --</option>
               {divisions.map((d) => (
                 <option key={d.id} value={d.id}>
                   {d.name}
@@ -603,7 +602,7 @@ export default function MatchManagePage() {
           </div>
         ) : (
           <div className="text-center py-6 sm:py-8">
-            <p className="text-gray-500 text-sm">ไม่พบแมตช์ กรุณาเลือกสัญชาติ</p>
+            <p className="text-gray-500 text-sm">ไม่พบแมตช์ กรุณาเลือกดิวิชั่น</p>
           </div>
         )}
       </div>
@@ -750,7 +749,7 @@ export default function MatchManagePage() {
                 {selectedMatch.match_time && ` ${selectedMatch.match_time.substring(0, 5)}`}
               </p>
               <p>
-                <span className="font-semibold">สัญชาติ:</span> {selectedMatch.division?.name || 'ไม่ระบุ'}
+                <span className="font-semibold">ดิวิชั่น:</span> {selectedMatch.division?.name || 'ไม่ระบุ'}
               </p>
               <p>
                 <span className="font-semibold">ทีม:</span> {selectedMatch.home_team?.name || 'ทีมเหย้า'} vs{' '}
@@ -905,7 +904,7 @@ export default function MatchManagePage() {
 
           {/* Cards Manager */}
           <div className="bg-white rounded-lg shadow p-4 sm:p-6">
-            <h2 className="text-lg font-semibold text-gray-800 mb-4">ใบเรียบร้อย</h2>
+            <h2 className="text-lg font-semibold text-gray-800 mb-4">ใบเหลือง/ใบแดง</h2>
 
             {isReadOnlyFinished && (
               <div className="text-center py-8 bg-slate-50 rounded-lg mb-6">
@@ -962,7 +961,7 @@ export default function MatchManagePage() {
                   <input
                     type="number"
                     min="0"
-                    max="120"
+                    max="90"
                     value={cardMinute}
                     onChange={(e) => setCardMinute(e.target.value)}
                     placeholder="ไม่บังคับ"
