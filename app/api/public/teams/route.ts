@@ -22,7 +22,7 @@ export async function GET(request: NextRequest) {
     if (seasonId && ageGroupId) {
       const { data: teams, error } = await supabase
         .from('teams')
-        .select('id, name, short_name, division_id, active')
+        .select('id, name, short_name, logo_url, division_id, active')
         .eq('season_id', seasonId)
         .eq('age_group_id', ageGroupId)
         .order('name', { ascending: true });
