@@ -17,6 +17,7 @@ export const dynamic = 'force-dynamic';
 interface BulkGoalItem {
   playerId: string;
   goals: number;
+  minute?: number | null;
 }
 
 export async function POST(request: NextRequest) {
@@ -58,9 +59,9 @@ export async function POST(request: NextRequest) {
 
     const validTeamIds = new Set([match.home_team_id, match.away_team_id]);
 
-    // Validate items + merge duplicate players
+    // Validate items + merge duplicate players (keep first minute per player)
     const errors: string[] = [];
-    const mergedMap = new Map<string, number>(); // playerId → total goals
+    const mergedMap = new Map<string, { goals: number; minute?: number | null }>(); // playerId → {goals, minute}
 
     for (let i = 0; i < items.length; i++) {
       const item = items[i];
@@ -76,8 +77,21 @@ export async function POST(request: NextRequest) {
         continue;
       }
 
-      const current = mergedMap.get(item.playerId) ?? 0;
-      mergedMap.set(item.playerId, current + goals);
+      // Validate minute if provided
+      if (item.minute != null) {
+        const m = Number(item.minute);
+        if (!Number.isInteger(m) || m < 0 || m > 120) {
+          errors.push(`แถวที่ ${i + 1}: นาทีต้องเป็นตัวเลข 0-120`);
+          continue;
+        }
+      }
+
+      const current = mergedMap.get(item.playerId);
+      if (current) {
+        current.goals += goals;
+      } else {
+        mergedMap.set(item.playerId, { goals, minute: item.minute ?? null });
+      }
     }
 
     if (errors.length > 0) {
@@ -117,11 +131,11 @@ export async function POST(request: NextRequest) {
     }
 
     // Build insert records — split goals > 10 into multiple records
-    const inserts: { match_id: string; player_id: string; team_id: string; goals: number }[] = [];
+    const inserts: { match_id: string; player_id: string; team_id: string; goals: number; minute?: number | null }[] = [];
 
-    for (const [playerId, totalGoals] of mergedMap.entries()) {
+    for (const [playerId, data] of mergedMap.entries()) {
       const player = playerMap.get(playerId)!;
-      let remaining = totalGoals;
+      let remaining = data.goals;
 
       while (remaining > 0) {
         const chunk = Math.min(remaining, 10);
@@ -130,6 +144,7 @@ export async function POST(request: NextRequest) {
           player_id: playerId,
           team_id: player.team_id,
           goals: chunk,
+          minute: data.minute,
         });
         remaining -= chunk;
       }
@@ -141,7 +156,7 @@ export async function POST(request: NextRequest) {
       .from('goals')
       .insert(inserts)
       .select(`
-        id, match_id, player_id, team_id, goals,
+        id, match_id, player_id, team_id, goals, minute,
         player:player_id(id, full_name, shirt_no),
         team:team_id(id, name, short_name)
       `);
@@ -152,10 +167,10 @@ export async function POST(request: NextRequest) {
     }
 
     const mergedPlayers = Array.from(mergedMap.entries())
-      .filter(([, total]) => total > 10)
-      .map(([pid, total]) => {
+      .filter(([, data]) => data.goals > 10)
+      .map(([pid, data]) => {
         const p = playerMap.get(pid);
-        return `${p?.full_name} (${total} ประตู แบ่งเป็น ${Math.ceil(total / 10)} record)`;
+        return `${p?.full_name} (${data.goals} ประตู แบ่งเป็น ${Math.ceil(data.goals / 10)} record)`;
       });
 
     console.log(`[GOALS_BULK_POST] Created ${created?.length} records`);

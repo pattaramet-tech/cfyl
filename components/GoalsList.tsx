@@ -10,6 +10,7 @@ interface Goal {
   player_id: string;
   team_id: string;
   goals: number;
+  minute?: number | null;
   created_at: string;
   updated_at: string;
   player?: {
@@ -88,13 +89,14 @@ export function GoalsList({
     (acc, goal) => {
       const key = goal.player_id;
       if (!acc[key]) {
-        acc[key] = { ...goal, totalGoals: 0, count: 0 };
+        acc[key] = { ...goal, totalGoals: 0, count: 0, minutes: [] as (number | null)[] };
       }
       acc[key].totalGoals += goal.goals;
       acc[key].count += 1;
+      acc[key].minutes.push(goal.minute ?? null);
       return acc;
     },
-    {} as Record<string, Goal & { totalGoals: number; count: number }>
+    {} as Record<string, Goal & { totalGoals: number; count: number; minutes: (number | null)[] }>
   );
 
   const aggregatedGoals = Object.values(goalsByPlayer).sort(
@@ -134,6 +136,9 @@ export function GoalsList({
                   Goals
                 </th>
                 <th className="px-6 py-3 text-center text-sm font-semibold text-gray-700">
+                  นาที
+                </th>
+                <th className="px-6 py-3 text-center text-sm font-semibold text-gray-700">
                   Entries
                 </th>
                 <th className="px-6 py-3 text-center text-sm font-semibold text-gray-700">
@@ -157,6 +162,13 @@ export function GoalsList({
                     <span className="inline-block px-3 py-1 bg-blue-100 text-blue-800 rounded-full font-bold">
                       {goal.totalGoals}
                     </span>
+                  </td>
+                  <td className="px-6 py-4 text-center text-sm text-gray-600">
+                    {goal.minutes.length > 0
+                      ? goal.minutes
+                          .map((m) => (m != null ? `${m}'` : '—'))
+                          .join(', ')
+                      : '—'}
                   </td>
                   <td className="px-6 py-4 text-center text-sm text-gray-600">
                     {goal.count}
@@ -225,6 +237,7 @@ export function GoalsList({
               isEditing={true}
               goalId={editingId}
               initialGoals={goals.find((g) => g.id === editingId)?.goals || 1}
+              initialMinute={goals.find((g) => g.id === editingId)?.minute ?? null}
               onSuccess={() => {
                 setEditingId(null);
                 if (onGoalsChange) onGoalsChange();

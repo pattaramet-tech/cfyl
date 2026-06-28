@@ -12,6 +12,7 @@ interface GoalFormProps {
   goalId?: string;
   initialPlayerId?: string;
   initialGoals?: number;
+  initialMinute?: number | null;
 }
 
 export function GoalForm({
@@ -23,9 +24,13 @@ export function GoalForm({
   goalId,
   initialPlayerId,
   initialGoals = 1,
+  initialMinute,
 }: GoalFormProps) {
   const [playerId, setPlayerId] = useState(initialPlayerId || '');
   const [goals, setGoals] = useState(initialGoals.toString());
+  const [minute, setMinute] = useState(
+    initialMinute != null ? initialMinute.toString() : ''
+  );
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
@@ -52,6 +57,16 @@ export function GoalForm({
       return;
     }
 
+    // Validate minute
+    const minuteNum = minute.trim() === '' ? null : Number(minute);
+    if (
+      minuteNum !== null &&
+      (!Number.isInteger(minuteNum) || minuteNum < 0 || minuteNum > 120)
+    ) {
+      setError('นาทีต้องเป็นตัวเลข 0-120 หรือเว้นว่าง');
+      return;
+    }
+
     setIsSaving(true);
 
     try {
@@ -73,6 +88,7 @@ export function GoalForm({
           },
           body: JSON.stringify({
             goals: goalsNum,
+            minute: minuteNum,
           }),
         });
 
@@ -95,6 +111,7 @@ export function GoalForm({
             match_id: matchId,
             player_id: playerId,
             goals: goalsNum,
+            minute: minuteNum,
           }),
         });
 
@@ -107,6 +124,7 @@ export function GoalForm({
         // Reset form
         setPlayerId('');
         setGoals('1');
+        setMinute('');
       }
 
       // Call success callback
@@ -166,6 +184,26 @@ export function GoalForm({
           className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-600 disabled:bg-gray-100"
         />
         <p className="text-xs text-gray-500 mt-1">Enter number of goals (1-10)</p>
+      </div>
+
+      {/* Minute input */}
+      <div>
+        <label className="block text-sm font-semibold text-gray-700 mb-1">
+          นาทีที่ทำประตู
+        </label>
+        <input
+          type="number"
+          min="0"
+          max="120"
+          value={minute}
+          onChange={(e) => setMinute(e.target.value)}
+          disabled={isSaving}
+          placeholder="เช่น 12"
+          className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-600 disabled:bg-gray-100"
+        />
+        <p className="text-xs text-gray-500 mt-1">
+          เว้นว่างได้ ถ้าไม่ทราบนาที
+        </p>
       </div>
 
       {/* Submit button */}

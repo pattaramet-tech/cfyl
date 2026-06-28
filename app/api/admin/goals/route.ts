@@ -47,12 +47,14 @@ export async function GET(request: NextRequest) {
         player_id,
         team_id,
         goals,
+        minute,
         created_at,
         updated_at,
         player:player_id(id, full_name, shirt_no),
         team:team_id(id, name, short_name)
       `)
       .eq('match_id', matchId)
+      .order('minute', { ascending: true, nullsFirst: false })
       .order('created_at', { ascending: true });
 
     if (error) {
@@ -98,9 +100,9 @@ export async function POST(request: NextRequest) {
 
     // Parse request body
     const body = await request.json();
-    const { match_id, player_id, goals } = body;
+    const { match_id, player_id, goals, minute } = body;
 
-    console.log('[GOALS_POST] Creating goal:', { match_id, player_id, goals });
+    console.log('[GOALS_POST] Creating goal:', { match_id, player_id, goals, minute });
 
     // Validate inputs
     if (!match_id || !player_id) {
@@ -113,6 +115,22 @@ export async function POST(request: NextRequest) {
     if (goals == null || typeof goals !== 'number' || goals < 1 || goals > 10) {
       return NextResponse.json(
         { error: 'goals must be a number between 1 and 10' },
+        { status: 400 }
+      );
+    }
+
+    // Validate minute
+    const minuteValue =
+      minute === undefined || minute === null || minute === ''
+        ? null
+        : Number(minute);
+
+    if (
+      minuteValue !== null &&
+      (!Number.isInteger(minuteValue) || minuteValue < 0 || minuteValue > 120)
+    ) {
+      return NextResponse.json(
+        { error: 'minute must be an integer between 0 and 120 or empty' },
         { status: 400 }
       );
     }
@@ -165,6 +183,7 @@ export async function POST(request: NextRequest) {
         player_id,
         team_id: player.team_id,
         goals,
+        minute: minuteValue,
       })
       .select(`
         id,
@@ -172,6 +191,7 @@ export async function POST(request: NextRequest) {
         player_id,
         team_id,
         goals,
+        minute,
         created_at,
         updated_at,
         player:player_id(id, full_name, shirt_no),
@@ -194,8 +214,8 @@ export async function POST(request: NextRequest) {
       action: 'goal.create',
       entityType: 'goal',
       entityId: newGoal?.id,
-      entityLabel: `${player.full_name} (${goals})`,
-      newData: { match_id, player_id, team_id: player.team_id, goals },
+      entityLabel: `${player.full_name} (${goals}${minuteValue ? ` @ ${minuteValue}'` : ''})`,
+      newData: { match_id, player_id, team_id: player.team_id, goals, minute: minuteValue },
     });
 
     return NextResponse.json(

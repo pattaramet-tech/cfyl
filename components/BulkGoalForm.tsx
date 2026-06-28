@@ -14,6 +14,7 @@ interface BulkRow {
   rowId: string;
   playerId: string;
   goals: number;
+  minute?: string;
 }
 
 interface BulkGoalFormProps {
@@ -29,7 +30,7 @@ const nextRowId = () => `row-${++rowCounter}`;
 export function BulkGoalForm({ matchId, homeTeamId, awayTeamId, onSuccess }: BulkGoalFormProps) {
   const [players, setPlayers] = useState<Player[]>([]);
   const [playersLoading, setPlayersLoading] = useState(false);
-  const [rows, setRows] = useState<BulkRow[]>([{ rowId: nextRowId(), playerId: '', goals: 1 }]);
+  const [rows, setRows] = useState<BulkRow[]>([{ rowId: nextRowId(), playerId: '', goals: 1, minute: '' }]);
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
@@ -61,14 +62,14 @@ export function BulkGoalForm({ matchId, homeTeamId, awayTeamId, onSuccess }: Bul
   useEffect(() => { loadPlayers(); }, [loadPlayers]);
 
   const addRow = () => {
-    setRows((prev) => [...prev, { rowId: nextRowId(), playerId: '', goals: 1 }]);
+    setRows((prev) => [...prev, { rowId: nextRowId(), playerId: '', goals: 1, minute: '' }]);
   };
 
   const removeRow = (rowId: string) => {
     setRows((prev) => prev.filter((r) => r.rowId !== rowId));
   };
 
-  const updateRow = (rowId: string, field: 'playerId' | 'goals', value: string | number) => {
+  const updateRow = (rowId: string, field: 'playerId' | 'goals' | 'minute', value: string | number) => {
     setRows((prev) =>
       prev.map((r) => (r.rowId === rowId ? { ...r, [field]: value } : r))
     );
@@ -100,12 +101,21 @@ export function BulkGoalForm({ matchId, homeTeamId, awayTeamId, onSuccess }: Bul
       return;
     }
 
-    // Client-side validate individual goals 1-10
+    // Client-side validate individual goals 1-10 and minute 0-120
     for (const row of validRows) {
       const g = Number(row.goals);
       if (isNaN(g) || g < 1 || g > 10) {
         setError('Goals ต้องอยู่ระหว่าง 1–10 ต่อแถว');
         return;
+      }
+
+      // Validate minute if provided
+      if (row.minute && row.minute.trim() !== '') {
+        const m = Number(row.minute);
+        if (isNaN(m) || !Number.isInteger(m) || m < 0 || m > 120) {
+          setError('นาทีต้องเป็นตัวเลข 0-120 ต่อแถว');
+          return;
+        }
       }
     }
 
@@ -120,7 +130,11 @@ export function BulkGoalForm({ matchId, homeTeamId, awayTeamId, onSuccess }: Bul
         },
         body: JSON.stringify({
           matchId,
-          items: validRows.map((r) => ({ playerId: r.playerId, goals: Number(r.goals) })),
+          items: validRows.map((r) => ({
+            playerId: r.playerId,
+            goals: Number(r.goals),
+            minute: r.minute && r.minute.trim() !== '' ? Number(r.minute) : null,
+          })),
         }),
       });
 
@@ -138,7 +152,7 @@ export function BulkGoalForm({ matchId, homeTeamId, awayTeamId, onSuccess }: Bul
       setSuccessMsg(msg);
 
       // Reset rows
-      setRows([{ rowId: nextRowId(), playerId: '', goals: 1 }]);
+      setRows([{ rowId: nextRowId(), playerId: '', goals: 1, minute: '' }]);
 
       if (onSuccess) onSuccess();
     } catch (err) {
@@ -219,6 +233,18 @@ export function BulkGoalForm({ matchId, homeTeamId, awayTeamId, onSuccess }: Bul
                     onChange={(e) => updateRow(row.rowId, 'goals', e.target.value)}
                     disabled={isSaving}
                     className="w-16 px-2 py-1.5 border border-gray-300 rounded text-sm text-center focus:outline-none focus:ring-2 focus:ring-green-400 disabled:bg-gray-100"
+                  />
+
+                  {/* Minute input */}
+                  <input
+                    type="number"
+                    min={0}
+                    max={120}
+                    value={row.minute ?? ''}
+                    onChange={(e) => updateRow(row.rowId, 'minute', e.target.value)}
+                    disabled={isSaving}
+                    placeholder="นาที"
+                    className="w-20 px-2 py-1.5 border border-gray-300 rounded text-sm text-center focus:outline-none focus:ring-2 focus:ring-green-400 disabled:bg-gray-100"
                   />
 
                   {/* Remove */}

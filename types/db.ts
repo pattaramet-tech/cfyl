@@ -123,6 +123,7 @@ export interface Goal {
   player_id: string;
   team_id: string;
   goals: number;
+  minute?: number | null;
   created_at: string;
   updated_at: string;
 }

@@ -40,14 +40,30 @@ export async function PUT(
 
     // Parse request body
     const body = await request.json();
-    const { goals } = body;
+    const { goals, minute } = body;
 
-    console.log('[GOALS_PUT] Updating goal:', { goalId, goals });
+    console.log('[GOALS_PUT] Updating goal:', { goalId, goals, minute });
 
     // Validate goals
     if (goals != null && (typeof goals !== 'number' || goals < 1 || goals > 10)) {
       return NextResponse.json(
         { error: 'goals must be a number between 1 and 10' },
+        { status: 400 }
+      );
+    }
+
+    // Validate minute
+    const minuteValue =
+      minute === undefined || minute === null || minute === ''
+        ? null
+        : Number(minute);
+
+    if (
+      minuteValue !== null &&
+      (!Number.isInteger(minuteValue) || minuteValue < 0 || minuteValue > 120)
+    ) {
+      return NextResponse.json(
+        { error: 'minute must be an integer between 0 and 120 or empty' },
         { status: 400 }
       );
     }
@@ -67,13 +83,18 @@ export async function PUT(
       );
     }
 
+    // Build update payload
+    const updatePayload: Record<string, any> = {
+      updated_at: new Date().toISOString(),
+    };
+
+    if (goals != null) updatePayload.goals = goals;
+    if ('minute' in body) updatePayload.minute = minuteValue;
+
     // Update goal
     const { data: updatedGoal, error: updateError } = await supabaseAdmin
       .from('goals')
-      .update({
-        goals: goals || currentGoal.goals,
-        updated_at: new Date().toISOString(),
-      })
+      .update(updatePayload)
       .eq('id', goalId)
       .select(`
         id,
@@ -81,6 +102,7 @@ export async function PUT(
         player_id,
         team_id,
         goals,
+        minute,
         created_at,
         updated_at,
         player:player_id(id, full_name, shirt_no),
@@ -104,8 +126,8 @@ export async function PUT(
       entityType: 'goal',
       entityId: goalId,
       entityLabel: (updatedGoal as any)?.player?.full_name ?? goalId,
-      oldData: { goals: currentGoal.goals },
-      newData: { goals: updatedGoal?.goals },
+      oldData: { goals: currentGoal.goals, minute: currentGoal.minute },
+      newData: { goals: updatedGoal?.goals, minute: updatedGoal?.minute },
     });
 
     return NextResponse.json(
