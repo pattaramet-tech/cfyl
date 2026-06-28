@@ -50,7 +50,7 @@ export async function GET(request: NextRequest) {
         minute,
         created_at,
         updated_at,
-        player:player_id(id, full_name, shirt_no, team_id),
+        player:player_id(id, full_name, shirt_no, team_id, team:team_id(id, name, short_name)),
         team:team_id(id, name, short_name)
       `)
       .eq('match_id', matchId)
@@ -194,7 +194,7 @@ export async function POST(request: NextRequest) {
         minute,
         created_at,
         updated_at,
-        player:player_id(id, full_name, shirt_no, team_id),
+        player:player_id(id, full_name, shirt_no, team_id, team:team_id(id, name, short_name)),
         team:team_id(id, name, short_name)
       `)
       .single();

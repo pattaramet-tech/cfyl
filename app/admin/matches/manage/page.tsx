@@ -5,8 +5,8 @@ import { GoalsList } from '@/components/GoalsList';
 import type { Match } from '@/types/db';
 
 interface MatchWithTeams extends Match {
-  home_team?: { id: string; name: string };
-  away_team?: { id: string; name: string };
+  home_team?: { id: string; name: string; short_name?: string };
+  away_team?: { id: string; name: string; short_name?: string };
   division?: { name: string };
 }
 
@@ -24,6 +24,11 @@ interface Goal {
     full_name: string;
     shirt_no?: number;
     team_id?: string;
+    team?: {
+      id?: string;
+      name?: string;
+      short_name?: string;
+    } | null;
   };
   team?: {
     id: string;
@@ -515,14 +520,59 @@ export default function MatchManagePage() {
     }
   };
 
-  // Resolve team_id from goal with fallback chain
-  const getGoalTeamId = (goal: Goal): string | null => {
-    if (goal.team_id) return goal.team_id;
-    if (goal.team?.id) return goal.team.id;
-    if (goal.player?.team_id) return goal.player.team_id;
+  // Normalize text for comparison
+  const normalizeText = (value?: string | null): string => {
+    return String(value || '')
+      .trim()
+      .toLowerCase()
+      .replace(/\s+/g, '');
+  };
 
-    const player = players.find((p) => p.id === goal.player_id);
-    return player?.team_id || null;
+  // Resolve team_id from goal with exact match first, then name-based fallback
+  const getGoalTeamId = (goal: Goal): string | null => {
+    // Collect candidate IDs
+    const candidateIds = [
+      goal.team_id,
+      goal.team?.id,
+      goal.player?.team_id,
+      players.find((p) => p.id === goal.player_id)?.team_id,
+    ].filter(Boolean) as string[];
+
+    // Try exact ID match with match teams first
+    for (const id of candidateIds) {
+      if (id === selectedMatch?.home_team_id) return selectedMatch.home_team_id;
+      if (id === selectedMatch?.away_team_id) return selectedMatch.away_team_id;
+    }
+
+    // Fallback by team name/short_name
+    const goalTeamNames = [
+      goal.team?.name,
+      goal.team?.short_name,
+      goal.player?.team?.name,
+      goal.player?.team?.short_name,
+      players.find((p) => p.id === goal.player_id)?.team?.name,
+      players.find((p) => p.id === goal.player_id)?.team?.short_name,
+    ].map(normalizeText).filter(Boolean);
+
+    const homeNames = [
+      selectedMatch?.home_team?.name,
+      selectedMatch?.home_team?.short_name,
+    ].map(normalizeText).filter(Boolean);
+
+    const awayNames = [
+      selectedMatch?.away_team?.name,
+      selectedMatch?.away_team?.short_name,
+    ].map(normalizeText).filter(Boolean);
+
+    if (goalTeamNames.some((name) => homeNames.includes(name))) {
+      return selectedMatch?.home_team_id || null;
+    }
+
+    if (goalTeamNames.some((name) => awayNames.includes(name))) {
+      return selectedMatch?.away_team_id || null;
+    }
+
+    return candidateIds[0] || null;
   };
 
   const calculateGoalConsistency = () => {
@@ -538,6 +588,31 @@ export default function MatchManagePage() {
 
     const homeScoreNum = parseInt(homeScore);
     const awayScoreNum = parseInt(awayScore);
+
+    // Debug logging (development only)
+    if (process.env.NODE_ENV !== 'production') {
+      console.debug('[MATCH_MANAGE] Consistency check', {
+        selectedMatch: {
+          id: selectedMatch.id,
+          home_team_id: selectedMatch.home_team_id,
+          away_team_id: selectedMatch.away_team_id,
+          home_team: selectedMatch.home_team,
+          away_team: selectedMatch.away_team,
+        },
+        goals: goals.map((g) => ({
+          id: g.id,
+          player_id: g.player_id,
+          raw_team_id: g.team_id,
+          relation_team_id: g.team?.id,
+          relation_team_name: g.team?.name,
+          player_team_id: g.player?.team_id,
+          player_team_name: g.player?.team?.name,
+          resolved_team_id: getGoalTeamId(g),
+          goals: g.goals,
+        })),
+        results: { homeGoalSum, awayGoalSum, homeScoreNum, awayScoreNum },
+      });
+    }
 
     return {
       homeMatches: homeGoalSum === homeScoreNum,

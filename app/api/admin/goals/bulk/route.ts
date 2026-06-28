@@ -20,6 +20,14 @@ interface BulkGoalItem {
   minute?: number | null;
 }
 
+// Normalize text for team name comparison
+function normalizeText(value?: string | null): string {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, '');
+}
+
 export async function POST(request: NextRequest) {
   try {
     console.log('[GOALS_BULK_POST] Request received');
@@ -46,10 +54,16 @@ export async function POST(request: NextRequest) {
 
     console.log(`[GOALS_BULK_POST] match=${matchId} items=${items.length}`);
 
-    // Validate match exists
+    // Validate match exists and fetch team relations for name-based matching
     const { data: match, error: matchError } = await supabaseAdmin
       .from('matches')
-      .select('id, home_team_id, away_team_id')
+      .select(`
+        id,
+        home_team_id,
+        away_team_id,
+        home_team:home_team_id(id, name, short_name),
+        away_team:away_team_id(id, name, short_name)
+      `)
       .eq('id', matchId)
       .single();
 
@@ -99,11 +113,11 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: errors.join('; '), errors }, { status: 400 });
     }
 
-    // Fetch all referenced players in one query
+    // Fetch all referenced players with team relations for name-based matching
     const playerIds = Array.from(playerIdSet);
     const { data: players, error: playerError } = await supabaseAdmin
       .from('players')
-      .select('id, team_id, full_name')
+      .select('id, team_id, full_name, team:team_id(id, name, short_name)')
       .in('id', playerIds);
 
     if (playerError) {
@@ -111,8 +125,45 @@ export async function POST(request: NextRequest) {
     }
 
     const playerMap = new Map(
-      (players || []).map((p: { id: string; team_id: string; full_name: string }) => [p.id, p])
+      (players || []).map((p: any) => [p.id, p])
     );
+
+    // Helper to resolve team_id based on match teams (exact ID first, then name matching)
+    const resolveGoalTeamId = (player: any): string | null => {
+      const candidateIds = [player.team_id, player.team?.id].filter(Boolean);
+
+      // Try exact ID match first
+      for (const id of candidateIds) {
+        if (id === match.home_team_id) return match.home_team_id;
+        if (id === match.away_team_id) return match.away_team_id;
+      }
+
+      // Fallback by team name/short_name
+      const playerTeamNames = [
+        player.team?.name,
+        player.team?.short_name,
+      ].map(normalizeText).filter(Boolean);
+
+      const homeNames = [
+        (match as any).home_team?.name,
+        (match as any).home_team?.short_name,
+      ].map(normalizeText).filter(Boolean);
+
+      const awayNames = [
+        (match as any).away_team?.name,
+        (match as any).away_team?.short_name,
+      ].map(normalizeText).filter(Boolean);
+
+      if (playerTeamNames.some((name) => homeNames.includes(name))) {
+        return match.home_team_id;
+      }
+
+      if (playerTeamNames.some((name) => awayNames.includes(name))) {
+        return match.away_team_id;
+      }
+
+      return candidateIds[0] || null;
+    };
 
     // Validate each player belongs to this match
     const playerErrors: string[] = [];
@@ -122,8 +173,10 @@ export async function POST(request: NextRequest) {
         playerErrors.push(`ไม่พบผู้เล่น id=${playerId}`);
         continue;
       }
-      if (!validTeamIds.has(player.team_id)) {
-        playerErrors.push(`${player.full_name} ไม่ใช่ผู้เล่นของทีมในแมตช์นี้`);
+
+      const resolvedTeamId = resolveGoalTeamId(player);
+      if (!resolvedTeamId || !validTeamIds.has(resolvedTeamId)) {
+        playerErrors.push(`${player.full_name} ไม่ใช่ผู้เล่นของทีมในแมตช์นี้ หรือไม่สามารถตรวจสอบทีม`);
       }
     }
 
@@ -136,10 +189,15 @@ export async function POST(request: NextRequest) {
 
     for (const item of validItems) {
       const player = playerMap.get(item.playerId)!;
+      const resolvedTeamId = resolveGoalTeamId(player);
+      if (!resolvedTeamId) {
+        return NextResponse.json({ error: `Cannot resolve team for player ${player.full_name}` }, { status: 400 });
+      }
+
       inserts.push({
         match_id: matchId,
         player_id: item.playerId,
-        team_id: player.team_id,
+        team_id: resolvedTeamId,
         goals: item.goals,
         minute: item.minute,
       });
@@ -152,7 +210,7 @@ export async function POST(request: NextRequest) {
       .insert(inserts)
       .select(`
         id, match_id, player_id, team_id, goals, minute,
-        player:player_id(id, full_name, shirt_no, team_id),
+        player:player_id(id, full_name, shirt_no, team_id, team:team_id(id, name, short_name)),
         team:team_id(id, name, short_name)
       `);
 
