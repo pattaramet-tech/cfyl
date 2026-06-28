@@ -131,7 +131,7 @@ export async function GET(request: NextRequest) {
     const matches = matchesRaw || [];
 
     // Calculate goals from match scores (not from goals table)
-    const matchScoreGoals = matches
+    matchScoreGoals = matches
       .filter(
         (m) =>
           m.status === 'finished' &&
