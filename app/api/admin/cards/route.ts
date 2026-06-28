@@ -111,7 +111,12 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { matchId, playerId, cardType, minute, note } = body;
+    // Support both camelCase (new) and snake_case (legacy)
+    const matchId = body.matchId ?? body.match_id;
+    const playerId = body.playerId ?? body.player_id;
+    const cardType = body.cardType ?? body.card_type;
+    const minute = body.minute;
+    const note = body.note;
 
     // Validation — minute is optional (null allowed)
     if (!matchId || !playerId || !cardType) {
@@ -129,9 +134,9 @@ export async function POST(request: NextRequest) {
     }
 
     if (minute !== null && minute !== undefined) {
-      if (typeof minute !== 'number' || minute < 0 || minute > 90) {
+      if (typeof minute !== 'number' || minute < 0 || minute > 120) {
         return NextResponse.json(
-          { error: 'Minute must be between 0 and 90' },
+          { error: 'Minute must be between 0 and 120' },
           { status: 400 }
         );
       }

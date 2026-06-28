@@ -448,9 +448,9 @@ export default function MatchManagePage() {
             'Authorization': `Bearer ${token}`,
           },
           body: JSON.stringify({
-            match_id: selectedMatch.id,
-            player_id: row.playerId,
-            card_type: row.cardType,
+            matchId: selectedMatch.id,
+            playerId: row.playerId,
+            cardType: row.cardType,
             minute: minuteValue,
             note: row.note.trim() || null,
           }),
