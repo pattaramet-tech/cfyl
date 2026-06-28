@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { TeamLogo } from '@/components/TeamLogo';
 
 interface Team {
@@ -17,7 +18,13 @@ interface Team {
   season?: { id: string; name: string; year?: number };
 }
 
+function getAdminToken() {
+  if (typeof window === 'undefined') return null;
+  return localStorage.getItem('admin_token');
+}
+
 export default function AdminTeamLogosPage() {
+  const router = useRouter();
   const [teams, setTeams] = useState<Team[]>([]);
   const [selectedTeamId, setSelectedTeamId] = useState('');
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -34,20 +41,47 @@ export default function AdminTeamLogosPage() {
     const loadTeams = async () => {
       try {
         setIsLoading(true);
-        const response = await fetch('/api/admin/team-logos/teams');
-        if (!response.ok) throw new Error('Failed to load teams');
+        const token = getAdminToken();
+
+        if (!token) {
+          router.push('/admin/login');
+          return;
+        }
+
+        const response = await fetch('/api/admin/team-logos/teams', {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        });
+
+        if (response.status === 401) {
+          router.push('/admin/login');
+          return;
+        }
+
+        if (!response.ok) {
+          const err = await response.json().catch(() => ({ error: 'Failed to load teams' }));
+          throw new Error(err.error || 'Failed to load teams');
+        }
+
         const data = await response.json();
+        if (Array.isArray(data) && data.length === 0) {
+          setMessage({ type: 'error', text: 'ยังไม่มีข้อมูลทีมในระบบ' });
+        }
         setTeams(data);
       } catch (error) {
         console.error('Error loading teams:', error);
-        setMessage({ type: 'error', text: 'ไม่สามารถโหลดข้อมูลทีมได้' });
+        setMessage({
+          type: 'error',
+          text: error instanceof Error ? error.message : 'ไม่สามารถโหลดข้อมูลทีมได้',
+        });
       } finally {
         setIsLoading(false);
       }
     };
 
     loadTeams();
-  }, []);
+  }, [router]);
 
   // Handle file selection
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -82,14 +116,29 @@ export default function AdminTeamLogosPage() {
 
     try {
       setIsUploading(true);
+      const token = getAdminToken();
+
+      if (!token) {
+        router.push('/admin/login');
+        return;
+      }
+
       const formData = new FormData();
       formData.append('teamId', selectedTeamId);
       formData.append('file', selectedFile);
 
       const response = await fetch('/api/admin/team-logos/upload', {
         method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
         body: formData,
       });
+
+      if (response.status === 401) {
+        router.push('/admin/login');
+        return;
+      }
 
       const result = await response.json();
 
@@ -113,7 +162,10 @@ export default function AdminTeamLogosPage() {
       setTimeout(() => setMessage(null), 3500);
     } catch (error) {
       console.error('Upload error:', error);
-      setMessage({ type: 'error', text: 'เกิดข้อผิดพลาดในการอัปโหลด' });
+      setMessage({
+        type: 'error',
+        text: error instanceof Error ? error.message : 'เกิดข้อผิดพลาดในการอัปโหลด',
+      });
     } finally {
       setIsUploading(false);
     }
