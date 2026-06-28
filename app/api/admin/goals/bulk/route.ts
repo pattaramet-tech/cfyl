@@ -59,9 +59,10 @@ export async function POST(request: NextRequest) {
 
     const validTeamIds = new Set([match.home_team_id, match.away_team_id]);
 
-    // Validate items + merge duplicate players (keep first minute per player)
+    // Validate items (no merge — each row = 1 record)
     const errors: string[] = [];
-    const mergedMap = new Map<string, { goals: number; minute?: number | null }>(); // playerId → {goals, minute}
+    const validItems: Array<{ playerId: string; goals: number; minute?: number | null }> = [];
+    const playerIdSet = new Set<string>();
 
     for (let i = 0; i < items.length; i++) {
       const item = items[i];
@@ -86,12 +87,12 @@ export async function POST(request: NextRequest) {
         }
       }
 
-      const current = mergedMap.get(item.playerId);
-      if (current) {
-        current.goals += goals;
-      } else {
-        mergedMap.set(item.playerId, { goals, minute: item.minute ?? null });
-      }
+      validItems.push({
+        playerId: item.playerId,
+        goals,
+        minute: item.minute ?? null,
+      });
+      playerIdSet.add(item.playerId);
     }
 
     if (errors.length > 0) {
@@ -99,7 +100,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Fetch all referenced players in one query
-    const playerIds = Array.from(mergedMap.keys());
+    const playerIds = Array.from(playerIdSet);
     const { data: players, error: playerError } = await supabaseAdmin
       .from('players')
       .select('id, team_id, full_name')
@@ -130,27 +131,21 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: playerErrors.join('; '), errors: playerErrors }, { status: 400 });
     }
 
-    // Build insert records — split goals > 10 into multiple records
+    // Build insert records — each item = 1 record (no merge)
     const inserts: { match_id: string; player_id: string; team_id: string; goals: number; minute?: number | null }[] = [];
 
-    for (const [playerId, data] of mergedMap.entries()) {
-      const player = playerMap.get(playerId)!;
-      let remaining = data.goals;
-
-      while (remaining > 0) {
-        const chunk = Math.min(remaining, 10);
-        inserts.push({
-          match_id: matchId,
-          player_id: playerId,
-          team_id: player.team_id,
-          goals: chunk,
-          minute: data.minute,
-        });
-        remaining -= chunk;
-      }
+    for (const item of validItems) {
+      const player = playerMap.get(item.playerId)!;
+      inserts.push({
+        match_id: matchId,
+        player_id: item.playerId,
+        team_id: player.team_id,
+        goals: item.goals,
+        minute: item.minute,
+      });
     }
 
-    console.log(`[GOALS_BULK_POST] Inserting ${inserts.length} goal record(s) for ${mergedMap.size} player(s)`);
+    console.log(`[GOALS_BULK_POST] Inserting ${inserts.length} goal record(s)`);
 
     const { data: created, error: insertError } = await supabaseAdmin
       .from('goals')
@@ -166,13 +161,6 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: insertError.message }, { status: 500 });
     }
 
-    const mergedPlayers = Array.from(mergedMap.entries())
-      .filter(([, data]) => data.goals > 10)
-      .map(([pid, data]) => {
-        const p = playerMap.get(pid);
-        return `${p?.full_name} (${data.goals} ประตู แบ่งเป็น ${Math.ceil(data.goals / 10)} record)`;
-      });
-
     console.log(`[GOALS_BULK_POST] Created ${created?.length} records`);
 
     await logAdminAction({
@@ -180,16 +168,14 @@ export async function POST(request: NextRequest) {
       action: 'goal.bulk_create',
       entityType: 'goal',
       entityId: matchId,
-      entityLabel: `${created?.length ?? 0} records / ${mergedMap.size} players`,
-      newData: { match_id: matchId, players: mergedMap.size, created: created?.length ?? 0 },
+      entityLabel: `${created?.length ?? 0} records`,
+      newData: { match_id: matchId, created: created?.length ?? 0 },
     });
 
     return NextResponse.json(
       {
         success: true,
         created: created?.length ?? 0,
-        players: mergedMap.size,
-        split: mergedPlayers,
         items: created,
       },
       { status: 201 }
