@@ -67,6 +67,50 @@ interface Player {
   };
 }
 
+type CardType = 'yellow' | 'second_yellow' | 'red';
+
+interface CardRow {
+  rowId: string;
+  playerId: string;
+  cardType: CardType;
+  minute: string;
+  note: string;
+}
+
+function sortPlayersForMatch(
+  players: Player[],
+  homeTeamId?: string,
+  awayTeamId?: string
+): Player[] {
+  return [...players].sort((a, b) => {
+    const teamRank = (teamId: string) => {
+      if (teamId === homeTeamId) return 0;
+      if (teamId === awayTeamId) return 1;
+      return 2;
+    };
+
+    const rankA = teamRank(a.team_id);
+    const rankB = teamRank(b.team_id);
+    if (rankA !== rankB) return rankA - rankB;
+
+    const shirtA = a.shirt_no ?? 9999;
+    const shirtB = b.shirt_no ?? 9999;
+    if (shirtA !== shirtB) return shirtA - shirtB;
+
+    return a.full_name.localeCompare(b.full_name, 'th');
+  });
+}
+
+function createCardRow(): CardRow {
+  return {
+    rowId: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    playerId: '',
+    cardType: 'yellow' as CardType,
+    minute: '',
+    note: '',
+  };
+}
+
 export default function MatchManagePage() {
   const [seasonId, setSeasonId] = useState<string>('');
   const [ageGroupId, setAgeGroupId] = useState<string>('');
@@ -87,10 +131,7 @@ export default function MatchManagePage() {
   const [players, setPlayers] = useState<Player[]>([]);
 
   // Card form states
-  const [cardPlayerId, setCardPlayerId] = useState<string>('');
-  const [cardType, setCardType] = useState<string>('yellow');
-  const [cardMinute, setCardMinute] = useState<string>('');
-  const [cardNote, setCardNote] = useState<string>('');
+  const [cardRows, setCardRows] = useState<CardRow[]>([createCardRow()]);
   const [addingCard, setAddingCard] = useState(false);
 
   const [loading, setLoading] = useState(false);
@@ -98,6 +139,58 @@ export default function MatchManagePage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+
+  // Card row helpers
+  const addCardRow = () => {
+    setCardRows((prev) => [...prev, createCardRow()]);
+  };
+
+  const removeCardRow = (rowId: string) => {
+    setCardRows((prev) => (prev.length > 1 ? prev.filter((r) => r.rowId !== rowId) : prev));
+  };
+
+  const updateCardRow = (rowId: string, field: keyof CardRow, value: string) => {
+    setCardRows((prev) =>
+      prev.map((r) => (r.rowId === rowId ? { ...r, [field]: value } : r))
+    );
+  };
+
+  // Derived player groupings
+  const homePlayers = players.filter((p) => p.team_id === selectedMatch?.home_team_id);
+  const awayPlayers = players.filter((p) => p.team_id === selectedMatch?.away_team_id);
+
+  const homeTeamName = selectedMatch?.home_team?.name || 'ทีมเหย้า';
+  const awayTeamName = selectedMatch?.away_team?.name || 'ทีมเยือน';
+
+  function playerOptionLabel(p: Player) {
+    return `#${p.shirt_no ?? '—'} ${p.full_name}`;
+  }
+
+  // Sort cards by team, shirt_no, minute
+  const sortedCards = [...cards].sort((a, b) => {
+    const teamIdA = a.player?.team_id || '';
+    const teamIdB = b.player?.team_id || '';
+
+    const teamRank = (teamId: string) => {
+      if (teamId === selectedMatch?.home_team_id) return 0;
+      if (teamId === selectedMatch?.away_team_id) return 1;
+      return 2;
+    };
+
+    const rankA = teamRank(teamIdA);
+    const rankB = teamRank(teamIdB);
+    if (rankA !== rankB) return rankA - rankB;
+
+    const shirtA = a.player?.shirt_no ?? 9999;
+    const shirtB = b.player?.shirt_no ?? 9999;
+    if (shirtA !== shirtB) return shirtA - shirtB;
+
+    const minuteA = a.minute ?? 9999;
+    const minuteB = b.minute ?? 9999;
+    if (minuteA !== minuteB) return minuteA - minuteB;
+
+    return String(a.created_at || '').localeCompare(String(b.created_at || ''));
+  });
   const [showFinishValidation, setShowFinishValidation] = useState(false);
   const [isEditingFinishedMatch, setIsEditingFinishedMatch] = useState(false);
   const [showConfirmEditFinished, setShowConfirmEditFinished] = useState(false);
@@ -241,7 +334,7 @@ export default function MatchManagePage() {
         }
         if (playersRes.ok) {
           const playersData = await playersRes.json();
-          setPlayers(playersData);
+          setPlayers(sortPlayersForMatch(playersData, match.home_team_id, match.away_team_id));
         }
 
         // Set score and status
@@ -250,10 +343,7 @@ export default function MatchManagePage() {
         setMatchStatus(match.status || 'scheduled');
 
         // Reset card form
-        setCardPlayerId('');
-        setCardType('yellow');
-        setCardMinute('');
-        setCardNote('');
+        setCardRows([createCardRow()]);
       } catch (err) {
         console.error('[MATCH_MANAGE] Load match data error:', err);
       } finally {
@@ -319,9 +409,27 @@ export default function MatchManagePage() {
 
   const handleAddCard = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedMatch || !cardPlayerId) {
-      setError('กรุณาเลือกนักเตะ');
+
+    if (!selectedMatch) return;
+
+    const validRows = cardRows.filter((r) => r.playerId);
+
+    if (validRows.length === 0) {
+      setError('กรุณาเลือกนักเตะอย่างน้อย 1 คน');
       return;
+    }
+
+    // Validate minute for all rows
+    for (const row of validRows) {
+      const minuteValue = row.minute.trim() === '' ? null : Number(row.minute);
+
+      if (
+        minuteValue !== null &&
+        (!Number.isInteger(minuteValue) || minuteValue < 0 || minuteValue > 120)
+      ) {
+        setError('นาทีของใบต้องเป็นตัวเลข 0-120 หรือเว้นว่าง');
+        return;
+      }
     }
 
     setAddingCard(true);
@@ -329,30 +437,38 @@ export default function MatchManagePage() {
 
     try {
       const token = localStorage.getItem('admin_token');
-      const cardMinuteNum = cardMinute ? parseInt(cardMinute) : null;
 
-      const res = await fetch('/api/admin/cards', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          match_id: selectedMatch.id,
-          player_id: cardPlayerId,
-          card_type: cardType,
-          minute: cardMinuteNum,
-          note: cardNote || null,
-        }),
-      });
+      for (const row of validRows) {
+        const minuteValue = row.minute.trim() === '' ? null : Number(row.minute);
 
-      if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error || 'ไม่สามารถเพิ่มใบได้');
+        const res = await fetch('/api/admin/cards', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            match_id: selectedMatch.id,
+            player_id: row.playerId,
+            card_type: row.cardType,
+            minute: minuteValue,
+            note: row.note.trim() || null,
+          }),
+        });
+
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          const player = players.find((p) => p.id === row.playerId);
+          throw new Error(
+            data.error ||
+              `ไม่สามารถเพิ่มใบให้ ${player?.full_name || 'นักเตะที่เลือก'} ได้`
+          );
+        }
       }
 
-      setSuccess('✓ เพิ่มใบเรียบร้อย');
-      // Reload cards
+      setSuccess(`✓ เพิ่มใบเรียบร้อย ${validRows.length} รายการ`);
+      setCardRows([createCardRow()]);
+
       setTimeout(() => {
         loadMatchDataCallback(selectedMatch);
       }, 500);
@@ -921,72 +1037,123 @@ export default function MatchManagePage() {
             {/* Card Form */}
             {!isReadOnlyFinished && (
             <form onSubmit={handleAddCard} className="mb-6 p-3 sm:p-4 bg-blue-50 rounded-lg border border-blue-200 space-y-3 sm:space-y-4">
-              <h3 className="font-semibold text-gray-800 text-sm sm:text-base">➕ เพิ่มใบ</h3>
+              <div className="flex items-center justify-between gap-3">
+                <h3 className="font-semibold text-gray-800 text-sm sm:text-base">➕ เพิ่มใบหลายรายการ</h3>
+                <button
+                  type="button"
+                  onClick={addCardRow}
+                  disabled={addingCard}
+                  className="px-3 py-1.5 bg-white border border-blue-300 text-blue-700 rounded-lg hover:bg-blue-50 text-sm font-semibold disabled:opacity-50"
+                >
+                  + เพิ่มแถว
+                </button>
+              </div>
 
-              <div className="space-y-3 sm:space-y-0 sm:grid sm:grid-cols-2 lg:grid-cols-4 sm:gap-3 lg:gap-4">
-                <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-2">นักเตะ</label>
-                  <select
-                    value={cardPlayerId}
-                    onChange={(e) => setCardPlayerId(e.target.value)}
-                    disabled={players.length === 0}
-                    className="w-full px-3 sm:px-4 py-2.5 sm:py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-600 disabled:bg-gray-100 text-sm sm:text-base"
+              <div className="space-y-2">
+                {cardRows.map((row, index) => (
+                  <div
+                    key={row.rowId}
+                    className="grid grid-cols-1 lg:grid-cols-[32px_1.4fr_160px_100px_1fr_44px] gap-2 items-end bg-white/70 p-3 rounded-lg border border-blue-100"
                   >
-                    <option value="">
-                      {players.length === 0 ? '-- โหลดนักเตะ --' : '-- เลือกนักเตะ --'}
-                    </option>
-                    {players.map((p) => (
-                      <option key={p.id} value={p.id}>
-                        #{p.shirt_no || '?'} {p.full_name} ({p.team?.short_name || p.team?.name || 'ไม่ระบุทีม'})
-                      </option>
-                    ))}
-                  </select>
-                </div>
+                    <div className="text-xs text-gray-500 font-semibold pb-2">
+                      {index + 1}.
+                    </div>
 
-                <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-2">ประเภท</label>
-                  <select
-                    value={cardType}
-                    onChange={(e) => setCardType(e.target.value)}
-                    className="w-full px-3 sm:px-4 py-2.5 sm:py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-600 text-sm sm:text-base"
-                  >
-                    <option value="yellow">ใบเหลือง</option>
-                    <option value="second_yellow">ใบเหลืองที่ 2</option>
-                    <option value="red">ใบแดง</option>
-                  </select>
-                </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-gray-600 mb-1">นักเตะ</label>
+                      <select
+                        value={row.playerId}
+                        onChange={(e) => updateCardRow(row.rowId, 'playerId', e.target.value)}
+                        disabled={players.length === 0 || addingCard}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-600 disabled:bg-gray-100 text-sm"
+                      >
+                        <option value="">
+                          {players.length === 0 ? '-- โหลดนักเตะ --' : '-- เลือกนักเตะ --'}
+                        </option>
 
-                <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-2">นาที</label>
-                  <input
-                    type="number"
-                    min="0"
-                    max="90"
-                    value={cardMinute}
-                    onChange={(e) => setCardMinute(e.target.value)}
-                    placeholder="ไม่บังคับ"
-                    className="w-full px-3 sm:px-4 py-2.5 sm:py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-600 text-sm sm:text-base"
-                  />
-                </div>
+                        {homePlayers.length > 0 && (
+                          <optgroup label={homeTeamName}>
+                            {homePlayers.map((p) => (
+                              <option key={p.id} value={p.id}>
+                                {playerOptionLabel(p)}
+                              </option>
+                            ))}
+                          </optgroup>
+                        )}
 
-                <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-2">หมายเหตุ</label>
-                  <input
-                    type="text"
-                    value={cardNote}
-                    onChange={(e) => setCardNote(e.target.value)}
-                    placeholder="ไม่บังคับ"
-                    className="w-full px-3 sm:px-4 py-2.5 sm:py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-600 text-sm sm:text-base"
-                  />
-                </div>
+                        {awayPlayers.length > 0 && (
+                          <optgroup label={awayTeamName}>
+                            {awayPlayers.map((p) => (
+                              <option key={p.id} value={p.id}>
+                                {playerOptionLabel(p)}
+                              </option>
+                            ))}
+                          </optgroup>
+                        )}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-semibold text-gray-600 mb-1">ประเภท</label>
+                      <select
+                        value={row.cardType}
+                        onChange={(e) => updateCardRow(row.rowId, 'cardType', e.target.value)}
+                        disabled={addingCard}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-600 text-sm"
+                      >
+                        <option value="yellow">ใบเหลือง</option>
+                        <option value="second_yellow">ใบเหลืองที่ 2</option>
+                        <option value="red">ใบแดง</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-semibold text-gray-600 mb-1">นาที</label>
+                      <input
+                        type="number"
+                        min="0"
+                        max="120"
+                        value={row.minute}
+                        onChange={(e) => updateCardRow(row.rowId, 'minute', e.target.value)}
+                        disabled={addingCard}
+                        placeholder="-"
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-600 text-sm"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-semibold text-gray-600 mb-1">หมายเหตุ</label>
+                      <input
+                        type="text"
+                        value={row.note}
+                        onChange={(e) => updateCardRow(row.rowId, 'note', e.target.value)}
+                        disabled={addingCard}
+                        placeholder="ไม่บังคับ"
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-600 text-sm"
+                      />
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => removeCardRow(row.rowId)}
+                      disabled={addingCard || cardRows.length === 1}
+                      className="px-3 py-2 rounded-lg bg-red-50 text-red-600 hover:bg-red-100 disabled:opacity-40 text-sm font-semibold"
+                      title="ลบแถว"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                ))}
               </div>
 
               <button
                 type="submit"
-                disabled={addingCard || !cardPlayerId}
+                disabled={addingCard || cardRows.every((r) => !r.playerId)}
                 className="w-full bg-blue-600 text-white px-4 py-3 sm:py-2 rounded-lg hover:bg-blue-700 disabled:opacity-50 font-semibold text-sm sm:text-base transition"
               >
-                {addingCard ? 'กำลังเพิ่ม...' : 'เพิ่มใบ'}
+                {addingCard
+                  ? 'กำลังเพิ่ม...'
+                  : `เพิ่มใบ (${cardRows.filter((r) => r.playerId).length || 0} รายการ)`}
               </button>
             </form>
             )}
@@ -998,7 +1165,7 @@ export default function MatchManagePage() {
                 <p className="text-slate-500 text-sm">ยังไม่มีใบแสดง</p>
               ) : (
                 <div className="space-y-2 sm:space-y-3">
-                  {cards.map((card) => (
+                  {sortedCards.map((card) => (
                     <div key={card.id} className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 p-3 sm:p-4 bg-slate-50 rounded border border-slate-200">
                       <div className="min-w-0 flex-1">
                         <p className="font-semibold text-sm sm:text-base text-slate-800">
