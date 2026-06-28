@@ -83,30 +83,22 @@ export async function GET(request: NextRequest) {
       continue;
     }
 
-    // Process explicit divisions first
-    const divisionCandidates: ExportDivisionGroup[] = (divisions || []).map((d) => ({
-      id: d.id,
-      name: d.name,
-      sort_order: d.sort_order ?? 999,
-    }));
-
-    if (divisionCandidates.length === 0) continue;
-
-    for (const divCandidate of divisionCandidates) {
-      // Fetch matches for this division first
-      const { data: allMatches, error: matchError } = await supabaseAdmin
+    // ─── Process explicit divisions ───
+    for (const div of divisions || []) {
+      // Fetch matches for this division
+      const { data: divMatches, error: matchError } = await supabaseAdmin
         .from('matches')
         .select('*')
         .eq('season_id', seasonId)
         .eq('age_group_id', ag.id)
-        .eq('division_id', divCandidate.id);
+        .eq('division_id', div.id);
 
       if (matchError) {
         console.error('[STANDINGS_EXPORT] Match fetch error:', matchError);
         continue;
       }
 
-      const safeMatches = allMatches || [];
+      const safeMatches = divMatches || [];
       totalMatches += safeMatches.length;
 
       // Derive team ids from matches
@@ -118,13 +110,13 @@ export async function GET(request: NextRequest) {
         )
       );
 
-      // Fetch teams with explicit division_id
-      const { data: teamsByDivision } = await supabaseAdmin
+      // Fetch teams by division_id
+      const { data: teamsByDiv } = await supabaseAdmin
         .from('teams')
         .select('id, name')
         .eq('season_id', seasonId)
         .eq('age_group_id', ag.id)
-        .eq('division_id', divCandidate.id);
+        .eq('division_id', div.id);
 
       // Fetch teams from match ids (handles division_id = null case)
       let teamsByMatchIds: any[] = [];
@@ -136,16 +128,19 @@ export async function GET(request: NextRequest) {
         teamsByMatchIds = matchTeams || [];
       }
 
-      // Merge teams: use Map to avoid duplicates by id
+      // Merge teams
       const teamMap = new Map<string, any>();
-      (teamsByDivision || []).forEach((t) => teamMap.set(t.id, t));
+      (teamsByDiv || []).forEach((t) => teamMap.set(t.id, t));
       (teamsByMatchIds || []).forEach((t) => teamMap.set(t.id, t));
-
       const safeTeams = Array.from(teamMap.values());
 
-      // Skip if no teams and no matches
-      if (safeTeams.length === 0 && safeMatches.length === 0) continue;
+      // Skip only if no teams AND no matches
+      if (safeTeams.length === 0 && safeMatches.length === 0) {
+        continue;
+      }
 
+      // Track teams
+      safeTeams.forEach((t) => usedTeamIds.add(t.id));
       totalTeams += safeTeams.length;
 
       // Filter: status=finished AND both scores not null
@@ -166,7 +161,6 @@ export async function GET(request: NextRequest) {
       // Calculate standings
       const standings = safeTeams.map((team) => {
         const stats = calculateStandings(scoredMatches, team.id);
-        usedTeamIds.add(team.id);
         return {
           teamId: team.id,
           teamName: team.name,
@@ -191,13 +185,13 @@ export async function GET(request: NextRequest) {
 
       // Format label
       const agLabel = ag.code || ag.name;
-      const divLabel = formatDivisionLabel(divCandidate.name);
+      const divLabel = formatDivisionLabel(div.name);
 
       const groupResult: GroupResult = {
         ageGroupId: ag.id,
         ageGroupName: agLabel,
-        divisionId: divCandidate.id,
-        divisionName: divCandidate.name,
+        divisionId: div.id,
+        divisionName: div.name,
         label: `${agLabel} ${divLabel}`,
         standings: standings.map((s, i) => ({ rank: i + 1, ...s })),
       };
@@ -205,42 +199,54 @@ export async function GET(request: NextRequest) {
       groups.push(groupResult);
 
       if (debug) {
+        const totalGoalsFromScore = scoredMatches.reduce(
+          (sum, m) => sum + Number(m.home_score || 0) + Number(m.away_score || 0),
+          0
+        );
         debugGroups.push({
           label: groupResult.label,
-          teamsByDivisionCount: (teamsByDivision || []).length,
+          divisionId: div.id,
+          teamsByDivisionCount: (teamsByDiv || []).length,
           teamsFromMatchesCount: teamsByMatchIds.length,
           finalTeamsCount: safeTeams.length,
           allMatchesCount: safeMatches.length,
           scoredMatchesCount: scoredMatches.length,
+          totalGoalsFromScore,
         });
       }
     }
-  }
 
-  // Check for no-division data (teams/matches with division_id = null)
-  // Only add if not all data was already captured in explicit divisions
-  if (groups.length > 0) {
-    for (const ag of ageGroups) {
-      const { data: noDivTeams } = await supabaseAdmin
-        .from('teams')
-        .select('id, name')
-        .eq('season_id', seasonId)
-        .eq('age_group_id', ag.id)
-        .is('division_id', null);
+    // ─── Process no-division data (division_id = null) ───
+    // Only add if this age group has no divisions or has extra no-division data
+    const hasDivisionsInAg = (divisions || []).length > 0;
 
-      const { data: noDivMatches } = await supabaseAdmin
-        .from('matches')
-        .select('*')
-        .eq('season_id', seasonId)
-        .eq('age_group_id', ag.id)
-        .is('division_id', null);
+    const { data: noDivTeams } = await supabaseAdmin
+      .from('teams')
+      .select('id, name')
+      .eq('season_id', seasonId)
+      .eq('age_group_id', ag.id)
+      .is('division_id', null);
 
-      const safeNoDivTeams = (noDivTeams || []).filter((t) => !usedTeamIds.has(t.id));
-      const safeNoDivMatches = noDivMatches || [];
+    const { data: noDivMatches } = await supabaseAdmin
+      .from('matches')
+      .select('*')
+      .eq('season_id', seasonId)
+      .eq('age_group_id', ag.id)
+      .is('division_id', null);
 
-      if (safeNoDivTeams.length === 0 && safeNoDivMatches.length === 0) continue;
+    // Filter out teams already used in divisions
+    const unusedNoDivTeams = (noDivTeams || []).filter((t) => !usedTeamIds.has(t.id));
+    const safeNoDivMatches = noDivMatches || [];
 
-      totalTeams += safeNoDivTeams.length;
+    // Only create no-division group if:
+    // 1. No divisions exist for this age group, OR
+    // 2. There are unused no-division teams/matches
+    if (!hasDivisionsInAg || unusedNoDivTeams.length > 0 || safeNoDivMatches.length > 0) {
+      if (unusedNoDivTeams.length === 0 && safeNoDivMatches.length === 0) {
+        continue;
+      }
+
+      totalTeams += unusedNoDivTeams.length;
       totalMatches += safeNoDivMatches.length;
 
       // Filter scored matches
@@ -258,7 +264,7 @@ export async function GET(request: NextRequest) {
       }
 
       // Calculate standings
-      const standings = safeNoDivTeams.map((team) => {
+      const standings = unusedNoDivTeams.map((team) => {
         const stats = calculateStandings(scoredMatches, team.id);
         return {
           teamId: team.id,
@@ -292,11 +298,16 @@ export async function GET(request: NextRequest) {
       });
 
       if (debug) {
+        const totalGoalsFromScore = scoredMatches.reduce(
+          (sum, m) => sum + Number(m.home_score || 0) + Number(m.away_score || 0),
+          0
+        );
         debugGroups.push({
           label: `${agLabel} รวม`,
-          finalTeamsCount: safeNoDivTeams.length,
+          finalTeamsCount: unusedNoDivTeams.length,
           allMatchesCount: safeNoDivMatches.length,
           scoredMatchesCount: scoredMatches.length,
+          totalGoalsFromScore,
         });
       }
     }
@@ -304,7 +315,7 @@ export async function GET(request: NextRequest) {
 
   const response: any = { season, matchdayFilter, groups };
 
-  if (debug) {
+  if (debug && debugGroups.length > 0) {
     response.debug = {
       ageGroupsCount: totalAgeGroups,
       groupsCount: groups.length,
@@ -348,10 +359,4 @@ interface GroupResult {
   divisionName: string;
   label: string;
   standings: StandingRow[];
-}
-
-interface ExportDivisionGroup {
-  id: string;
-  name: string;
-  sort_order: number;
 }
