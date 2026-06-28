@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { useEffect, useMemo, useState } from 'react';
 import type { Match } from '@/types/db';
+import { TeamLogo } from '@/components/TeamLogo';
 
 interface Goal {
   id: string;
@@ -269,43 +270,61 @@ export default function MatchPage() {
             </div>
 
             {/* Teams and Score */}
-            <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-4 py-4">
-              <div className="text-right">
-                <Link
-                  href={`/teams/${m.home_team?.id || ''}`}
-                  className={`font-bold text-slate-800 break-words text-sm sm:text-base hover:text-blue-600 transition ${
-                    m.home_team?.id ? 'cursor-pointer' : 'cursor-default'
-                  }`}
-                >
-                  {m.home_team?.name || 'ทีมเหย้า'}
-                </Link>
-                {m.home_team?.short_name && (
-                  <p className="text-xs text-slate-500">{m.home_team.short_name}</p>
-                )}
+            <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-3 sm:gap-4 py-4">
+              <div className="flex items-start justify-end gap-2 min-w-0">
+                <div className="text-right min-w-0">
+                  <Link
+                    href={`/teams/${m.home_team?.id || ''}`}
+                    className={`font-bold text-slate-800 break-words text-sm sm:text-base hover:text-blue-600 transition block ${
+                      m.home_team?.id ? 'cursor-pointer' : 'cursor-default'
+                    }`}
+                  >
+                    {m.home_team?.name || 'ทีมเหย้า'}
+                  </Link>
+                  {m.home_team?.short_name && (
+                    <p className="text-xs text-slate-500">{m.home_team.short_name}</p>
+                  )}
+                </div>
+                <TeamLogo
+                  logoUrl={m.home_team?.logo_url}
+                  name={m.home_team?.name}
+                  shortName={m.home_team?.short_name}
+                  size="lg"
+                  className="shrink-0"
+                />
               </div>
 
               {isFinished && m.home_score !== null && m.away_score !== null ? (
-                <div className="flex items-center gap-2 px-4 py-2 rounded-lg bg-blue-100">
-                  <span className="text-3xl font-bold text-blue-900">{m.home_score}</span>
+                <div className="flex items-center gap-2 px-3 sm:px-4 py-2 rounded-lg bg-blue-100">
+                  <span className="text-2xl sm:text-3xl font-bold text-blue-900">{m.home_score}</span>
                   <span className="text-slate-400">-</span>
-                  <span className="text-3xl font-bold text-blue-900">{m.away_score}</span>
+                  <span className="text-2xl sm:text-3xl font-bold text-blue-900">{m.away_score}</span>
                 </div>
               ) : (
-                <span className="text-slate-400 font-semibold">VS</span>
+                <span className="text-slate-400 font-semibold text-sm sm:text-base">VS</span>
               )}
 
-              <div className="text-left">
-                <Link
-                  href={`/teams/${m.away_team?.id || ''}`}
-                  className={`font-bold text-slate-800 break-words text-sm sm:text-base hover:text-blue-600 transition ${
-                    m.away_team?.id ? 'cursor-pointer' : 'cursor-default'
-                  }`}
-                >
-                  {m.away_team?.name || 'ทีมเยือน'}
-                </Link>
-                {m.away_team?.short_name && (
-                  <p className="text-xs text-slate-500">{m.away_team.short_name}</p>
-                )}
+              <div className="flex items-start justify-start gap-2 min-w-0">
+                <TeamLogo
+                  logoUrl={m.away_team?.logo_url}
+                  name={m.away_team?.name}
+                  shortName={m.away_team?.short_name}
+                  size="lg"
+                  className="shrink-0"
+                />
+                <div className="text-left min-w-0">
+                  <Link
+                    href={`/teams/${m.away_team?.id || ''}`}
+                    className={`font-bold text-slate-800 break-words text-sm sm:text-base hover:text-blue-600 transition block ${
+                      m.away_team?.id ? 'cursor-pointer' : 'cursor-default'
+                    }`}
+                  >
+                    {m.away_team?.name || 'ทีมเยือน'}
+                  </Link>
+                  {m.away_team?.short_name && (
+                    <p className="text-xs text-slate-500">{m.away_team.short_name}</p>
+                  )}
+                </div>
               </div>
             </div>
           </div>

@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import type { Match } from '@/types/db';
+import { TeamLogo } from './TeamLogo';
 
 interface MatchCardProps {
   match: Match & {
@@ -68,24 +69,42 @@ export function MatchCard({ match, variant, badgeText }: MatchCardProps) {
       </div>
 
       {/* Teams + score */}
-      <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-3">
-        <div className="text-sm font-semibold text-slate-800 text-right break-words">
-          {homeTeam}
+      <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2 sm:gap-3">
+        <div className="flex items-center justify-end gap-2 min-w-0">
+          <div className="text-sm font-semibold text-slate-800 text-right break-words">
+            {homeTeam}
+          </div>
+          <TeamLogo
+            logoUrl={match.home_team?.logo_url}
+            name={match.home_team?.name}
+            shortName={match.home_team?.short_name}
+            size="sm"
+          />
         </div>
 
-        <div className="flex items-center justify-center min-w-[64px]">
+        <div className="flex items-center justify-center min-w-[56px] sm:min-w-[64px]">
           {isFinished ? (
             <div className="flex items-center gap-2 px-3 py-1 rounded-lg bg-blue-50">
-              <span className="text-xl font-bold text-blue-900">{match.home_score}</span>
+              <span className="text-lg sm:text-xl font-bold text-blue-900">{match.home_score}</span>
               <span className="text-slate-400">-</span>
-              <span className="text-xl font-bold text-blue-900">{match.away_score}</span>
+              <span className="text-lg sm:text-xl font-bold text-blue-900">{match.away_score}</span>
             </div>
           ) : (
-            <span className="text-slate-400 text-sm font-medium">VS</span>
+            <span className="text-slate-400 text-xs sm:text-sm font-medium">VS</span>
           )}
         </div>
 
-        <div className="text-sm font-semibold text-slate-800 break-words">{awayTeam}</div>
+        <div className="flex items-center gap-2 min-w-0">
+          <TeamLogo
+            logoUrl={match.away_team?.logo_url}
+            name={match.away_team?.name}
+            shortName={match.away_team?.short_name}
+            size="sm"
+          />
+          <div className="text-sm font-semibold text-slate-800 break-words">
+            {awayTeam}
+          </div>
+        </div>
       </div>
 
       {/* Status */}

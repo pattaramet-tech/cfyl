@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
+import { TeamLogo } from '@/components/TeamLogo';
 
 interface Team {
   id: string;
@@ -82,14 +83,6 @@ export default function TeamsDirectoryPage() {
     });
   }, [teams, searchQuery, selectedAgeGroup, selectedDivision]);
 
-  const getTeamInitials = (name: string): string => {
-    return name
-      .split(' ')
-      .map((w) => w[0])
-      .join('')
-      .toUpperCase()
-      .slice(0, 2);
-  };
 
   if (isLoading) {
     return (
@@ -192,17 +185,12 @@ export default function TeamsDirectoryPage() {
             >
               {/* Logo Section */}
               <div className="flex items-center justify-between mb-3">
-                <div className="w-16 h-16 bg-blue-100 rounded-lg flex items-center justify-center shrink-0">
-                  {team.logo_url ? (
-                    <img
-                      src={team.logo_url}
-                      alt={team.name}
-                      className="w-full h-full object-cover rounded-lg"
-                    />
-                  ) : (
-                    <span className="text-xl font-bold text-blue-600">{getTeamInitials(team.name)}</span>
-                  )}
-                </div>
+                <TeamLogo
+                  logoUrl={team.logo_url}
+                  name={team.name}
+                  shortName={team.short_name}
+                  size="md"
+                />
                 <div className="text-2xl">→</div>
               </div>
 

@@ -1,4 +1,5 @@
 import type { Standing } from '@/types/db';
+import { TeamLogo } from './TeamLogo';
 
 interface StandingsTableProps {
   standings: Standing[];
@@ -64,7 +65,16 @@ export function StandingsTable({ standings, showProvinceRep = false }: Standings
                     index % 2 === 0 ? 'bg-white' : 'bg-slate-50'
                   }`}
                 >
-                  <span>{standing.team_name}</span>
+                  <div className="flex items-center gap-2 min-w-0">
+                    <TeamLogo
+                      logoUrl={standing.team_logo_url}
+                      name={standing.team_name}
+                      shortName={standing.team_short_name}
+                      size="sm"
+                      className="shrink-0"
+                    />
+                    <span className="truncate">{standing.team_name}</span>
+                  </div>
                   {isProvinceRep && (
                     <span className="block text-[11px] font-semibold text-amber-600 mt-0.5">
                       🏆 ตัวแทนจังหวัด

@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { useEffect, useState } from 'react';
+import { TeamLogo } from '@/components/TeamLogo';
 
 interface TeamProfile {
   team: {
@@ -310,13 +311,13 @@ export default function TeamProfilePage() {
               {team.season && <p>🗓️ ฤดูกาล: {team.season.name}</p>}
             </div>
           </div>
-          <div className="shrink-0 w-20 h-20 sm:w-28 sm:h-28 bg-blue-100 rounded-lg flex items-center justify-center">
-            {team.logo_url ? (
-              <img src={team.logo_url} alt={team.name} className="w-full h-full object-cover rounded-lg" />
-            ) : (
-              <span className="text-2xl sm:text-4xl font-bold text-blue-600">{getTeamLogo()}</span>
-            )}
-          </div>
+          <TeamLogo
+            logoUrl={team.logo_url}
+            name={team.name}
+            shortName={team.short_name}
+            size="xl"
+            className="shrink-0"
+          />
         </div>
       </section>
 

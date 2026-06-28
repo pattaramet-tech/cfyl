@@ -32,7 +32,7 @@ export async function GET(request: NextRequest) {
     // Get all teams in this division
     const { data: teams, error: teamError } = await supabase
       .from('teams')
-      .select('id, name')
+      .select('id, name, short_name, logo_url')
       .eq('season_id', seasonId)
       .eq('age_group_id', ageGroupId)
       .eq('division_id', divisionId);
@@ -40,7 +40,7 @@ export async function GET(request: NextRequest) {
     if (teamError) throw teamError;
 
     // Calculate standings for each team
-    const standings: Standing[] = teams!.map(team => {
+    const standings: any[] = teams!.map(team => {
       const stats = calculateStandings(matches as Match[], team.id);
         return {
           season_id: seasonId,
@@ -48,6 +48,8 @@ export async function GET(request: NextRequest) {
           division_id: divisionId,
           team_id: team.id,
           team_name: team.name,
+          team_short_name: team.short_name,
+          team_logo_url: team.logo_url,
           played: stats.played,
           wins: stats.wins,
           draws: stats.draws,

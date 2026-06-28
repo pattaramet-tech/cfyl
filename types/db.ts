@@ -161,6 +161,8 @@ export interface Standing {
   division_id: string;
   team_id: string;
   team_name: string;
+  team_short_name?: string | null;
+  team_logo_url?: string | null;
   played: number;
   wins: number;
   draws: number;
