@@ -207,4 +207,116 @@ docs/team-logo-mapping-example.csv
 
 ---
 
+## วิธีเช็กเมื่อโลโก้ไม่ขึ้น
+
+### 1. เช็ก URL รูปโดยตรง
+
+เปิด browser ที่ deployment (หรือ localhost) แล้วพิมพ์:
+
+```
+/team-logos/filename.png
+```
+
+ตัวอย่าง:
+
+```
+http://localhost:3000/team-logos/ANGSILA.jpg
+https://your-domain.com/team-logos/ANGSILA.jpg
+```
+
+**ถ้า 404** → ไฟล์ยังไม่อยู่ใน `/public/team-logos/` หรือยังไม่ได้ deploy
+
+**ถ้ารูปขึ้น** → ปัญหาอยู่ที่ React หรือ API
+
+### 2. ตรวจ Browser Console
+
+1. เปิด DevTools (F12)
+2. ไปที่ Console tab
+3. หากีฟรูปไม่ขึ้น ให้มองหา `[TEAM_LOGO]` warning:
+
+```
+[TEAM_LOGO] Failed to load logo: {
+  original: "/team-logos/ANGSILA.jpg",
+  normalized: "/team-logos/ANGSILA.jpg",
+  team: "Angsila School"
+}
+```
+
+**original** = ค่าจาก database
+**normalized** = path ที่เชื่อมต่อจริง (หลังจากแก้ไข path)
+**team** = ชื่อทีม
+
+### 3. ตรวจ API
+
+เปิด:
+
+```
+/api/public/teams
+```
+
+ดูว่า response มี `logo_url` หรือไม่ สำหรับแต่ละทีม
+
+ตัวอย่าง:
+
+```json
+{
+  "id": "team-001",
+  "name": "Angsila School",
+  "short_name": "ANGSILA",
+  "logo_url": "/team-logos/ANGSILA.jpg",
+  "division_id": "div-1",
+  "active": true
+}
+```
+
+ถ้า `logo_url` เป็น `null` → DB ยังไม่ได้กรอก
+
+### 4. ตรวจ Database
+
+ตรวจค่า `teams.logo_url` ต้องเป็น:
+
+```
+/team-logos/filename.png
+```
+
+ไม่ใช่:
+
+```
+public/team-logos/filename.png        ❌
+/public/team-logos/filename.png        ❌
+http://...                             ❌
+https://canva.com/...                  ❌
+```
+
+### 5. Path Normalization
+
+TeamLogo component อัตโนมัติแก้ path เหล่านี้:
+
+```
+/public/team-logos/file.png  →  /team-logos/file.png
+public/team-logos/file.png   →  /team-logos/file.png
+team-logos/file.png          →  /team-logos/file.png
+```
+
+แต่อย่างไรก็ตาม ให้เก็บ DB เป็น `/team-logos/filename.png` เลยเพื่อ clarity
+
+### 6. File Naming
+
+ปัจจุบัน `/public/team-logos/` มี:
+
+```
+ANGSILA.jpg, BANSRI.jpg, BKMS.jpg, BLM.png, HTW.jpg
+NAPA.jpg, NONGPRUE.jpg, NONGSAK.jpg, NONGSANG.jpg
+PHANTONG.jpg, PTLTOWN.jpg, PTLW.jpg, SRIRACHA.jpg
+TAKHAM.jpg, THADTONG.jpg, WATRAT.jpg
+LINE_ALBUM_... (Thai-named files)
+```
+
+หากต้องการใหม่ แนะนำ:
+- ใช้ชื่อภาษาอังกฤษหรือ short_name ของทีม
+- เช่น `angsila.jpg`, `huathanon.jpg`
+- หลีกเลี่ยงช่องว่าง, ภาษาไทย ในชื่อไฟล์
+
+---
+
 **Last Updated**: 2026-06-28
