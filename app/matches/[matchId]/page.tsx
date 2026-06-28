@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import { useParams } from 'next/navigation';
 import { useEffect, useMemo, useState } from 'react';
 import type { Match } from '@/types/db';
 
@@ -130,20 +131,30 @@ function formatMinute(minute?: number | null): string {
   return `${minute}'`;
 }
 
-export default function MatchPage({ params }: { params: { matchId: string } }) {
+export default function MatchPage() {
+  const params = useParams<{ matchId: string }>();
+  const matchId = params?.matchId;
+
   const [data, setData] = useState<{ match: MatchDetail; goals: Goal[]; cards: Card[] } | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    if (!matchId) {
+      setError('ไม่พบรหัสแมตช์');
+      setLoading(false);
+      return;
+    }
+
     const load = async () => {
       try {
-        const res = await fetch(`/api/public/matches/${params.matchId}`);
+        const res = await fetch(`/api/public/matches/${encodeURIComponent(matchId)}`);
         if (!res.ok) {
           if (res.status === 404) {
             setError('ไม่พบแมตช์นี้');
           } else {
-            setError('ไม่สามารถโหลดข้อมูลแมตช์ได้');
+            const payload = await res.json().catch(() => ({}));
+            setError(payload.error || 'ไม่สามารถโหลดข้อมูลแมตช์ได้');
           }
           return;
         }
@@ -157,7 +168,7 @@ export default function MatchPage({ params }: { params: { matchId: string } }) {
       }
     };
     load();
-  }, [params.matchId]);
+  }, [matchId]);
 
   const goalsByTeam = useMemo(() => {
     if (!data) return { home: [], away: [] };

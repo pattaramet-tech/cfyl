@@ -15,7 +15,7 @@ export async function GET(
       return NextResponse.json({ error: 'Match ID required' }, { status: 400 });
     }
 
-    // Fetch match
+    // Fetch match (without optional relations to avoid join errors)
     const { data: match, error: matchError } = await supabase
       .from('matches')
       .select(
@@ -23,16 +23,44 @@ export async function GET(
         *,
         home_team:home_team_id(id, name, short_name, logo_url),
         away_team:away_team_id(id, name, short_name, logo_url),
-        division:division_id(id, name),
-        season:season_id(id, name, year),
-        age_group:age_group_id(id, code, name)
+        division:division_id(id, name)
       `
       )
       .eq('id', matchId)
-      .single();
+      .maybeSingle();
 
-    if (matchError || !match) {
-      return NextResponse.json({ error: 'Match not found' }, { status: 404 });
+    if (matchError) {
+      console.error('[PUBLIC_MATCH_DETAIL] Match query error:', matchError);
+      return NextResponse.json(
+        { error: 'ไม่สามารถโหลดข้อมูลแมตช์ได้' },
+        { status: 500 }
+      );
+    }
+
+    if (!match) {
+      return NextResponse.json({ error: 'ไม่พบแมตช์นี้' }, { status: 404 });
+    }
+
+    // Fetch optional metadata (season, age_group)
+    let season = null;
+    let age_group = null;
+
+    if (match.season_id) {
+      const { data: seasonData } = await supabase
+        .from('seasons')
+        .select('id, name, year')
+        .eq('id', match.season_id)
+        .maybeSingle();
+      season = seasonData;
+    }
+
+    if (match.age_group_id) {
+      const { data: ageGroupData } = await supabase
+        .from('age_groups')
+        .select('id, code, name')
+        .eq('id', match.age_group_id)
+        .maybeSingle();
+      age_group = ageGroupData;
     }
 
     // Fetch goals for this match
@@ -60,14 +88,20 @@ export async function GET(
       .eq('match_id', matchId);
 
     if (goalsError) {
-      console.error('Goals fetch error:', goalsError);
+      console.error('[PUBLIC_MATCH_DETAIL] Goals fetch error:', goalsError);
     }
     if (cardsError) {
-      console.error('Cards fetch error:', cardsError);
+      console.error('[PUBLIC_MATCH_DETAIL] Cards fetch error:', cardsError);
     }
 
+    const matchWithMeta = {
+      ...match,
+      season,
+      age_group,
+    };
+
     return NextResponse.json({
-      match,
+      match: matchWithMeta,
       goals: goals || [],
       cards: cards || [],
     });
