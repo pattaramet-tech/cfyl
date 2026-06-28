@@ -1,0 +1,2 @@
+This folder stores team logo files exported from Canva.
+Place PNG/WebP files here and reference them via teams.logo_url field in the database.
