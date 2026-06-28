@@ -8,64 +8,101 @@ interface TeamProfile {
   team: {
     id: string;
     name: string;
-    short_name?: string;
-    logo_url?: string;
-    season_id?: string;
-    age_group_id?: string;
-    division_id?: string;
-    division?: { id: string; name: string };
-    age_group?: { id: string; code: string; name: string };
-    season?: { id: string; name: string; year: number };
+    short_name?: string | null;
+    logo_url?: string | null;
+    season_id?: string | null;
+    age_group_id?: string | null;
+    division_id?: string | null;
+    division?: { id: string; name: string } | null;
+    age_group?: { id: string; code: string; name: string } | null;
+    season?: { id: string; name: string; year: number } | null;
   };
   players: Array<{
     id: string;
     full_name: string;
-    shirt_no?: number;
-    position?: string;
+    shirt_no?: number | null;
+    position?: string | null;
     team_id: string;
   }>;
   matches: Array<{
     id: string;
-    match_code?: string;
-    matchday?: number;
+    match_code?: string | null;
+    matchday?: number | string | null;
     match_date: string;
-    match_time?: string;
+    match_time?: string | null;
     status: string;
-    home_score?: number;
-    away_score?: number;
+    home_score?: number | null;
+    away_score?: number | null;
     home_team_id: string;
     away_team_id: string;
-    home_team?: { id: string; name: string; short_name?: string };
-    away_team?: { id: string; name: string; short_name?: string };
-    division?: { id: string; name: string };
+    home_team?: { id: string; name: string; short_name?: string | null } | null;
+    away_team?: { id: string; name: string; short_name?: string | null } | null;
+    division?: { id: string; name: string } | null;
   }>;
   goals: Array<{
     id: string;
     player_id: string;
     team_id: string;
-    match_id?: string;
+    match_id?: string | null;
     goals: number;
-    player?: { id: string; full_name: string; shirt_no?: number };
+    player?: { id: string; full_name: string; shirt_no?: number | null } | null;
   }>;
   cards: Array<{
     id: string;
     player_id: string;
     team_id: string;
     card_type: string;
-    minute?: number;
-    match_id?: string;
-    player?: { id: string; full_name: string; shirt_no?: number };
-    match?: { id: string; matchday?: number; match_date: string; status: string };
+    minute?: number | null;
+    match_id?: string | null;
+    player?: { id: string; full_name: string; shirt_no?: number | null } | null;
+    match?: { id: string; matchday?: number | string | null; match_date: string; status: string } | null;
   }>;
   suspensions: Array<{
     id?: string;
     player_id: string;
-    player_name?: string;
-    shirt_no?: number;
-    total_points?: number;
-    ban_matches?: number;
-    status?: string;
+    player_name?: string | null;
+    shirt_no?: number | null;
+    total_points?: number | null;
+    ban_matches?: number | null;
+    status?: string | null;
   }>;
+}
+
+type TeamMatch = TeamProfile['matches'][number];
+
+type TopScorer = {
+  playerId: string;
+  playerName: string;
+  shirtNo?: number | null;
+  goals: number;
+};
+
+function formatThaiDate(dateStr?: string | null): string {
+  if (!dateStr) return '-';
+  const date = new Date(dateStr);
+  if (isNaN(date.getTime())) return '-';
+  const months = [
+    'มกราคม',
+    'กุมภาพันธ์',
+    'มีนาคม',
+    'เมษายน',
+    'พฤษภาคม',
+    'มิถุนายน',
+    'กรกฎาคม',
+    'สิงหาคม',
+    'กันยายน',
+    'ตุลาคม',
+    'พฤศจิกายน',
+    'ธันวาคม',
+  ];
+  return `${date.getDate()} ${months[date.getMonth()]} ${date.getFullYear() + 543}`;
+}
+
+function getCardIcon(cardType: string): string {
+  if (cardType === 'yellow') return '🟨';
+  if (cardType === 'red') return '🟥';
+  if (cardType === 'second_yellow') return '🟨🟨';
+  return '';
 }
 
 export default function TeamProfilePage() {
@@ -77,7 +114,11 @@ export default function TeamProfilePage() {
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    if (!teamId) return;
+    if (!teamId) {
+      setError('ไม่พบรหัสทีม');
+      setIsLoading(false);
+      return;
+    }
 
     const loadTeamData = async () => {
       try {
@@ -87,7 +128,6 @@ export default function TeamProfilePage() {
         if (response.status === 404) {
           setError('ไม่พบทีมนี้');
           setData(null);
-          setIsLoading(false);
           return;
         }
 
@@ -113,7 +153,7 @@ export default function TeamProfilePage() {
   if (isLoading) {
     return (
       <div className="cfyl-container py-4 sm:py-6">
-        <div className="h-96 bg-gray-200 animate-pulse rounded-lg"></div>
+        <div className="h-96 bg-gray-200 animate-pulse rounded-lg" />
       </div>
     );
   }
@@ -164,7 +204,7 @@ export default function TeamProfilePage() {
     return sum + (isHome ? m.away_score ?? 0 : m.home_score ?? 0);
   }, 0);
 
-  const points = wins * 3 + draws * 1;
+  const points = wins * 3 + draws;
   const suspensionsCount = suspensions.filter((s) => s.status !== 'completed').length;
 
   const yellowCards = cards.filter((c) => c.card_type === 'yellow').length;
@@ -179,14 +219,38 @@ export default function TeamProfilePage() {
     })
     .slice(0, 5);
 
-  const topScorers = [...goals]
-    .sort((a, b) => (b.goals ?? 0) - (a.goals ?? 0))
-    .slice(0, 5);
-
   const playerGoalsMap = new Map<string, number>();
+  const topScorersMap = new Map<string, TopScorer>();
+
   goals.forEach((g) => {
-    playerGoalsMap.set(g.player_id, (playerGoalsMap.get(g.player_id) ?? 0) + g.goals);
+    const playerId = g.player_id || g.player?.id || `unknown-${g.id}`;
+    const goalCount = Number(g.goals || 0);
+
+    playerGoalsMap.set(playerId, (playerGoalsMap.get(playerId) ?? 0) + goalCount);
+
+    const existing = topScorersMap.get(playerId);
+    if (existing) {
+      existing.goals += goalCount;
+    } else {
+      topScorersMap.set(playerId, {
+        playerId,
+        playerName: g.player?.full_name || 'ไม่ทราบชื่อ',
+        shirtNo: g.player?.shirt_no ?? null,
+        goals: goalCount,
+      });
+    }
   });
+
+  const topScorers = Array.from(topScorersMap.values())
+    .filter((scorer) => scorer.goals > 0)
+    .sort((a, b) => {
+      if (a.goals !== b.goals) return b.goals - a.goals;
+      const shirtA = a.shirtNo ?? 999;
+      const shirtB = b.shirtNo ?? 999;
+      if (shirtA !== shirtB) return shirtA - shirtB;
+      return a.playerName.localeCompare(b.playerName, 'th');
+    })
+    .slice(0, 5);
 
   const playerCardsMap = new Map<string, number>();
   cards.forEach((c) => {
@@ -200,32 +264,6 @@ export default function TeamProfilePage() {
     return suspension.ban_matches || suspension.total_points ? '🚨' : '-';
   };
 
-  const getCardIcon = (cardType: string): string => {
-    if (cardType === 'yellow') return '🟨';
-    if (cardType === 'red') return '🟥';
-    if (cardType === 'second_yellow') return '🟨🟨';
-    return '';
-  };
-
-  const formatThaiDate = (dateStr: string): string => {
-    const date = new Date(dateStr);
-    const months = [
-      'มกราคม',
-      'กุมภาพันธ์',
-      'มีนาคม',
-      'เมษายน',
-      'พฤษภาคม',
-      'มิถุนายน',
-      'กรกฎาคม',
-      'สิงหาคม',
-      'กันยายน',
-      'ตุลาคม',
-      'พฤศจิกายน',
-      'ธันวาคม',
-    ];
-    return `${date.getDate()} ${months[date.getMonth()]} ${date.getFullYear() + 543}`;
-  };
-
   const getTeamLogo = (): string => {
     if (team.logo_url) return team.logo_url;
     const initials = team.name
@@ -237,14 +275,14 @@ export default function TeamProfilePage() {
     return initials;
   };
 
-  const getOpponentTeam = (match: (typeof matches)[0]) => {
+  const getOpponentTeam = (match: TeamMatch) => {
     if (match.home_team_id === teamId) {
       return match.away_team;
     }
     return match.home_team;
   };
 
-  const getScore = (match: (typeof matches)[0]) => {
+  const getScore = (match: TeamMatch) => {
     if (match.home_team_id === teamId) {
       return { own: match.home_score, opponent: match.away_score };
     }
@@ -418,7 +456,7 @@ export default function TeamProfilePage() {
         ) : (
           <div className="space-y-2">
             {topScorers.map((scorer, index) => (
-              <div key={scorer.id} className="cfyl-card p-3 sm:p-4">
+              <div key={scorer.playerId} className="cfyl-card p-3 sm:p-4">
                 <div className="flex items-center justify-between gap-3">
                   <div className="flex items-center gap-3 flex-1">
                     <div className="w-8 h-8 sm:w-10 sm:h-10 bg-yellow-100 rounded-full flex items-center justify-center shrink-0">
@@ -426,9 +464,9 @@ export default function TeamProfilePage() {
                     </div>
                     <div className="flex-1 min-w-0">
                       <div className="font-semibold text-gray-900 text-sm sm:text-base">
-                        {scorer.player?.full_name || 'ไม่ทราบชื่อ'}
+                        {scorer.playerName}
                       </div>
-                      <div className="text-xs text-gray-500">#{scorer.player?.shirt_no || '-'}</div>
+                      <div className="text-xs text-gray-500">#{scorer.shirtNo || '-'}</div>
                     </div>
                   </div>
                   <div className="shrink-0 text-right">
