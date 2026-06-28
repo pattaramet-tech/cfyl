@@ -55,6 +55,9 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: auth.error || 'Unauthorized' }, { status: 401 });
   }
 
+  const { searchParams } = request.nextUrl;
+  const debug = searchParams.get('debug') === '1';
+
   // ── Global stats ──────────────────────────────────────────────────────────
   const [teams, players, matchesTotal, finishedMatches, goalsTotal, cardsTotal] = await Promise.all([
     count('teams'),
@@ -167,19 +170,35 @@ export async function GET(request: NextRequest) {
       if (!mdMap.has(n)) mdMap.set(n, { matchday: n, total: 0, finished: 0, pending: 0, goals: 0, cards: 0 });
       return mdMap.get(n)!;
     };
+
+    // Count from matches: goals from score, status from match
     for (const m of matches) {
       const e = getMd(mdNum(m.matchday));
       e.total += 1;
-      if (m.status === 'finished') e.finished += 1; else e.pending += 1;
+
+      const isFinishedWithScore =
+        m.status === 'finished' &&
+        m.home_score !== null &&
+        m.away_score !== null;
+
+      if (m.status === 'finished') {
+        e.finished += 1;
+      } else {
+        e.pending += 1;
+      }
+
+      // Calculate goals from score (not from goals table)
+      if (isFinishedWithScore) {
+        e.goals += Number(m.home_score || 0) + Number(m.away_score || 0);
+      }
     }
-    for (const g of goalsRows) {
-      const n = matchMdMap.get((g as any).match_id) ?? 0;
-      getMd(n).goals += Number((g as any).goals) || 0;
-    }
+
+    // Count cards (no change)
     for (const c of cardsRows) {
       const n = matchMdMap.get((c as any).match_id) ?? 0;
       getMd(n).cards += 1;
     }
+
     matchdays = Array.from(mdMap.values())
       .filter((e) => e.matchday > 0)
       .sort((a, b) => a.matchday - b.matchday);
@@ -240,7 +259,7 @@ export async function GET(request: NextRequest) {
       });
   }
 
-  return NextResponse.json({
+  const response: any = {
     season: seasonBlock,
     activeSeasonCount,
     stats: {
@@ -258,5 +277,20 @@ export async function GET(request: NextRequest) {
     matchdays,
     topScorers,
     activeSuspensions,
-  });
+  };
+
+  if (debug && matchdays.length > 0) {
+    response.debug = {
+      matchdays: matchdays.map((md) => ({
+        matchday: md.matchday,
+        total: md.total,
+        finished: md.finished,
+        pending: md.pending,
+        goalsFromScore: md.goals,
+        cardsCount: md.cards,
+      })),
+    };
+  }
+
+  return NextResponse.json(response);
 }
