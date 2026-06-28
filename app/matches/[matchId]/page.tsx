@@ -12,6 +12,7 @@ interface Goal {
   player_id: string;
   team_id: string;
   goals: number;
+  minute?: number | null;
   created_at: string;
   player?: {
     id: string;
@@ -171,29 +172,12 @@ export default function MatchPage() {
     load();
   }, [matchId]);
 
-  const goalsByTeam = useMemo(() => {
-    if (!data) return { home: [], away: [] };
-    const home = data.goals.filter((g) => g.team_id === data.match.home_team_id).sort((a, b) => {
-      const aGoals = a.goals || 0;
-      const bGoals = b.goals || 0;
-      if (aGoals !== bGoals) return bGoals - aGoals;
-      return (a.player?.shirt_no || 999) - (b.player?.shirt_no || 999);
-    });
-    const away = data.goals.filter((g) => g.team_id === data.match.away_team_id).sort((a, b) => {
-      const aGoals = a.goals || 0;
-      const bGoals = b.goals || 0;
-      if (aGoals !== bGoals) return bGoals - aGoals;
-      return (a.player?.shirt_no || 999) - (b.player?.shirt_no || 999);
-    });
-    return { home, away };
-  }, [data]);
-
   const timeline = useMemo(() => {
     if (!data) return [];
     const events: Array<{ type: 'goal' | 'card'; minute: number | null; data: Goal | Card }> = [];
 
     data.goals.forEach((g) => {
-      events.push({ type: 'goal', minute: null, data: g });
+      events.push({ type: 'goal', minute: g.minute ?? null, data: g });
     });
 
     data.cards.forEach((c) => {
@@ -330,89 +314,6 @@ export default function MatchPage() {
           </div>
         </div>
 
-        {/* Goals Summary */}
-        {isFinished && (data.goals.length > 0 || true) && (
-          <div className="cfyl-card p-6">
-            <h2 className="cfyl-section-title mb-4">⚽ ผู้ทำประตู</h2>
-            {data.goals.length === 0 ? (
-              <p className="cfyl-empty text-center py-6">ยังไม่มีข้อมูลผู้ทำประตู</p>
-            ) : (
-              <div className="space-y-6">
-                {/* Home team goals */}
-                <div>
-                  <Link
-                    href={`/teams/${m.home_team?.id || ''}`}
-                    className={`font-semibold text-slate-700 mb-2 text-sm hover:text-blue-600 transition ${
-                      m.home_team?.id ? 'cursor-pointer' : 'cursor-default'
-                    }`}
-                  >
-                    {m.home_team?.name || 'ทีมเหย้า'}
-                  </Link>
-                  <div className="space-y-1">
-                    {goalsByTeam.home.length === 0 ? (
-                      <p className="text-slate-400 text-xs">ไม่มีผู้ทำประตู</p>
-                    ) : (
-                      goalsByTeam.home.map((g) => (
-                        <div key={g.id} className="flex items-center justify-between text-sm px-3 py-2 bg-slate-50 rounded">
-                          <span className="font-semibold text-slate-800">
-                            #{g.player?.shirt_no || '?'} {g.player?.full_name || 'ไม่ระบุ'}
-                          </span>
-                          <span className="text-slate-600">×{g.goals || 1}</span>
-                        </div>
-                      ))
-                    )}
-                  </div>
-                </div>
-
-                {/* Away team goals */}
-                <div>
-                  <Link
-                    href={`/teams/${m.away_team?.id || ''}`}
-                    className={`font-semibold text-slate-700 mb-2 text-sm hover:text-blue-600 transition ${
-                      m.away_team?.id ? 'cursor-pointer' : 'cursor-default'
-                    }`}
-                  >
-                    {m.away_team?.name || 'ทีมเยือน'}
-                  </Link>
-                  <div className="space-y-1">
-                    {goalsByTeam.away.length === 0 ? (
-                      <p className="text-slate-400 text-xs">ไม่มีผู้ทำประตู</p>
-                    ) : (
-                      goalsByTeam.away.map((g) => (
-                        <div key={g.id} className="flex items-center justify-between text-sm px-3 py-2 bg-slate-50 rounded">
-                          <span className="font-semibold text-slate-800">
-                            #{g.player?.shirt_no || '?'} {g.player?.full_name || 'ไม่ระบุ'}
-                          </span>
-                          <span className="text-slate-600">×{g.goals || 1}</span>
-                        </div>
-                      ))
-                    )}
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* Cards Summary */}
-        {data.cards.length > 0 && (
-          <div className="cfyl-card p-6">
-            <h2 className="cfyl-section-title mb-4">🟨 ใบเหลือง/ใบแดง</h2>
-            <div className="space-y-2">
-              {data.cards.map((c) => (
-                <div key={c.id} className="flex items-center justify-between text-sm px-3 py-2 bg-slate-50 rounded">
-                  <div className="flex items-center gap-2 min-w-0">
-                    <span className="text-lg shrink-0">{getCardIcon(c.card_type)}</span>
-                    <span className="font-semibold text-slate-800 truncate">
-                      #{c.player?.shirt_no || '?'} {c.player?.full_name || 'ไม่ระบุ'}
-                    </span>
-                  </div>
-                  <span className="text-slate-500 shrink-0 ml-2">{c.team?.short_name || c.team?.name || '—'}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
 
         {/* Timeline */}
         {timeline.length > 0 && (
@@ -436,11 +337,18 @@ export default function MatchPage() {
                       <span className="font-semibold text-slate-800">
                         #{data.player?.shirt_no || '?'} {data.player?.full_name || 'ไม่ระบุ'}
                       </span>
+                      {isGoal && Number(data.goals || 1) > 1 && (
+                        <span className="ml-2 text-xs font-bold text-blue-700 bg-blue-50 px-2 py-0.5 rounded-full">
+                          ×{data.goals}
+                        </span>
+                      )}
                       {!isGoal && data.note && (
                         <span className="text-slate-500 ml-1">• {data.note}</span>
                       )}
                     </span>
-                    <span className="text-slate-500 shrink-0 text-xs">{data.team?.short_name || data.team?.name || '—'}</span>
+                    <span className="text-slate-500 shrink-0 text-xs text-right max-w-55 truncate">
+                      {data.team?.name || data.team?.short_name || '—'}
+                    </span>
                   </div>
                 );
               })}
@@ -448,7 +356,7 @@ export default function MatchPage() {
           </div>
         )}
 
-        {timeline.length === 0 && data.goals.length === 0 && data.cards.length === 0 && (
+        {timeline.length === 0 && (
           <div className="cfyl-card p-6 bg-slate-50">
             <p className="cfyl-empty text-center">ยังไม่มีเหตุการณ์ในแมตช์นี้</p>
           </div>
