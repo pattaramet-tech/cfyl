@@ -149,6 +149,34 @@ export async function resolveCurrentSeasonSlug(): Promise<CurrentSeasonSlug | nu
   };
 }
 
+/**
+ * Resolve season by segment (slug or year) + its first age group.
+ * Used for clean URLs like /standings/cfyl or /standings/2026.
+ */
+export async function resolveCurrentAgeGroupBySeasonSeg(
+  seasonSegParam: string
+): Promise<CurrentSeasonSlug | null> {
+  const seasons = await getJson<Season[]>('/api/public/seasons');
+  if (!seasons?.length) return null;
+
+  const season = pickSeasonBySeg(seasons, seasonSegParam);
+  if (!season) return null;
+
+  const ageGroups = await getJson<AgeGroup[]>(`/api/public/age-groups?seasonId=${season.id}`);
+  if (!ageGroups?.length) return null;
+
+  const ageGroup = [...ageGroups].sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0))[0];
+
+  return {
+    seasonId: season.id,
+    ageGroupId: ageGroup.id,
+    seasonYear: season.year,
+    seasonSlug: season.season_slug ?? null,
+    seasonSeg: seasonSeg(season),
+    ageGroupCode: ageGroup.code,
+  };
+}
+
 async function getJson<T>(url: string): Promise<T | null> {
   try {
     const res = await fetch(url);

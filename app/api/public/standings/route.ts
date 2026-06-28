@@ -11,6 +11,7 @@ export async function GET(request: NextRequest) {
     const seasonId = searchParams.get('seasonId');
     const ageGroupId = searchParams.get('ageGroupId');
     const divisionId = searchParams.get('divisionId');
+    const debug = searchParams.get('debug') === '1';
 
     if (!seasonId || !ageGroupId || !divisionId) {
       return NextResponse.json(
@@ -29,36 +30,72 @@ export async function GET(request: NextRequest) {
 
     if (matchError) throw matchError;
 
-    // Get all teams in this division
-    const { data: teams, error: teamError } = await supabase
+    const safeMatches = matches || [];
+
+    // Derive team ids from matches
+    const teamIdsFromMatches = Array.from(
+      new Set(
+        (safeMatches as Match[])
+          .flatMap((m) => [m.home_team_id, m.away_team_id])
+          .filter(Boolean)
+      )
+    );
+
+    // Get teams by division_id (primary)
+    const { data: teamsByDiv, error: teamDivError } = await supabase
       .from('teams')
       .select('id, name, short_name, logo_url')
       .eq('season_id', seasonId)
       .eq('age_group_id', ageGroupId)
       .eq('division_id', divisionId);
 
-    if (teamError) throw teamError;
+    if (teamDivError) throw teamDivError;
+
+    // Get teams by match ids (handles division_id = null case)
+    let teamsByMatchIds: any[] = [];
+    if (teamIdsFromMatches.length > 0) {
+      const { data: matchTeams, error: matchTeamError } = await supabase
+        .from('teams')
+        .select('id, name, short_name, logo_url')
+        .in('id', teamIdsFromMatches);
+
+      if (matchTeamError) throw matchTeamError;
+
+      teamsByMatchIds = matchTeams || [];
+    }
+
+    // Merge teams by id (avoid duplicates)
+    const teamMap = new Map<string, any>();
+    (teamsByDiv || []).forEach((t) => teamMap.set(t.id, t));
+    teamsByMatchIds.forEach((t) => teamMap.set(t.id, t));
+
+    const teams = Array.from(teamMap.values());
+
+    // Filter: finished matches with scores
+    const scoredMatches = (safeMatches as Match[]).filter(
+      (m) => m.status === 'finished' && m.home_score !== null && m.away_score !== null
+    );
 
     // Calculate standings for each team
-    const standings: any[] = teams!.map(team => {
-      const stats = calculateStandings(matches as Match[], team.id);
-        return {
-          season_id: seasonId,
-          age_group_id: ageGroupId,
-          division_id: divisionId,
-          team_id: team.id,
-          team_name: team.name,
-          team_short_name: team.short_name,
-          team_logo_url: team.logo_url,
-          played: stats.played,
-          wins: stats.wins,
-          draws: stats.draws,
-          losses: stats.losses,
-          goals_for: stats.goalsFor,
-          goals_against: stats.goalsAgainst,
-          goal_diff: stats.goalDiff,
-          points: stats.points,
-        };
+    const standings: any[] = teams.map((team) => {
+      const stats = calculateStandings(scoredMatches, team.id);
+      return {
+        season_id: seasonId,
+        age_group_id: ageGroupId,
+        division_id: divisionId,
+        team_id: team.id,
+        team_name: team.name,
+        team_short_name: team.short_name,
+        team_logo_url: team.logo_url,
+        played: stats.played,
+        wins: stats.wins,
+        draws: stats.draws,
+        losses: stats.losses,
+        goals_for: stats.goalsFor,
+        goals_against: stats.goalsAgainst,
+        goal_diff: stats.goalDiff,
+        points: stats.points,
+      };
     });
 
     // Sort by points (desc), goal_diff (desc), goals_for (desc)
@@ -67,6 +104,22 @@ export async function GET(request: NextRequest) {
       if (b.goal_diff !== a.goal_diff) return b.goal_diff - a.goal_diff;
       return b.goals_for - a.goals_for;
     });
+
+    if (debug) {
+      return NextResponse.json({
+        rows: standings,
+        debug: {
+          seasonId,
+          ageGroupId,
+          divisionId,
+          teamsByDivisionCount: (teamsByDiv || []).length,
+          teamsFromMatchesCount: teamsByMatchIds.length,
+          finalTeamsCount: teams.length,
+          allMatchesCount: safeMatches.length,
+          scoredMatchesCount: scoredMatches.length,
+        },
+      });
+    }
 
     return NextResponse.json(standings);
   } catch (error) {
