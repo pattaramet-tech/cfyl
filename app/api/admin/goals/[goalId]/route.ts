@@ -105,7 +105,7 @@ export async function PUT(
         minute,
         created_at,
         updated_at,
-        player:player_id(id, full_name, shirt_no),
+        player:player_id(id, full_name, shirt_no, team_id),
         team:team_id(id, name, short_name)
       `)
       .single();

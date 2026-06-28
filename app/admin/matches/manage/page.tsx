@@ -16,12 +16,14 @@ interface Goal {
   player_id: string;
   team_id: string;
   goals: number;
+  minute?: number | null;
   created_at: string;
   updated_at: string;
   player?: {
     id: string;
     full_name: string;
     shirt_no?: number;
+    team_id?: string;
   };
   team?: {
     id: string;
@@ -513,16 +515,26 @@ export default function MatchManagePage() {
     }
   };
 
+  // Resolve team_id from goal with fallback chain
+  const getGoalTeamId = (goal: Goal): string | null => {
+    if (goal.team_id) return goal.team_id;
+    if (goal.team?.id) return goal.team.id;
+    if (goal.player?.team_id) return goal.player.team_id;
+
+    const player = players.find((p) => p.id === goal.player_id);
+    return player?.team_id || null;
+  };
+
   const calculateGoalConsistency = () => {
     if (!selectedMatch) return null;
 
     const homeGoalSum = goals
-      .filter((g) => g.team_id === selectedMatch.home_team_id)
-      .reduce((sum, g) => sum + g.goals, 0);
+      .filter((g) => getGoalTeamId(g) === selectedMatch.home_team_id)
+      .reduce((sum, g) => sum + Number(g.goals || 0), 0);
 
     const awayGoalSum = goals
-      .filter((g) => g.team_id === selectedMatch.away_team_id)
-      .reduce((sum, g) => sum + g.goals, 0);
+      .filter((g) => getGoalTeamId(g) === selectedMatch.away_team_id)
+      .reduce((sum, g) => sum + Number(g.goals || 0), 0);
 
     const homeScoreNum = parseInt(homeScore);
     const awayScoreNum = parseInt(awayScore);

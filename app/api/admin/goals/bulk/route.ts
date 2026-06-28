@@ -152,7 +152,7 @@ export async function POST(request: NextRequest) {
       .insert(inserts)
       .select(`
         id, match_id, player_id, team_id, goals, minute,
-        player:player_id(id, full_name, shirt_no),
+        player:player_id(id, full_name, shirt_no, team_id),
         team:team_id(id, name, short_name)
       `);
 
