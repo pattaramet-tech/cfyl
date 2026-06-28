@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
 interface TeamLogoProps {
   logoUrl?: string | null;
@@ -23,6 +23,17 @@ function normalizeLogoUrl(url?: string | null): string | null {
   const trimmed = url.trim();
   if (!trimmed) return null;
 
+  // Supabase / external absolute URL
+  if (/^https?:\/\//i.test(trimmed)) {
+    return trimmed;
+  }
+
+  // Protocol-relative URL
+  if (trimmed.startsWith('//')) {
+    return `https:${trimmed}`;
+  }
+
+  // Static public path cleanup
   if (trimmed.startsWith('/public/team-logos/')) {
     return trimmed.replace('/public/team-logos/', '/team-logos/');
   }
@@ -66,6 +77,11 @@ export function TeamLogo({
 
   const normalizedLogoUrl = useMemo(() => normalizeLogoUrl(logoUrl), [logoUrl]);
   const initials = useMemo(() => getInitials(name, shortName), [name, shortName]);
+
+  // Reset error when logo URL changes
+  useEffect(() => {
+    setHasImageError(false);
+  }, [normalizedLogoUrl]);
 
   const shouldShowImage = normalizedLogoUrl && !hasImageError;
 
