@@ -1,3 +1,4 @@
+import Link from 'next/link';
 import type { Match } from '@/types/db';
 
 interface MatchCardProps {
@@ -88,8 +89,16 @@ export function MatchCard({ match, variant, badgeText }: MatchCardProps) {
       </div>
 
       {/* Status */}
-      <div className="mt-3 flex justify-center">
-        <span className={`cfyl-badge ${getBadgeClass()}`}>{badgeText || getDefaultBadgeText()}</span>
+      <div className="mt-3 space-y-2">
+        <div className="flex justify-center">
+          <span className={`cfyl-badge ${getBadgeClass()}`}>{badgeText || getDefaultBadgeText()}</span>
+        </div>
+        <Link
+          href={`/matches/${match.id}`}
+          className="block text-center text-xs text-blue-600 hover:text-blue-700 hover:underline font-semibold transition"
+        >
+          ดูรายละเอียด →
+        </Link>
       </div>
     </div>
   );
