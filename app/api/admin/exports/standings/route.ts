@@ -22,6 +22,7 @@ export async function GET(request: NextRequest) {
   const { searchParams } = request.nextUrl;
   const seasonId = searchParams.get('seasonId');
   const matchdayParam = searchParams.get('matchday');
+  const debug = searchParams.get('debug') === '1';
   const matchdayFilter =
     matchdayParam && matchdayParam.trim() !== ''
       ? parseInt(matchdayParam, 10)
@@ -42,30 +43,11 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: 'Season not found' }, { status: 404 });
   }
 
-  // Fetch divisions for this season to get unique age_group_ids
-  const { data: allDivisions, error: divError } = await supabaseAdmin
-    .from('divisions')
-    .select('id, age_group_id')
-    .eq('season_id', seasonId);
-
-  if (divError) {
-    return NextResponse.json({ error: 'Failed to fetch divisions' }, { status: 500 });
-  }
-
-  if (!allDivisions?.length) {
-    return NextResponse.json({ season, groups: [] });
-  }
-
-  // Get unique age_group_ids from divisions
-  const uniqueAgeGroupIds = Array.from(
-    new Set(allDivisions.map((d) => d.age_group_id))
-  );
-
-  // Fetch age groups by those IDs, sorted by sort_order then code
+  // Fetch age groups directly from season (master data)
   const { data: ageGroups, error: agError } = await supabaseAdmin
     .from('age_groups')
     .select('id, code, name, sort_order')
-    .in('id', uniqueAgeGroupIds)
+    .eq('season_id', seasonId)
     .order('sort_order', { ascending: true })
     .order('code', { ascending: true });
 
@@ -73,14 +55,20 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: 'Failed to fetch age groups' }, { status: 500 });
   }
   if (!ageGroups?.length) {
-    return NextResponse.json({ season, groups: [] });
+    return NextResponse.json({ season, matchdayFilter, groups: [] });
   }
 
+  // Debug counters
+  let totalAgeGroups = 0;
+  let totalTeams = 0;
+  let totalMatches = 0;
   const groups: GroupResult[] = [];
 
   for (const ag of ageGroups) {
-    // Fetch divisions sorted by sort_order then name
-    const { data: divisions } = await supabaseAdmin
+    totalAgeGroups += 1;
+
+    // Fetch divisions for this age group
+    const { data: divisions, error: divError } = await supabaseAdmin
       .from('divisions')
       .select('id, name, sort_order')
       .eq('season_id', seasonId)
@@ -88,29 +76,102 @@ export async function GET(request: NextRequest) {
       .order('sort_order', { ascending: true })
       .order('name', { ascending: true });
 
-    if (!divisions?.length) continue;
+    if (divError) {
+      console.error('[STANDINGS_EXPORT] Division fetch error:', divError);
+      continue;
+    }
 
-    for (const div of divisions) {
-      // Fetch all matches
-      const { data: allMatches } = await supabaseAdmin
-        .from('matches')
-        .select('*')
-        .eq('season_id', seasonId)
-        .eq('age_group_id', ag.id)
-        .eq('division_id', div.id);
+    // Build division candidates: explicit divisions + potential no-division group
+    const divisionCandidates: ExportDivisionGroup[] = (divisions || []).map((d) => ({
+      id: d.id,
+      name: d.name,
+      sort_order: d.sort_order ?? 999,
+    }));
 
-      // Fetch teams (active only for display, but include all for standings)
-      const { data: teams } = await supabaseAdmin
+    // Check if there are teams/matches without division_id
+    const { data: teamsWithoutDiv } = await supabaseAdmin
+      .from('teams')
+      .select('id')
+      .eq('season_id', seasonId)
+      .eq('age_group_id', ag.id)
+      .is('division_id', null)
+      .limit(1);
+
+    const { data: matchesWithoutDiv } = await supabaseAdmin
+      .from('matches')
+      .select('id')
+      .eq('season_id', seasonId)
+      .eq('age_group_id', ag.id)
+      .is('division_id', null)
+      .limit(1);
+
+    const hasNoDivisionTeams = (teamsWithoutDiv?.length ?? 0) > 0;
+    const hasNoDivisionMatches = (matchesWithoutDiv?.length ?? 0) > 0;
+
+    // Add no-division group if teams or matches exist without division_id
+    if (hasNoDivisionTeams || hasNoDivisionMatches) {
+      divisionCandidates.push({
+        id: null,
+        name: 'รวม',
+        sort_order: 9999,
+      });
+    }
+
+    // If no divisions and no no-division data, skip this age group
+    if (divisionCandidates.length === 0) continue;
+
+    // Process each division candidate
+    for (const divCandidate of divisionCandidates) {
+      // Fetch teams
+      let teamsQuery = supabaseAdmin
         .from('teams')
         .select('id, name')
         .eq('season_id', seasonId)
-        .eq('age_group_id', ag.id)
-        .eq('division_id', div.id);
+        .eq('age_group_id', ag.id);
 
-      if (!allMatches || !teams) continue;
+      if (divCandidate.id === null) {
+        teamsQuery = teamsQuery.is('division_id', null);
+      } else {
+        teamsQuery = teamsQuery.eq('division_id', divCandidate.id);
+      }
+
+      const { data: teams, error: teamError } = await teamsQuery;
+
+      if (teamError) {
+        console.error('[STANDINGS_EXPORT] Team fetch error:', teamError);
+        continue;
+      }
+
+      const safeTeams = teams || [];
+      if (safeTeams.length === 0) continue;
+
+      totalTeams += safeTeams.length;
+
+      // Fetch matches
+      let matchesQuery = supabaseAdmin
+        .from('matches')
+        .select('*')
+        .eq('season_id', seasonId)
+        .eq('age_group_id', ag.id);
+
+      if (divCandidate.id === null) {
+        matchesQuery = matchesQuery.is('division_id', null);
+      } else {
+        matchesQuery = matchesQuery.eq('division_id', divCandidate.id);
+      }
+
+      const { data: allMatches, error: matchError } = await matchesQuery;
+
+      if (matchError) {
+        console.error('[STANDINGS_EXPORT] Match fetch error:', matchError);
+        continue;
+      }
+
+      const safeMatches = allMatches || [];
+      totalMatches += safeMatches.length;
 
       // Filter: status=finished AND both scores not null (safe 0-0 handling)
-      let scoredMatches = (allMatches as Match[]).filter(
+      let scoredMatches = (safeMatches as Match[]).filter(
         (m) =>
           m.status === 'finished' &&
           m.home_score !== null &&
@@ -124,8 +185,8 @@ export async function GET(request: NextRequest) {
         );
       }
 
-      // Calculate standings per team using existing calculateStandings
-      const standings = teams.map((team) => {
+      // Calculate standings per team
+      const standings = safeTeams.map((team) => {
         const stats = calculateStandings(scoredMatches, team.id);
         return {
           teamId: team.id,
@@ -149,24 +210,39 @@ export async function GET(request: NextRequest) {
         return a.teamName.localeCompare(b.teamName, 'th');
       });
 
-      // Display label: use age_group.code (U14/U17) + division name uppercased
+      // Display label
       const agLabel = ag.code || ag.name;
-      const divLabel = div.name.toUpperCase().includes('DIVISION')
-        ? div.name.toUpperCase()
-        : `DIVISION ${div.name.toUpperCase()}`;
+      const divLabel =
+        divCandidate.id === null
+          ? 'รวม'
+          : divCandidate.name.toUpperCase().includes('DIVISION')
+          ? divCandidate.name.toUpperCase()
+          : `DIVISION ${divCandidate.name.toUpperCase()}`;
 
       groups.push({
         ageGroupId: ag.id,
         ageGroupName: agLabel,
-        divisionId: div.id,
-        divisionName: div.name,
+        divisionId: divCandidate.id,
+        divisionName: divCandidate.name,
         label: `${agLabel} ${divLabel}`,
         standings: standings.map((s, i) => ({ rank: i + 1, ...s })),
       });
     }
   }
 
-  return NextResponse.json({ season, matchdayFilter, groups });
+  const response: any = { season, matchdayFilter, groups };
+
+  if (debug) {
+    response.debug = {
+      ageGroupsCount: totalAgeGroups,
+      groupsCount: groups.length,
+      totalTeams,
+      totalMatches,
+      matchdayFilter,
+    };
+  }
+
+  return NextResponse.json(response);
 }
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -188,8 +264,14 @@ interface StandingRow {
 interface GroupResult {
   ageGroupId: string;
   ageGroupName: string;
-  divisionId: string;
+  divisionId: string | null;
   divisionName: string;
   label: string;
   standings: StandingRow[];
+}
+
+interface ExportDivisionGroup {
+  id: string | null;
+  name: string;
+  sort_order: number;
 }

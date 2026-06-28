@@ -34,6 +34,13 @@ interface ExportsData {
   season: { name: string };
   matchdayFilter: number | null;
   groups: Group[];
+  debug?: {
+    ageGroupsCount: number;
+    groupsCount: number;
+    totalTeams: number;
+    totalMatches: number;
+    matchdayFilter: number | null;
+  };
 }
 
 type Format = 'detailed' | 'compact' | 'tsv';
@@ -203,7 +210,7 @@ export default function ExportsPage() {
   }, []);
 
   // Fetch standings from admin API
-  const fetchStandings = useCallback(async () => {
+  const fetchStandings = useCallback(async (withDebug: boolean = false) => {
     if (!selectedSeason) return;
     setIsLoading(true);
     setError(null);
@@ -211,8 +218,9 @@ export default function ExportsPage() {
     try {
       const token = localStorage.getItem('admin_token');
       const mdParam = matchdayInput.trim() !== '' ? `&matchday=${matchdayInput.trim()}` : '';
+      const debugParam = withDebug ? '&debug=1' : '';
       const res = await fetch(
-        `/api/admin/exports/standings?seasonId=${selectedSeason}${mdParam}`,
+        `/api/admin/exports/standings?seasonId=${selectedSeason}${mdParam}${debugParam}`,
         { headers: token ? { Authorization: `Bearer ${token}` } : {} }
       );
       if (!res.ok) {
@@ -292,12 +300,24 @@ export default function ExportsPage() {
 
           {/* Load button */}
           <button
-            onClick={fetchStandings}
+            onClick={() => fetchStandings(false)}
             disabled={!selectedSeason || isLoading}
             className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 text-white rounded-lg text-sm font-semibold transition"
           >
             {isLoading ? '⏳ กำลังโหลด...' : '🔄 โหลดข้อมูล'}
           </button>
+
+          {/* Debug button - only show when groups are empty */}
+          {!isLoading && data && data.groups.length === 0 && (
+            <button
+              onClick={() => fetchStandings(true)}
+              disabled={!selectedSeason}
+              className="px-3 py-2 bg-gray-400 hover:bg-gray-500 text-white rounded-lg text-xs font-semibold transition"
+              title="โหลดข้อมูล debug เพื่อตรวจสอบปัญหา"
+            >
+              🔍 Debug
+            </button>
+          )}
 
           {/* Format toggle */}
           <div className="ml-auto flex items-center gap-1 bg-gray-100 p-1 rounded-lg">
@@ -356,8 +376,21 @@ export default function ExportsPage() {
           ))}
         </div>
       ) : !isLoading && data && (
-        <div className="text-center py-12 text-gray-400 text-sm border border-dashed border-gray-200 rounded-lg">
-          ไม่พบข้อมูลตารางคะแนนสำหรับ Season นี้
+        <div className="space-y-3">
+          <div className="text-center py-12 text-gray-400 text-sm border border-dashed border-gray-200 rounded-lg">
+            <p className="font-semibold">ไม่พบข้อมูลตารางคะแนนสำหรับ Season นี้</p>
+            <p className="text-xs text-gray-500 mt-1">
+              ตรวจสอบว่า Season นี้มี age groups, teams และ matches หรือไม่
+            </p>
+          </div>
+          {data.debug && (
+            <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-xs text-blue-700 font-mono">
+              <div>Age Groups: {data.debug.ageGroupsCount}</div>
+              <div>Groups: {data.debug.groupsCount}</div>
+              <div>Teams: {data.debug.totalTeams}</div>
+              <div>Matches: {data.debug.totalMatches}</div>
+            </div>
+          )}
         </div>
       )}
 
