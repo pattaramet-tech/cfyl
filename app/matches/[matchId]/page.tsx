@@ -39,12 +39,18 @@ interface Card {
     id: string;
     full_name: string;
     shirt_no?: number | null;
+    team_id?: string | null;
+    team?: {
+      id?: string;
+      name?: string;
+      short_name?: string;
+    } | null;
   };
   team?: {
-    id: string;
-    name: string;
-    short_name: string;
-  };
+    id?: string;
+    name?: string;
+    short_name?: string;
+  } | null;
 }
 
 interface MatchDetail extends Match {
@@ -131,6 +137,31 @@ function getCardIcon(cardType: string): string {
 function formatMinute(minute?: number | null): string {
   if (minute === null || minute === undefined) return 'ไม่ระบุนาที';
   return `${minute}'`;
+}
+
+function getEventTeamName(eventData: any, match?: MatchDetail): string {
+  const teamId = eventData.team_id || eventData.player?.team_id;
+
+  // Try direct team relation first
+  if (eventData.team?.name) return eventData.team.name;
+  if (eventData.player?.team?.name) return eventData.player.team.name;
+
+  // Fallback to match teams if we have team_id
+  if (teamId && match) {
+    if (teamId === match.home_team_id) {
+      return match.home_team?.name || match.home_team?.short_name || '—';
+    }
+    if (teamId === match.away_team_id) {
+      return match.away_team?.name || match.away_team?.short_name || '—';
+    }
+  }
+
+  // Final fallback to short names
+  return (
+    eventData.team?.short_name ||
+    eventData.player?.team?.short_name ||
+    '—'
+  );
 }
 
 export default function MatchPage() {
@@ -347,7 +378,7 @@ export default function MatchPage() {
                       )}
                     </span>
                     <span className="text-slate-500 shrink-0 text-xs text-right max-w-55 truncate">
-                      {data.team?.name || data.team?.short_name || '—'}
+                      {getEventTeamName(data, m)}
                     </span>
                   </div>
                 );

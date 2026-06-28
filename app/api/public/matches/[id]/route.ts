@@ -81,7 +81,8 @@ export async function GET(
       .select(
         `
         *,
-        player:player_id(id, full_name, shirt_no, team_id),
+        player:player_id(id, full_name, shirt_no, team_id, team:team_id(id, name, short_name)),
+        team:team_id(id, name, short_name),
         match:match_id(id, matchday, home_team_id, away_team_id)
       `
       )
