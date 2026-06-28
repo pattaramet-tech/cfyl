@@ -118,3 +118,49 @@ export const extractDivisionNumber = (divisionText: string): number => {
   const match = divisionText.match(/\d+/);
   return match ? parseInt(match[0], 10) : 1;
 };
+
+// Helper to parse matchday number
+function parseMatchdayNumber(value: unknown): number {
+  if (value == null) return 0;
+  if (typeof value === 'number') return Number.isFinite(value) ? value : 0;
+  const match = String(value).match(/(\d+)/);
+  return match ? Number(match[1]) : 0;
+}
+
+// Calculate team form from last 5 matches
+export const calculateTeamForm = (matches: Match[], teamId: string, limit = 5): Array<'W' | 'D' | 'L'> => {
+  const finishedMatches = matches
+    .filter(
+      (m) =>
+        m.status === 'finished' &&
+        m.home_score !== null &&
+        m.away_score !== null &&
+        (m.home_team_id === teamId || m.away_team_id === teamId)
+    )
+    .sort((a, b) => {
+      const mdA = parseMatchdayNumber(a.matchday);
+      const mdB = parseMatchdayNumber(b.matchday);
+      if (mdA !== mdB) return mdA - mdB;
+
+      const dateA = `${a.match_date || ''} ${a.match_time || ''}`;
+      const dateB = `${b.match_date || ''} ${b.match_time || ''}`;
+      if (dateA !== dateB) return dateA.localeCompare(dateB);
+
+      return String(a.id).localeCompare(String(b.id));
+    });
+
+  return finishedMatches.slice(-limit).map((m) => {
+    const homeScore = Number(m.home_score || 0);
+    const awayScore = Number(m.away_score || 0);
+
+    if (m.home_team_id === teamId) {
+      if (homeScore > awayScore) return 'W';
+      if (homeScore === awayScore) return 'D';
+      return 'L';
+    }
+
+    if (awayScore > homeScore) return 'W';
+    if (awayScore === homeScore) return 'D';
+    return 'L';
+  });
+};

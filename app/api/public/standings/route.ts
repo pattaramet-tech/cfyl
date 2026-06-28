@@ -1,6 +1,6 @@
 import { supabase } from '@/lib/supabase';
 import { NextRequest, NextResponse } from 'next/server';
-import { calculateStandings } from '@/lib/calculations';
+import { calculateStandings, calculateTeamForm } from '@/lib/calculations';
 import type { Match, Standing } from '@/types/db';
 
 export const dynamic = 'force-dynamic';
@@ -79,6 +79,7 @@ export async function GET(request: NextRequest) {
     // Calculate standings for each team
     const standings: any[] = teams.map((team) => {
       const stats = calculateStandings(scoredMatches, team.id);
+      const form = calculateTeamForm(scoredMatches, team.id, 5);
       return {
         season_id: seasonId,
         age_group_id: ageGroupId,
@@ -95,6 +96,7 @@ export async function GET(request: NextRequest) {
         goals_against: stats.goalsAgainst,
         goal_diff: stats.goalDiff,
         points: stats.points,
+        form,
       };
     });
 

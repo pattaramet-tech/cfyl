@@ -171,6 +171,7 @@ export interface Standing {
   goals_against: number;
   goal_diff: number;
   points: number;
+  form?: Array<'W' | 'D' | 'L'>;
 }
 
 export interface TopScorer {

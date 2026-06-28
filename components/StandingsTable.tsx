@@ -33,6 +33,7 @@ export function StandingsTable({ standings, showProvinceRep = false }: Standings
             <th className="text-center w-10">พ</th>
             <th className="text-center w-12">+/-</th>
             <th className="text-center w-12">คะแนน</th>
+            <th className="text-center px-2">ฟอร์ม</th>
           </tr>
         </thead>
         <tbody>
@@ -91,6 +92,29 @@ export function StandingsTable({ standings, showProvinceRep = false }: Standings
                 </td>
                 <td className="px-3 py-3 text-center">
                   <span className="font-bold text-blue-900 text-base">{standing.points}</span>
+                </td>
+                <td className="px-2 py-3 text-center">
+                  {standing.form && standing.form.length > 0 ? (
+                    <div className="flex justify-center gap-1">
+                      {standing.form.map((result, index) => (
+                        <span
+                          key={`${standing.team_id}-form-${index}`}
+                          className={`inline-flex h-6 w-6 items-center justify-center rounded-full text-xs font-bold text-white ${
+                            result === 'W'
+                              ? 'bg-green-600'
+                              : result === 'D'
+                                ? 'bg-gray-500'
+                                : 'bg-red-600'
+                          }`}
+                          title={result === 'W' ? 'ชนะ' : result === 'D' ? 'เสมอ' : 'แพ้'}
+                        >
+                          {result}
+                        </span>
+                      ))}
+                    </div>
+                  ) : (
+                    <span className="text-gray-400">-</span>
+                  )}
                 </td>
               </tr>
             );
