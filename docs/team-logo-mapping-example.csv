@@ -1,0 +1,7 @@
+team_id,team_name,short_name,logo_file,logo_url,notes
+team-001,โรงเรียนเชียงใหม่,CMS,chiang-mai-a.png,/team-logos/chiang-mai-a.png,Example: exported from Canva
+team-002,โรงเรียนเชียงใหม่ B,CMB,chiang-mai-b.png,/team-logos/chiang-mai-b.png,
+team-003,โรงเรียนหัวถนน,HUATHAN,huathan.png,/team-logos/huathan.png,
+team-004,โรงเรียนโปรดรัฐ,PRD,phadet.png,/team-logos/phadet.png,
+team-005,ทีมชลบุรี A,CHON-A,chonburi-a.png,/team-logos/chonburi-a.png,
+team-006,ทีมชลบุรี B,CHON-B,chonburi-b.png,/team-logos/chonburi-b.png,ถ้ายังไม่มีโลโก้ ให้วางว่างไว้ system จะแสดง initials

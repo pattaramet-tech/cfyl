@@ -58,8 +58,8 @@ export async function GET(
       .select(
         `
         *,
-        home_team:home_team_id(id, name, short_name),
-        away_team:away_team_id(id, name, short_name),
+        home_team:home_team_id(id, name, short_name, logo_url),
+        away_team:away_team_id(id, name, short_name, logo_url),
         division:division_id(id, name)
       `
       )
