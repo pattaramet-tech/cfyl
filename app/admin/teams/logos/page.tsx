@@ -8,8 +8,13 @@ interface Team {
   name: string;
   short_name?: string;
   logo_url?: string;
-  age_group?: { code: string; name: string };
-  division?: { name: string };
+  active?: boolean;
+  season_id?: string;
+  age_group_id?: string;
+  division_id?: string;
+  age_group?: { id: string; code: string; name: string };
+  division?: { id: string; name: string };
+  season?: { id: string; name: string; year?: number };
 }
 
 export default function AdminTeamLogosPage() {
@@ -29,7 +34,7 @@ export default function AdminTeamLogosPage() {
     const loadTeams = async () => {
       try {
         setIsLoading(true);
-        const response = await fetch('/api/admin/teams?seasonId=current&ageGroupId=current');
+        const response = await fetch('/api/admin/team-logos/teams');
         if (!response.ok) throw new Error('Failed to load teams');
         const data = await response.json();
         setTeams(data);
@@ -148,13 +153,23 @@ export default function AdminTeamLogosPage() {
                 className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
               >
                 <option value="">-- เลือกทีม --</option>
-                {teams.map((team) => (
-                  <option key={team.id} value={team.id}>
-                    {team.age_group?.code && `${team.age_group.code} - `}
-                    {team.name}
-                    {team.short_name && ` (${team.short_name})`}
-                  </option>
-                ))}
+                {teams.length === 0 && (
+                  <option disabled>ยังไม่มีข้อมูลทีม</option>
+                )}
+                {teams.map((team) => {
+                  const parts = [];
+                  if (team.season?.name) parts.push(team.season.name);
+                  if (team.age_group?.code) parts.push(team.age_group.code);
+                  if (team.division?.name) parts.push(team.division.name);
+                  const prefix = parts.length > 0 ? `${parts.join(' · ')} - ` : '';
+                  return (
+                    <option key={team.id} value={team.id}>
+                      {prefix}
+                      {team.name}
+                      {team.short_name && ` (${team.short_name})`}
+                    </option>
+                  );
+                })}
               </select>
             </div>
 
