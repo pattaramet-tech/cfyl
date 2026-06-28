@@ -99,6 +99,8 @@ export default function MatchManagePage() {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [showFinishValidation, setShowFinishValidation] = useState(false);
+  const [isEditingFinishedMatch, setIsEditingFinishedMatch] = useState(false);
+  const [showConfirmEditFinished, setShowConfirmEditFinished] = useState(false);
 
   // Auto-hide success/error messages
   useEffect(() => {
@@ -264,6 +266,7 @@ export default function MatchManagePage() {
   const handleMatchSelect = (match: MatchWithTeams) => {
     setSelectedMatch(match);
     setSelectedMatchId(match.id);
+    setIsEditingFinishedMatch(false);
     loadMatchDataCallback(match);
   };
 
@@ -419,6 +422,31 @@ export default function MatchManagePage() {
     };
   };
 
+  // Helper functions
+  const isFinished = selectedMatch?.status === 'finished';
+  const isReadOnlyFinished = isFinished && !isEditingFinishedMatch;
+
+  const handleOpenEditFinishedMatch = () => {
+    setShowConfirmEditFinished(true);
+  };
+
+  const handleConfirmEditFinished = () => {
+    setShowConfirmEditFinished(false);
+    setIsEditingFinishedMatch(true);
+  };
+
+  const handleCancelEditFinished = () => {
+    setShowConfirmEditFinished(false);
+  };
+
+  const handleCancelEditMode = async () => {
+    setIsEditingFinishedMatch(false);
+    // Reload match data to restore original values
+    if (selectedMatch) {
+      await loadMatchDataCallback(selectedMatch);
+    }
+  };
+
   const handleFinishMatch = async (confirmed = false) => {
     if (!selectedMatch) return;
 
@@ -462,7 +490,12 @@ export default function MatchManagePage() {
       setSelectedMatch(updated);
       setMatchStatus('finished');
       setShowFinishValidation(false);
-      setSuccess(`✓ จบการแข่งขันเรียบร้อย (${updated.home_score}-${updated.away_score}) · ข้อมูล Sync ไปยังหน้า Public`);
+      if (isEditingFinishedMatch) {
+        setIsEditingFinishedMatch(false);
+        setSuccess(`✓ ยืนยันการแก้ไขผลการแข่งขันเรียบร้อย (${updated.home_score}-${updated.away_score})`);
+      } else {
+        setSuccess(`✓ จบการแข่งขันเรียบร้อย (${updated.home_score}-${updated.away_score}) · ข้อมูล Sync ไปยังหน้า Public`);
+      }
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : 'เกิดข้อผิดพลาด';
       setError(errorMsg);
@@ -587,6 +620,40 @@ export default function MatchManagePage() {
         </div>
       )}
 
+      {/* Confirm Edit Finished Match Modal */}
+      {showConfirmEditFinished && selectedMatch && (
+        <div className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-50">
+          <div className="bg-white rounded-t-2xl sm:rounded-2xl w-full sm:w-full max-w-md p-4 sm:p-6 space-y-4">
+            <h3 className="text-lg sm:text-xl font-bold text-gray-800">เปิดแก้ไขผลการแข่งขัน</h3>
+
+            <div className="bg-amber-50 p-4 rounded-lg border border-amber-200 text-sm text-amber-800 space-y-2">
+              <p className="font-semibold">⚠️ เตือน:</p>
+              <p>การแก้ไขผลการแข่งขันที่จบแล้ว อาจส่งผลต่อ:</p>
+              <ul className="list-disc list-inside space-y-1 ml-2">
+                <li>หน้า Public (ผลแมตช์, ตารางคะแนน)</li>
+                <li>ดาวซัลโว (จำนวนประตู)</li>
+                <li>โทษแบน (ใบเหลือง/แดง)</li>
+              </ul>
+            </div>
+
+            <div className="space-y-2 sm:space-y-0 sm:flex sm:gap-3">
+              <button
+                onClick={handleCancelEditFinished}
+                className="w-full sm:flex-1 px-4 py-3 sm:py-2 bg-gray-300 text-gray-800 rounded-lg hover:bg-gray-400 font-semibold text-sm sm:text-base transition"
+              >
+                ยกเลิก
+              </button>
+              <button
+                onClick={handleConfirmEditFinished}
+                className="w-full sm:flex-1 px-4 py-3 sm:py-2 bg-amber-600 text-white rounded-lg hover:bg-amber-700 font-semibold text-sm sm:text-base transition"
+              >
+                ✓ เปิดแก้ไข
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Finish Match Validation Modal */}
       {showFinishValidation && selectedMatch && (() => {
         const consistency = calculateGoalConsistency();
@@ -706,7 +773,7 @@ export default function MatchManagePage() {
                   max="99"
                   value={homeScore}
                   onChange={(e) => setHomeScore(e.target.value)}
-                  disabled={matchStatus === 'finished' || loadingMatchData}
+                  disabled={saving || loadingMatchData || isReadOnlyFinished}
                   className="w-full px-3 sm:px-4 py-3 sm:py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-600 disabled:bg-gray-100 text-base sm:text-sm"
                 />
               </div>
@@ -716,7 +783,7 @@ export default function MatchManagePage() {
                 <select
                   value={matchStatus}
                   onChange={(e) => setMatchStatus(e.target.value)}
-                  disabled={matchStatus === 'finished'}
+                  disabled={isReadOnlyFinished}
                   className="w-full px-3 sm:px-4 py-3 sm:py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-600 disabled:bg-gray-100 text-sm sm:text-base"
                 >
                   <option value="scheduled">ยังไม่แข่ง</option>
@@ -736,28 +803,71 @@ export default function MatchManagePage() {
                   max="99"
                   value={awayScore}
                   onChange={(e) => setAwayScore(e.target.value)}
-                  disabled={matchStatus === 'finished' || loadingMatchData}
+                  disabled={saving || loadingMatchData || isReadOnlyFinished}
                   className="w-full px-3 sm:px-4 py-3 sm:py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-600 disabled:bg-gray-100 text-base sm:text-sm"
                 />
               </div>
             </div>
 
-            <div className="space-y-2 sm:space-y-0 sm:grid sm:grid-cols-2 sm:gap-3">
-              <button
-                onClick={handleSaveScore}
-                disabled={saving || matchStatus === 'finished'}
-                className="bg-blue-600 text-white px-4 py-3 sm:py-2 rounded-lg hover:bg-blue-700 disabled:opacity-50 font-semibold text-sm sm:text-base transition"
-              >
-                {saving ? 'กำลังบันทึก...' : 'บันทึกสกอร์'}
-              </button>
-              <button
-                onClick={() => handleFinishMatch()}
-                disabled={saving || matchStatus === 'finished'}
-                className="bg-green-600 text-white px-4 py-3 sm:py-2 rounded-lg hover:bg-green-700 disabled:opacity-50 font-semibold text-sm sm:text-base transition"
-              >
-                {saving ? 'กำลังประมวลผล...' : '🏁 จบการแข่งขัน'}
-              </button>
-            </div>
+            {isReadOnlyFinished ? (
+              <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
+                <p className="text-amber-800 text-sm font-semibold mb-3">
+                  ⚠️ แมตช์นี้จบการแข่งขันแล้ว
+                </p>
+                <p className="text-amber-700 text-sm mb-4">
+                  หากต้องการแก้ไขผลการแข่งขัน ผู้ทำประตู หรือใบเหลือง/แดง กรุณากดเปิดแก้ไขก่อน
+                </p>
+                <button
+                  onClick={handleOpenEditFinishedMatch}
+                  className="w-full bg-amber-600 text-white px-4 py-2 rounded-lg hover:bg-amber-700 font-semibold text-sm transition"
+                >
+                  🔓 เปิดแก้ไขผลการแข่งขัน
+                </button>
+              </div>
+            ) : isEditingFinishedMatch ? (
+              <div className="space-y-3">
+                <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                  <p className="text-blue-800 text-sm font-semibold">
+                    ℹ️ โหมดแก้ไขผลย้อนหลัง
+                  </p>
+                  <p className="text-blue-700 text-xs mt-2">
+                    หลังแก้ไขเสร็จ กรุณาตรวจสอบสกอร์ ผู้ทำประตู และใบเหลือง/แดงอีกครั้ง
+                  </p>
+                </div>
+                <div className="space-y-2 sm:space-y-0 sm:grid sm:grid-cols-2 sm:gap-3">
+                  <button
+                    onClick={() => handleCancelEditMode()}
+                    className="bg-gray-400 text-white px-4 py-3 sm:py-2 rounded-lg hover:bg-gray-500 font-semibold text-sm sm:text-base transition"
+                  >
+                    ยกเลิกโหมดแก้ไข
+                  </button>
+                  <button
+                    onClick={() => handleFinishMatch()}
+                    disabled={saving}
+                    className="bg-green-600 text-white px-4 py-3 sm:py-2 rounded-lg hover:bg-green-700 disabled:opacity-50 font-semibold text-sm sm:text-base transition"
+                  >
+                    {saving ? 'กำลังประมวลผล...' : '✅ ตรวจสอบและยืนยันผล'}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-2 sm:space-y-0 sm:grid sm:grid-cols-2 sm:gap-3">
+                <button
+                  onClick={handleSaveScore}
+                  disabled={saving || loadingMatchData}
+                  className="bg-blue-600 text-white px-4 py-3 sm:py-2 rounded-lg hover:bg-blue-700 disabled:opacity-50 font-semibold text-sm sm:text-base transition"
+                >
+                  {saving ? 'กำลังบันทึก...' : 'บันทึกสกอร์'}
+                </button>
+                <button
+                  onClick={() => handleFinishMatch()}
+                  disabled={saving || loadingMatchData}
+                  className="bg-green-600 text-white px-4 py-3 sm:py-2 rounded-lg hover:bg-green-700 disabled:opacity-50 font-semibold text-sm sm:text-base transition"
+                >
+                  {saving ? 'กำลังประมวลผล...' : '🏁 จบการแข่งขัน'}
+                </button>
+              </div>
+            )}
           </div>
 
           {/* Loading indicator for match data */}
@@ -771,21 +881,46 @@ export default function MatchManagePage() {
           {/* Goals */}
           <div className="bg-white rounded-lg shadow p-4 sm:p-6">
             <h2 className="text-lg font-semibold text-gray-800 mb-4">ประตู</h2>
-            <GoalsList
-              matchId={selectedMatch.id}
-              homeTeamId={selectedMatch.home_team_id}
-              awayTeamId={selectedMatch.away_team_id}
-              goals={goals}
-              isLoading={false}
-              onGoalsChange={() => selectedMatch && loadMatchDataCallback(selectedMatch)}
-            />
+            {isReadOnlyFinished ? (
+              <div className="text-center py-8">
+                <p className="text-slate-500 text-sm mb-3">📌 เปิดแก้ไขก่อนจึงจะแก้ผู้ทำประตูได้</p>
+                <button
+                  onClick={handleOpenEditFinishedMatch}
+                  className="inline-block bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 font-semibold text-sm transition"
+                >
+                  🔓 เปิดแก้ไข
+                </button>
+              </div>
+            ) : (
+              <GoalsList
+                matchId={selectedMatch.id}
+                homeTeamId={selectedMatch.home_team_id}
+                awayTeamId={selectedMatch.away_team_id}
+                goals={goals}
+                isLoading={false}
+                onGoalsChange={() => selectedMatch && loadMatchDataCallback(selectedMatch)}
+              />
+            )}
           </div>
 
           {/* Cards Manager */}
           <div className="bg-white rounded-lg shadow p-4 sm:p-6">
             <h2 className="text-lg font-semibold text-gray-800 mb-4">ใบเรียบร้อย</h2>
 
+            {isReadOnlyFinished && (
+              <div className="text-center py-8 bg-slate-50 rounded-lg mb-6">
+                <p className="text-slate-500 text-sm mb-3">📌 เปิดแก้ไขก่อนจึงจะแก้ใบเหลือง/แดงได้</p>
+                <button
+                  onClick={handleOpenEditFinishedMatch}
+                  className="inline-block bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 font-semibold text-sm transition"
+                >
+                  🔓 เปิดแก้ไข
+                </button>
+              </div>
+            )}
+
             {/* Card Form */}
+            {!isReadOnlyFinished && (
             <form onSubmit={handleAddCard} className="mb-6 p-3 sm:p-4 bg-blue-50 rounded-lg border border-blue-200 space-y-3 sm:space-y-4">
               <h3 className="font-semibold text-gray-800 text-sm sm:text-base">➕ เพิ่มใบ</h3>
 
@@ -855,6 +990,7 @@ export default function MatchManagePage() {
                 {addingCard ? 'กำลังเพิ่ม...' : 'เพิ่มใบ'}
               </button>
             </form>
+            )}
 
             {/* Cards List */}
             <div className="space-y-2 sm:space-y-3">
@@ -879,7 +1015,7 @@ export default function MatchManagePage() {
                       </div>
                       <button
                         onClick={() => handleDeleteCard(card.id)}
-                        disabled={saving}
+                        disabled={saving || isReadOnlyFinished}
                         className="w-full sm:w-auto px-3 sm:px-4 py-2 sm:py-1 text-sm bg-red-100 text-red-700 rounded hover:bg-red-200 disabled:opacity-50 font-semibold transition"
                       >
                         ลบ
