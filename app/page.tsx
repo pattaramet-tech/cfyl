@@ -85,6 +85,7 @@ export default function Home() {
           <a href="/standings" className="cfyl-btn-secondary">📊 ตารางคะแนน</a>
         </div>
         <div className="mt-4 flex flex-wrap gap-x-5 gap-y-2 text-sm">
+          <a href="/teams" className="text-blue-200 hover:text-white transition">👥 ค้นหาทีมของคุณ →</a>
           <a href="/top-scorers" className="text-blue-200 hover:text-white transition">🏆 ดาวซัลโว →</a>
           <a href="/discipline" className="text-blue-200 hover:text-white transition">⚠️ ระเบียบวินัย →</a>
         </div>

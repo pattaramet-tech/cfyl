@@ -39,7 +39,10 @@ export default function FixturesPage() {
   return (
     <div className="space-y-6">
       <div className="cfyl-section">
-        <h1 className="text-2xl sm:text-3xl font-bold text-slate-800">📅 โปรแกรมแข่งขัน</h1>
+        <div className="flex items-center justify-between gap-4">
+          <h1 className="text-2xl sm:text-3xl font-bold text-slate-800">📅 โปรแกรมแข่งขัน</h1>
+          <a href="/teams" className="cfyl-btn-secondary text-sm shrink-0">👥 ค้นหาทีมของคุณ →</a>
+        </div>
       </div>
 
       {state === 'loading' ? (
