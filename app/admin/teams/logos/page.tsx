@@ -143,6 +143,9 @@ export default function AdminTeamLogosPage() {
       const result = await response.json();
 
       if (!response.ok) {
+        if (process.env.NODE_ENV === 'development' && result.detail) {
+          console.error('[TEAM_LOGO_UPLOAD_DETAIL]', result.detail);
+        }
         setMessage({ type: 'error', text: result.error || 'อัปโหลดไม่สำเร็จ' });
         return;
       }

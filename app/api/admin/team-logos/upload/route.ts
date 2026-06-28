@@ -12,8 +12,10 @@ if (!supabaseUrl || !supabaseServiceKey) {
 const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey);
 const ALLOWED_TYPES = ['image/png', 'image/jpeg', 'image/jpg', 'image/webp'];
 const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB
+const BUCKET_NAME = 'team-logos';
 
 export const dynamic = 'force-dynamic';
+export const runtime = 'nodejs';
 
 function generateSlug(name?: string | null): string {
   if (!name) return 'team';
@@ -22,6 +24,61 @@ function generateSlug(name?: string | null): string {
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '')
     .slice(0, 50);
+}
+
+async function ensureTeamLogosBucket() {
+  try {
+    const { data: buckets, error: listError } = await supabaseAdmin.storage.listBuckets();
+
+    if (listError) {
+      console.error('[TEAM_LOGO_UPLOAD] listBuckets error:', listError);
+      return {
+        ok: false,
+        error: `ไม่สามารถตรวจสอบ Storage bucket ได้: ${listError.message}`,
+      };
+    }
+
+    const exists = buckets?.some((b) => b.name === BUCKET_NAME);
+
+    if (!exists) {
+      console.log('[TEAM_LOGO_UPLOAD] Bucket does not exist, creating...');
+
+      const { error: createError } = await supabaseAdmin.storage.createBucket(BUCKET_NAME, {
+        public: true,
+      });
+
+      if (createError) {
+        console.error('[TEAM_LOGO_UPLOAD] createBucket error:', createError);
+        return {
+          ok: false,
+          error: `ไม่สามารถสร้าง bucket team-logos ได้: ${createError.message}`,
+        };
+      }
+
+      console.log('[TEAM_LOGO_UPLOAD] Bucket created successfully');
+      return { ok: true };
+    }
+
+    console.log('[TEAM_LOGO_UPLOAD] Bucket exists, verifying public access...');
+
+    // Attempt to update bucket to ensure public access
+    const { error: updateError } = await supabaseAdmin.storage.updateBucket(BUCKET_NAME, {
+      public: true,
+    });
+
+    if (updateError) {
+      console.warn('[TEAM_LOGO_UPLOAD] updateBucket warning:', updateError);
+      // Don't fail - bucket might already be public
+    }
+
+    return { ok: true };
+  } catch (err) {
+    console.error('[TEAM_LOGO_UPLOAD] ensureTeamLogosBucket error:', err);
+    return {
+      ok: false,
+      error: `Storage setup error: ${err instanceof Error ? err.message : 'Unknown error'}`,
+    };
+  }
 }
 
 export async function POST(request: NextRequest) {
@@ -69,31 +126,60 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'ไม่พบทีมนี้' }, { status: 404 });
     }
 
+    // Ensure bucket exists and is public
+    const bucketCheck = await ensureTeamLogosBucket();
+    if (!bucketCheck.ok) {
+      return NextResponse.json({ error: bucketCheck.error }, { status: 500 });
+    }
+
     // Generate file path
     const slug = generateSlug(team.short_name || team.name);
     const ext = file.type === 'image/webp' ? 'webp' : file.name.split('.').pop() || 'jpg';
     const timestamp = Date.now();
     const filePath = `teams/${teamId}/${slug}-${timestamp}.${ext}`;
 
+    console.log('[TEAM_LOGO_UPLOAD] Uploading:', {
+      teamId,
+      teamName: team.name,
+      fileName: file.name,
+      fileType: file.type,
+      fileSize: file.size,
+      filePath,
+    });
+
     // Upload to Supabase Storage
     const buffer = await file.arrayBuffer();
     const { error: uploadError } = await supabaseAdmin.storage
-      .from('team-logos')
-      .upload(filePath, buffer, {
+      .from(BUCKET_NAME)
+      .upload(filePath, Buffer.from(buffer), {
         contentType: file.type,
         upsert: true,
       });
 
     if (uploadError) {
-      console.error('[TEAM_LOGO_UPLOAD] Storage error:', uploadError);
+      console.error('[TEAM_LOGO_UPLOAD] Storage error:', {
+        message: uploadError.message,
+        name: uploadError.name,
+        statusCode: (uploadError as any).statusCode,
+        bucket: BUCKET_NAME,
+        filePath,
+      });
+
       return NextResponse.json(
-        { error: 'อัปโหลดรูปไม่สำเร็จ' },
+        {
+          error: `อัปโหลดรูปไม่สำเร็จ: ${uploadError.message}`,
+          detail: {
+            bucket: BUCKET_NAME,
+            path: filePath,
+            statusCode: (uploadError as any).statusCode,
+          },
+        },
         { status: 500 }
       );
     }
 
     // Get public URL
-    const { data } = supabaseAdmin.storage.from('team-logos').getPublicUrl(filePath);
+    const { data } = supabaseAdmin.storage.from(BUCKET_NAME).getPublicUrl(filePath);
     const publicUrl = data?.publicUrl;
 
     if (!publicUrl) {
@@ -134,7 +220,10 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     console.error('[TEAM_LOGO_UPLOAD] Error:', error);
     return NextResponse.json(
-      { error: 'เกิดข้อผิดพลาด' },
+      {
+        error: 'เกิดข้อผิดพลาด',
+        detail: error instanceof Error ? error.message : undefined,
+      },
       { status: 500 }
     );
   }
