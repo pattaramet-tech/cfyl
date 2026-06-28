@@ -271,9 +271,14 @@ export default function MatchPage() {
             {/* Teams and Score */}
             <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-4 py-4">
               <div className="text-right">
-                <p className="font-bold text-slate-800 break-words text-sm sm:text-base">
+                <Link
+                  href={`/teams/${m.home_team?.id || ''}`}
+                  className={`font-bold text-slate-800 break-words text-sm sm:text-base hover:text-blue-600 transition ${
+                    m.home_team?.id ? 'cursor-pointer' : 'cursor-default'
+                  }`}
+                >
                   {m.home_team?.name || 'ทีมเหย้า'}
-                </p>
+                </Link>
                 {m.home_team?.short_name && (
                   <p className="text-xs text-slate-500">{m.home_team.short_name}</p>
                 )}
@@ -290,9 +295,14 @@ export default function MatchPage() {
               )}
 
               <div className="text-left">
-                <p className="font-bold text-slate-800 break-words text-sm sm:text-base">
+                <Link
+                  href={`/teams/${m.away_team?.id || ''}`}
+                  className={`font-bold text-slate-800 break-words text-sm sm:text-base hover:text-blue-600 transition ${
+                    m.away_team?.id ? 'cursor-pointer' : 'cursor-default'
+                  }`}
+                >
                   {m.away_team?.name || 'ทีมเยือน'}
-                </p>
+                </Link>
                 {m.away_team?.short_name && (
                   <p className="text-xs text-slate-500">{m.away_team.short_name}</p>
                 )}
@@ -311,9 +321,14 @@ export default function MatchPage() {
               <div className="space-y-6">
                 {/* Home team goals */}
                 <div>
-                  <p className="font-semibold text-slate-700 mb-2 text-sm">
+                  <Link
+                    href={`/teams/${m.home_team?.id || ''}`}
+                    className={`font-semibold text-slate-700 mb-2 text-sm hover:text-blue-600 transition ${
+                      m.home_team?.id ? 'cursor-pointer' : 'cursor-default'
+                    }`}
+                  >
                     {m.home_team?.name || 'ทีมเหย้า'}
-                  </p>
+                  </Link>
                   <div className="space-y-1">
                     {goalsByTeam.home.length === 0 ? (
                       <p className="text-slate-400 text-xs">ไม่มีผู้ทำประตู</p>
@@ -332,9 +347,14 @@ export default function MatchPage() {
 
                 {/* Away team goals */}
                 <div>
-                  <p className="font-semibold text-slate-700 mb-2 text-sm">
+                  <Link
+                    href={`/teams/${m.away_team?.id || ''}`}
+                    className={`font-semibold text-slate-700 mb-2 text-sm hover:text-blue-600 transition ${
+                      m.away_team?.id ? 'cursor-pointer' : 'cursor-default'
+                    }`}
+                  >
                     {m.away_team?.name || 'ทีมเยือน'}
-                  </p>
+                  </Link>
                   <div className="space-y-1">
                     {goalsByTeam.away.length === 0 ? (
                       <p className="text-slate-400 text-xs">ไม่มีผู้ทำประตู</p>
