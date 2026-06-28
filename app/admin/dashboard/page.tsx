@@ -36,6 +36,7 @@ interface Summary {
 
 const QUICK_ACTIONS = [
   { href: '/admin/matches', label: 'บันทึกผลแข่ง', emoji: '🎮' },
+  { href: '/admin/matches/manage', label: 'จัดการแมตช์', emoji: '⚙️' },
   { href: '/admin/goals', label: 'เพิ่มประตู', emoji: '⚽' },
   { href: '/admin/cards', label: 'เพิ่มใบเหลือง/แดง', emoji: '🟨' },
   { href: '/admin/suspensions', label: 'โทษแบน + Discord', emoji: '🚨' },

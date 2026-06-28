@@ -57,6 +57,13 @@ export function AdminNav({ email, fullName }: AdminNavProps) {
             </Link>
 
             <Link
+              href="/admin/matches/manage"
+              className="block px-4 py-3 rounded-lg hover:bg-gray-800 transition hover:text-white"
+            >
+              ⚙️ Match Management
+            </Link>
+
+            <Link
               href="/admin/goals"
               className="block px-4 py-3 rounded-lg hover:bg-gray-800 transition hover:text-white"
             >
