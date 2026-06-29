@@ -141,6 +141,17 @@ export default function MatchManagePage() {
   const [cardRows, setCardRows] = useState<CardRow[]>([createCardRow()]);
   const [addingCard, setAddingCard] = useState(false);
 
+  // Staff discipline states
+  const [staffs, setStaffs] = useState<any[]>([]);
+  const [staffDisciplineEvents, setStaffDisciplineEvents] = useState<any[]>([]);
+  const [staffId, setStaffId] = useState('');
+  const [staffDisciplineType, setStaffDisciplineType] = useState<'warning' | 'caution' | 'ejection' | 'ban'>('warning');
+  const [staffDisciplineMinute, setStaffDisciplineMinute] = useState('');
+  const [staffDisciplineReason, setStaffDisciplineReason] = useState('');
+  const [staffSuspendedMatches, setStaffSuspendedMatches] = useState('0');
+  const [staffDisciplineNote, setStaffDisciplineNote] = useState('');
+  const [addingStaffDiscipline, setAddingStaffDiscipline] = useState(false);
+
   const [loading, setLoading] = useState(false);
   const [loadingMatchData, setLoadingMatchData] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -198,6 +209,23 @@ export default function MatchManagePage() {
 
     return String(a.created_at || '').localeCompare(String(b.created_at || ''));
   });
+
+  // Staff helpers
+  const homeStaffs = staffs.filter((s) => s.team_id === selectedMatch?.home_team_id);
+  const awayStaffs = staffs.filter((s) => s.team_id === selectedMatch?.away_team_id);
+
+  const staffPositionPriority = (position?: string | null) => {
+    const p = String(position || '');
+    if (p.includes('ผู้จัดการ')) return 0;
+    if (p.includes('ผู้ฝึกสอน') && !p.includes('ผู้ช่วย')) return 1;
+    if (p.includes('ผู้ช่วย')) return 2;
+    if (p.includes('เจ้าหน้าที่')) return 3;
+    return 9;
+  };
+
+  const sortedHomeStaffs = [...homeStaffs].sort((a, b) => staffPositionPriority(a.position) - staffPositionPriority(b.position));
+  const sortedAwayStaffs = [...awayStaffs].sort((a, b) => staffPositionPriority(a.position) - staffPositionPriority(b.position));
+
   const [showFinishValidation, setShowFinishValidation] = useState(false);
   const [isEditingFinishedMatch, setIsEditingFinishedMatch] = useState(false);
   const [showConfirmEditFinished, setShowConfirmEditFinished] = useState(false);
@@ -318,8 +346,8 @@ export default function MatchManagePage() {
       try {
         const token = localStorage.getItem('admin_token');
 
-        // Load goals, cards, and players
-        const [goalsRes, cardsRes, playersRes] = await Promise.all([
+        // Load goals, cards, players, staffs, and staff discipline events
+        const [goalsRes, cardsRes, playersRes, staffsRes, staffDisciplineRes] = await Promise.all([
           fetch(`/api/admin/goals?match_id=${match.id}`, {
             headers: token ? { 'Authorization': `Bearer ${token}` } : {},
           }),
@@ -327,6 +355,12 @@ export default function MatchManagePage() {
             headers: token ? { 'Authorization': `Bearer ${token}` } : {},
           }),
           fetch(`/api/admin/players?teamIds=${match.home_team_id},${match.away_team_id}`, {
+            headers: token ? { 'Authorization': `Bearer ${token}` } : {},
+          }),
+          fetch(`/api/admin/team-staffs?teamIds=${match.home_team_id},${match.away_team_id}&active=true`, {
+            headers: token ? { 'Authorization': `Bearer ${token}` } : {},
+          }),
+          fetch(`/api/admin/staff-discipline?matchId=${match.id}&status=active`, {
             headers: token ? { 'Authorization': `Bearer ${token}` } : {},
           }),
         ]);
@@ -342,6 +376,14 @@ export default function MatchManagePage() {
         if (playersRes.ok) {
           const playersData = await playersRes.json();
           setPlayers(sortPlayersForMatch(playersData, match.home_team_id, match.away_team_id));
+        }
+        if (staffsRes.ok) {
+          const staffsData = await staffsRes.json();
+          setStaffs(staffsData);
+        }
+        if (staffDisciplineRes.ok) {
+          const disciplineData = await staffDisciplineRes.json();
+          setStaffDisciplineEvents(disciplineData);
         }
 
         // Set score and status
@@ -509,6 +551,101 @@ export default function MatchManagePage() {
 
       setSuccess('✓ ลบใบเรียบร้อย');
       // Reload cards
+      setTimeout(() => {
+        loadMatchDataCallback(selectedMatch);
+      }, 500);
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : 'An error occurred';
+      setError(errorMsg);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleAddStaffDiscipline = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedMatch || !staffId) {
+      setError('กรุณาเลือกเจ้าหน้าที่ทีม');
+      return;
+    }
+
+    const minuteValue = staffDisciplineMinute.trim() === '' ? null : Number(staffDisciplineMinute);
+
+    if (minuteValue !== null && (!Number.isInteger(minuteValue) || minuteValue < 0 || minuteValue > 120)) {
+      setError('นาทีต้องเป็นตัวเลข 0-120 หรือเว้นว่าง');
+      return;
+    }
+
+    const suspendedMatchesValue = Number(staffSuspendedMatches || 0);
+    if (!Number.isInteger(suspendedMatchesValue) || suspendedMatchesValue < 0) {
+      setError('จำนวนแมตช์ที่แบนต้องเป็นตัวเลข 0 ขึ้นไป');
+      return;
+    }
+
+    setAddingStaffDiscipline(true);
+    setError(null);
+
+    try {
+      const token = localStorage.getItem('admin_token');
+      const res = await fetch('/api/admin/staff-discipline', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          matchId: selectedMatch.id,
+          staffId,
+          disciplineType: staffDisciplineType,
+          minute: minuteValue,
+          reason: staffDisciplineReason.trim() || null,
+          suspendedMatches: suspendedMatchesValue,
+          note: staffDisciplineNote.trim() || null,
+        }),
+      });
+
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || 'ไม่สามารถบันทึกโทษเจ้าหน้าที่ทีมได้');
+      }
+
+      setSuccess('✓ บันทึกโทษเจ้าหน้าที่ทีมเรียบร้อย');
+      setStaffId('');
+      setStaffDisciplineType('warning');
+      setStaffDisciplineMinute('');
+      setStaffDisciplineReason('');
+      setStaffSuspendedMatches('0');
+      setStaffDisciplineNote('');
+
+      await loadMatchDataCallback(selectedMatch);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'เกิดข้อผิดพลาด');
+    } finally {
+      setAddingStaffDiscipline(false);
+    }
+  };
+
+  const handleDeleteStaffDiscipline = async (eventId: string) => {
+    if (!selectedMatch || !window.confirm('ยืนยันการลบการบันทึกโทษนี้?')) return;
+
+    setSaving(true);
+    setError(null);
+
+    try {
+      const token = localStorage.getItem('admin_token');
+      const res = await fetch(`/api/admin/staff-discipline/${eventId}`, {
+        method: 'DELETE',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
+      });
+
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || 'ไม่สามารถลบการบันทึกโทษได้');
+      }
+
+      setSuccess('✓ ลบการบันทึกโทษเรียบร้อย');
       setTimeout(() => {
         loadMatchDataCallback(selectedMatch);
       }, 500);
@@ -1268,6 +1405,171 @@ export default function MatchManagePage() {
                       </div>
                       <button
                         onClick={() => handleDeleteCard(card.id)}
+                        disabled={saving || isReadOnlyFinished}
+                        className="w-full sm:w-auto px-3 sm:px-4 py-2 sm:py-1 text-sm bg-red-100 text-red-700 rounded hover:bg-red-200 disabled:opacity-50 font-semibold transition"
+                      >
+                        ลบ
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Staff Discipline Manager */}
+          <div className="bg-white rounded-lg shadow p-4 sm:p-6">
+            <h2 className="text-lg font-semibold text-gray-800 mb-4">👔 เจ้าหน้าที่ทีม / ผู้ฝึกสอน</h2>
+
+            {isReadOnlyFinished && (
+              <div className="text-center py-8 bg-slate-50 rounded-lg mb-6">
+                <p className="text-slate-500 text-sm mb-3">📌 เปิดแก้ไขก่อนจึงจะแก้โทษเจ้าหน้าที่ทีมได้</p>
+                <button
+                  onClick={handleOpenEditFinishedMatch}
+                  className="inline-block bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 font-semibold text-sm transition"
+                >
+                  🔓 เปิดแก้ไข
+                </button>
+              </div>
+            )}
+
+            {/* Staff Discipline Form */}
+            {!isReadOnlyFinished && (
+            <form onSubmit={handleAddStaffDiscipline} className="mb-6 p-3 sm:p-4 bg-purple-50 rounded-lg border border-purple-200 space-y-3 sm:space-y-4">
+              <h3 className="font-semibold text-gray-800 text-sm sm:text-base">➕ บันทึกโทษเจ้าหน้าที่ทีม</h3>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-gray-600 mb-1">เจ้าหน้าที่ทีม *</label>
+                  <select
+                    value={staffId}
+                    onChange={(e) => setStaffId(e.target.value)}
+                    disabled={addingStaffDiscipline}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-400 text-sm"
+                  >
+                    <option value="">-- เลือกเจ้าหน้าที่ทีม --</option>
+                    {sortedHomeStaffs.length > 0 && (
+                      <optgroup label={homeTeamName}>
+                        {sortedHomeStaffs.map((s) => (
+                          <option key={s.id} value={s.id}>
+                            {s.position} · {s.full_name}
+                          </option>
+                        ))}
+                      </optgroup>
+                    )}
+                    {sortedAwayStaffs.length > 0 && (
+                      <optgroup label={awayTeamName}>
+                        {sortedAwayStaffs.map((s) => (
+                          <option key={s.id} value={s.id}>
+                            {s.position} · {s.full_name}
+                          </option>
+                        ))}
+                      </optgroup>
+                    )}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-gray-600 mb-1">ประเภท *</label>
+                  <select
+                    value={staffDisciplineType}
+                    onChange={(e) => setStaffDisciplineType(e.target.value as any)}
+                    disabled={addingStaffDiscipline}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-400 text-sm"
+                  >
+                    <option value="warning">⚠️ คาดโทษ</option>
+                    <option value="caution">🟧 เตือน</option>
+                    <option value="ejection">🟥 ไล่ออก</option>
+                    <option value="ban">🚫 แบน</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-gray-600 mb-1">นาที</label>
+                  <input
+                    type="number"
+                    min="0"
+                    max="120"
+                    value={staffDisciplineMinute}
+                    onChange={(e) => setStaffDisciplineMinute(e.target.value)}
+                    disabled={addingStaffDiscipline}
+                    placeholder="ไม่บังคับ"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-400 text-sm"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-gray-600 mb-1">แมตช์ที่แบน</label>
+                  <input
+                    type="number"
+                    min="0"
+                    value={staffSuspendedMatches}
+                    onChange={(e) => setStaffSuspendedMatches(e.target.value)}
+                    disabled={addingStaffDiscipline}
+                    placeholder="0"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-400 text-sm"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-gray-600 mb-1">เหตุผล</label>
+                <input
+                  type="text"
+                  value={staffDisciplineReason}
+                  onChange={(e) => setStaffDisciplineReason(e.target.value)}
+                  disabled={addingStaffDiscipline}
+                  placeholder="เช่น ประท้วงคำตัดสิน"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-400 text-sm"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-gray-600 mb-1">หมายเหตุ</label>
+                <input
+                  type="text"
+                  value={staffDisciplineNote}
+                  onChange={(e) => setStaffDisciplineNote(e.target.value)}
+                  disabled={addingStaffDiscipline}
+                  placeholder="ไม่บังคับ"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-400 text-sm"
+                />
+              </div>
+
+              <button
+                type="submit"
+                disabled={addingStaffDiscipline || !staffId}
+                className="w-full bg-purple-600 text-white px-4 py-3 sm:py-2 rounded-lg hover:bg-purple-700 disabled:opacity-50 font-semibold text-sm sm:text-base transition"
+              >
+                {addingStaffDiscipline ? 'กำลังบันทึก...' : '💾 บันทึกโทษ'}
+              </button>
+            </form>
+            )}
+
+            {/* Staff Discipline List */}
+            <div className="space-y-2 sm:space-y-3">
+              <h3 className="font-semibold text-gray-800 text-base sm:text-lg">การบันทึกโทษ ({staffDisciplineEvents.length})</h3>
+              {staffDisciplineEvents.length === 0 ? (
+                <p className="text-slate-500 text-sm">ยังไม่มีการบันทึกโทษเจ้าหน้าที่ทีม</p>
+              ) : (
+                <div className="space-y-2 sm:space-y-3">
+                  {staffDisciplineEvents.map((event) => (
+                    <div key={event.id} className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 p-3 sm:p-4 bg-slate-50 rounded border border-slate-200">
+                      <div className="min-w-0 flex-1">
+                        <p className="font-semibold text-sm sm:text-base text-slate-800">
+                          {event.minute !== null ? `นาที ${event.minute}'` : 'ไม่ระบุนาที'} · {event.staff?.full_name} · {event.staff?.position}
+                        </p>
+                        <p className="text-xs sm:text-sm text-slate-600 mt-1">
+                          {event.discipline_type === 'warning' && '⚠️ คาดโทษ'}
+                          {event.discipline_type === 'caution' && '🟧 เตือน'}
+                          {event.discipline_type === 'ejection' && '🟥 ไล่ออก'}
+                          {event.discipline_type === 'ban' && '🚫 แบน'}
+                          {event.suspended_matches > 0 && ` · แบน ${event.suspended_matches} แมตช์`}
+                          {event.reason && ` · ${event.reason}`}
+                        </p>
+                      </div>
+                      <button
+                        onClick={() => handleDeleteStaffDiscipline(event.id)}
                         disabled={saving || isReadOnlyFinished}
                         className="w-full sm:w-auto px-3 sm:px-4 py-2 sm:py-1 text-sm bg-red-100 text-red-700 rounded hover:bg-red-200 disabled:opacity-50 font-semibold transition"
                       >
