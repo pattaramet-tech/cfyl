@@ -1,0 +1,99 @@
+name: One-time normalize staff discipline labels
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  patch-labels:
+    if: ${{ !contains(github.event.head_commit.message, 'Normalize staff discipline labels') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Normalize staff discipline labels
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "Before patch:"
+          grep -R -n "คาดโทษ\|เตือน\|ไล่ออก\|disciplineLabels\|caution" app docs || true
+
+          # Match Management UI labels
+          if [ -f app/admin/matches/manage/page.tsx ]; then
+            perl -0pi -e "s/<option value=\"warning\">⚠️ คาดโทษ<\/option>/<option value=\"warning\">🟨 การคาดโทษ (ใบเหลือง)<\/option>/g" app/admin/matches/manage/page.tsx
+            perl -0pi -e "s/\n\s*<option value=\"caution\">🟧 เตือน<\/option>//g" app/admin/matches/manage/page.tsx
+            perl -0pi -e "s/<option value=\"ejection\">🟥 ไล่ออก<\/option>/<option value=\"ejection\">🟥 การไล่ออก (ใบแดง)<\/option>/g" app/admin/matches/manage/page.tsx
+            perl -0pi -e "s/<option value=\"ban\">🚫 แบน<\/option>/<option value=\"ban\">🚫 แบน \/ ห้ามคุมทีม<\/option>/g" app/admin/matches/manage/page.tsx
+
+            perl -0pi -e "s/\{event\.discipline_type === 'warning' && '⚠️ คาดโทษ'\}/\{event.discipline_type === 'warning' && '🟨 การคาดโทษ (ใบเหลือง)'\}/g" app/admin/matches/manage/page.tsx
+            perl -0pi -e "s/\{event\.discipline_type === 'caution' && '🟧 เตือน'\}/\{event.discipline_type === 'caution' && '🟨 การคาดโทษ (ใบเหลือง)'\}/g" app/admin/matches/manage/page.tsx
+            perl -0pi -e "s/\{event\.discipline_type === 'ejection' && '🟥 ไล่ออก'\}/\{event.discipline_type === 'ejection' && '🟥 การไล่ออก (ใบแดง)'\}/g" app/admin/matches/manage/page.tsx
+            perl -0pi -e "s/\{event\.discipline_type === 'ban' && '🚫 แบน'\}/\{event.discipline_type === 'ban' && '🚫 แบน \/ ห้ามคุมทีม'\}/g" app/admin/matches/manage/page.tsx
+          fi
+
+          # Public match timeline labels
+          if [ -f 'app/matches/[matchId]/page.tsx' ]; then
+            perl -0pi -e "s/warning: '⚠️'/warning: '🟨'/g" 'app/matches/[matchId]/page.tsx'
+            perl -0pi -e "s/caution: '🟧'/caution: '🟨'/g" 'app/matches/[matchId]/page.tsx'
+            perl -0pi -e "s/warning: 'คาดโทษ'/warning: 'การคาดโทษ (ใบเหลือง)'/g" 'app/matches/[matchId]/page.tsx'
+            perl -0pi -e "s/caution: 'เตือน'/caution: 'การคาดโทษ (ใบเหลือง)'/g" 'app/matches/[matchId]/page.tsx'
+            perl -0pi -e "s/ejection: 'ไล่ออก'/ejection: 'การไล่ออก (ใบแดง)'/g" 'app/matches/[matchId]/page.tsx'
+            perl -0pi -e "s/ban: 'แบน'/ban: 'แบน \/ ห้ามคุมทีม'/g" 'app/matches/[matchId]/page.tsx'
+          fi
+
+          # Admin staff discipline report labels, if present
+          if [ -f app/admin/staff-discipline/page.tsx ]; then
+            perl -0pi -e "s/⚠️ คาดโทษ/🟨 การคาดโทษ (ใบเหลือง)/g" app/admin/staff-discipline/page.tsx
+            perl -0pi -e "s/🟧 เตือน/🟨 การคาดโทษ (ใบเหลือง)/g" app/admin/staff-discipline/page.tsx
+            perl -0pi -e "s/🟥 ไล่ออก/🟥 การไล่ออก (ใบแดง)/g" app/admin/staff-discipline/page.tsx
+            perl -0pi -e "s/🚫 แบน/🚫 แบน \/ ห้ามคุมทีม/g" app/admin/staff-discipline/page.tsx
+            perl -0pi -e "s/warning: 'คาดโทษ'/warning: 'การคาดโทษ (ใบเหลือง)'/g" app/admin/staff-discipline/page.tsx
+            perl -0pi -e "s/caution: 'เตือน'/caution: 'การคาดโทษ (ใบเหลือง)'/g" app/admin/staff-discipline/page.tsx
+            perl -0pi -e "s/ejection: 'ไล่ออก'/ejection: 'การไล่ออก (ใบแดง)'/g" app/admin/staff-discipline/page.tsx
+            perl -0pi -e "s/ban: 'แบน'/ban: 'แบน \/ ห้ามคุมทีม'/g" app/admin/staff-discipline/page.tsx
+          fi
+
+          # API remains backward-compatible, but normalize legacy caution to warning for new records.
+          if [ -f app/api/admin/staff-discipline/route.ts ]; then
+            perl -0pi -e "s/const \{ matchId, staffId, disciplineType, minute, reason, note, suspendedMatches \} = body;/const { matchId, staffId, disciplineType, minute, reason, note, suspendedMatches } = body;\n    const normalizedDisciplineType = disciplineType === 'caution' ? 'warning' : disciplineType;/g" app/api/admin/staff-discipline/route.ts
+            perl -0pi -e "s/discipline_type: disciplineType,/discipline_type: normalizedDisciplineType,/g" app/api/admin/staff-discipline/route.ts
+            perl -0pi -e "s/entityLabel: `\$\{disciplineType\} - Staff #\$\{staffId\}`,/entityLabel: `${normalizedDisciplineType} - Staff #${staffId}`,/g" app/api/admin/staff-discipline/route.ts
+            perl -0pi -e "s/newData: \{ staff_id: staffId, discipline_type: disciplineType,/newData: { staff_id: staffId, discipline_type: normalizedDisciplineType,/g" app/api/admin/staff-discipline/route.ts
+          fi
+
+          # Docs, if present
+          if [ -f docs/staff-discipline.md ]; then
+            perl -0pi -e "s/warning = คาดโทษ/warning = การคาดโทษ (ใบเหลือง) สำหรับเจ้าหน้าที่ทีม/g" docs/staff-discipline.md
+            perl -0pi -e "s/caution = เตือน/caution = ค่าเก่าที่ระบบยังรองรับ และแสดงผลเท่ากับ warning/g" docs/staff-discipline.md
+            perl -0pi -e "s/ejection = ไล่ออก/ejection = การไล่ออก (ใบแดง) สำหรับเจ้าหน้าที่ทีม/g" docs/staff-discipline.md
+            perl -0pi -e "s/ban = แบน/ban = แบน \/ ห้ามคุมทีม/g" docs/staff-discipline.md
+          fi
+
+          # Remove this one-time workflow after applying the patch.
+          rm -f .github/workflows/one-time-normalize-staff-discipline-labels.yml
+
+          echo "After patch:"
+          grep -R -n "คาดโทษ\|เตือน\|ไล่ออก\|disciplineLabels\|caution" app docs || true
+
+          git status --short
+
+      - name: Commit patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "$(git status --porcelain)" ]; then
+            echo "No changes to commit."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app docs .github/workflows || true
+          git commit -m "Normalize staff discipline labels"
+          git push
