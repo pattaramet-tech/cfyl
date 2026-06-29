@@ -34,6 +34,7 @@ const NAV_GROUPS: NavGroup[] = [
       { href: '/admin/goals', label: 'Goals', icon: '⚽' },
       { href: '/admin/cards', label: 'Cards', icon: '🟨' },
       { href: '/admin/suspensions', label: 'Suspensions', icon: '🚨' },
+      { href: '/admin/staff-discipline', label: 'Staff Discipline', icon: '👔' },
     ],
   },
   {
