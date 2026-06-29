@@ -168,7 +168,7 @@ export default function MatchPage() {
   const params = useParams<{ matchId: string }>();
   const matchId = params?.matchId;
 
-  const [data, setData] = useState<{ match: MatchDetail; goals: Goal[]; cards: Card[] } | null>(null);
+  const [data, setData] = useState<{ match: MatchDetail; goals: Goal[]; cards: Card[]; staff_discipline_events?: any[] } | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -205,7 +205,7 @@ export default function MatchPage() {
 
   const timeline = useMemo(() => {
     if (!data) return [];
-    const events: Array<{ type: 'goal' | 'card'; minute: number | null; data: Goal | Card }> = [];
+    const events: Array<{ type: 'goal' | 'card' | 'staff_discipline'; minute: number | null; data: any }> = [];
 
     data.goals.forEach((g) => {
       events.push({ type: 'goal', minute: g.minute ?? null, data: g });
@@ -213,6 +213,10 @@ export default function MatchPage() {
 
     data.cards.forEach((c) => {
       events.push({ type: 'card', minute: c.minute || null, data: c });
+    });
+
+    data.staff_discipline_events?.forEach((s) => {
+      events.push({ type: 'staff_discipline', minute: s.minute || null, data: s });
     });
 
     return events.sort((a, b) => {
@@ -353,32 +357,71 @@ export default function MatchPage() {
             <div className="space-y-2">
               {timeline.map((event, idx) => {
                 const isGoal = event.type === 'goal';
+                const isCard = event.type === 'card';
+                const isStaffDiscipline = event.type === 'staff_discipline';
                 const data = event.data as any;
                 const minute = event.minute;
                 const minuteStr = minute === null ? 'ไม่ระบุนาที' : `${minute}'`;
+
+                // Discipline type icons and labels
+                const disciplineIcons: Record<string, string> = {
+                  warning: '⚠️',
+                  caution: '🟧',
+                  ejection: '🟥',
+                  ban: '🚫',
+                };
+                const disciplineLabels: Record<string, string> = {
+                  warning: 'คาดโทษ',
+                  caution: 'เตือน',
+                  ejection: 'ไล่ออก',
+                  ban: 'แบน',
+                };
 
                 return (
                   <div
                     key={`${event.type}-${data.id}`}
                     className="flex items-center gap-3 px-3 py-2 bg-slate-50 rounded text-sm"
                   >
-                    <span className="text-lg shrink-0">{isGoal ? '⚽' : getCardIcon(data.card_type)}</span>
+                    {isGoal && <span className="text-lg shrink-0">⚽</span>}
+                    {isCard && <span className="text-lg shrink-0">{getCardIcon(data.card_type)}</span>}
+                    {isStaffDiscipline && (
+                      <span className="text-lg shrink-0">{disciplineIcons[data.discipline_type] || '⚠️'}</span>
+                    )}
+
                     <span className="w-12 text-slate-500 shrink-0 font-semibold">{minuteStr}</span>
+
                     <span className="flex-1 min-w-0">
-                      <span className="font-semibold text-slate-800">
-                        #{data.player?.shirt_no || '?'} {data.player?.full_name || 'ไม่ระบุ'}
-                      </span>
-                      {isGoal && Number(data.goals || 1) > 1 && (
-                        <span className="ml-2 text-xs font-bold text-blue-700 bg-blue-50 px-2 py-0.5 rounded-full">
-                          ×{data.goals}
-                        </span>
-                      )}
-                      {!isGoal && data.note && (
-                        <span className="text-slate-500 ml-1">• {data.note}</span>
+                      {isStaffDiscipline ? (
+                        <>
+                          <span className="font-semibold text-slate-800">
+                            {data.staff?.full_name || 'ไม่ระบุ'}
+                          </span>
+                          <span className="text-xs text-slate-600 ml-1">
+                            • {data.staff?.position || '—'} • {disciplineLabels[data.discipline_type] || data.discipline_type}
+                          </span>
+                          {data.reason && (
+                            <span className="text-slate-500 ml-1 block text-xs">• {data.reason}</span>
+                          )}
+                        </>
+                      ) : (
+                        <>
+                          <span className="font-semibold text-slate-800">
+                            #{data.player?.shirt_no || '?'} {data.player?.full_name || 'ไม่ระบุ'}
+                          </span>
+                          {isGoal && Number(data.goals || 1) > 1 && (
+                            <span className="ml-2 text-xs font-bold text-blue-700 bg-blue-50 px-2 py-0.5 rounded-full">
+                              ×{data.goals}
+                            </span>
+                          )}
+                          {isCard && data.note && (
+                            <span className="text-slate-500 ml-1">• {data.note}</span>
+                          )}
+                        </>
                       )}
                     </span>
+
                     <span className="text-slate-500 shrink-0 text-xs text-right max-w-55 truncate">
-                      {getEventTeamName(data, m)}
+                      {isStaffDiscipline ? (data.team?.name || data.team?.short_name || '—') : getEventTeamName(data, m)}
                     </span>
                   </div>
                 );

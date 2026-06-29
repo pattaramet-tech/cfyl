@@ -88,11 +88,27 @@ export async function GET(
       )
       .eq('match_id', matchId);
 
+    // Fetch staff discipline events for this match
+    const { data: staffDisciplineEvents, error: staffDisciplineError } = await supabase
+      .from('staff_discipline_events')
+      .select(
+        `
+        *,
+        staff:staff_id(id, full_name, position),
+        team:team_id(id, name, short_name)
+      `
+      )
+      .eq('match_id', matchId)
+      .eq('status', 'active');
+
     if (goalsError) {
       console.error('[PUBLIC_MATCH_DETAIL] Goals fetch error:', goalsError);
     }
     if (cardsError) {
       console.error('[PUBLIC_MATCH_DETAIL] Cards fetch error:', cardsError);
+    }
+    if (staffDisciplineError) {
+      console.error('[PUBLIC_MATCH_DETAIL] Staff discipline fetch error:', staffDisciplineError);
     }
 
     const matchWithMeta = {
@@ -105,6 +121,7 @@ export async function GET(
       match: matchWithMeta,
       goals: goals || [],
       cards: cards || [],
+      staff_discipline_events: staffDisciplineEvents || [],
     });
   } catch (error) {
     console.error('API error:', error);
