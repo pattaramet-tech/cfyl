@@ -52,7 +52,7 @@ function normalizeText(text: string): string {
 
 function normalizeTeamName(name: string): string {
   return normalizeText(name)
-    .replace(/\bU\d{2}\b/g, '')
+    .replace(/\s*u\d{2}\s*/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
 }
@@ -215,7 +215,20 @@ async function importStaffs(filePath: string, seasonName: string, dryRun: boolea
 
   for (const staff of parsedStaffs) {
     const ageGroup = ageGroups?.find((ag) => normalizeText(ag.code) === normalizeText(`U${staff.ageGroupCode}`));
-    const division = divisions?.find((d) => normalizeText(d.name) === normalizeText(staff.divisionName));
+
+    // Match division by number
+    const divNumMatch = staff.divisionName.match(/\d+/);
+    const division = divisions?.find((d) => {
+      if (normalizeText(d.name) === normalizeText(staff.divisionName) && d.age_group_id === ageGroup?.id) {
+        return true;
+      }
+      const dbNumMatch = d.name.match(/\d+/);
+      if (divNumMatch && dbNumMatch && divNumMatch[0] === dbNumMatch[0] && d.age_group_id === ageGroup?.id) {
+        return true;
+      }
+      return false;
+    });
+
     const team = teams?.find(
       (t) =>
         (normalizeTeamName(t.name) === normalizeTeamName(staff.teamName) ||
