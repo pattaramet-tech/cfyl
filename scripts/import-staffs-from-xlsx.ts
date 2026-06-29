@@ -2,6 +2,10 @@ import fs from 'fs';
 import path from 'path';
 import XLSX from 'xlsx';
 import { createClient } from '@supabase/supabase-js';
+import dotenv from 'dotenv';
+
+// Load environment variables from .env.local
+dotenv.config({ path: '.env.local' });
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -129,16 +133,23 @@ async function importStaffs(filePath: string, seasonName: string, dryRun: boolea
       continue;
     }
 
-    // Parse division
-    const divisionName = String(row.Division || '').trim();
-    const matchedDivision = divisions?.find(
-      (d) =>
-        normalizeText(d.name) === normalizeText(divisionName) &&
-        d.age_group_id === matchedAgeGroup.id
-    );
+    // Parse division - handle numeric names
+    const divisionInput = String(row.Division || '').trim();
+    const matchedDivision = divisions?.find((d) => {
+      if (normalizeText(d.name) === normalizeText(divisionInput) && d.age_group_id === matchedAgeGroup.id) {
+        return true;
+      }
+      // Try matching by number: "1" matches "ดิวิชั่น 1", "Division 1", etc.
+      const divNumMatch = divisionInput.match(/\d+/);
+      const dbNumMatch = d.name.match(/\d+/);
+      if (divNumMatch && dbNumMatch && divNumMatch[0] === dbNumMatch[0] && d.age_group_id === matchedAgeGroup.id) {
+        return true;
+      }
+      return false;
+    });
 
     if (!matchedDivision) {
-      console.warn(`⚠️ Row ${rowIndex}: Division not found: ${divisionName}`);
+      console.warn(`⚠️ Row ${rowIndex}: Division not found: ${divisionInput}`);
       continue;
     }
 
@@ -154,7 +165,7 @@ async function importStaffs(filePath: string, seasonName: string, dryRun: boolea
     if (!matchedTeam) {
       unmatchedTeams.push({
         ageGroupCode,
-        divisionName,
+        divisionName: divisionInput,
         teamName: row.Team,
         position: row.Position,
         fullName: row.StaffName,
@@ -166,7 +177,7 @@ async function importStaffs(filePath: string, seasonName: string, dryRun: boolea
 
     parsedStaffs.push({
       ageGroupCode,
-      divisionName,
+      divisionName: divisionInput,
       teamName: row.Team,
       position: row.Position,
       fullName: row.StaffName,
