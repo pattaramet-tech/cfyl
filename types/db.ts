@@ -200,3 +200,37 @@ export interface DisciplineRecord {
   discipline_points: number;
   matches_banned: number;
 }
+
+export interface TeamStaff {
+  id: string;
+  season_id: string;
+  age_group_id: string;
+  division_id: string | null;
+  team_id: string;
+  full_name: string;
+  position: string;
+  phone: string | null;
+  active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface StaffDisciplineEvent {
+  id: string;
+  season_id: string;
+  age_group_id: string;
+  division_id: string | null;
+  match_id: string | null;
+  team_id: string;
+  staff_id: string;
+  discipline_type: 'warning' | 'caution' | 'ejection' | 'ban';
+  minute: number | null;
+  reason: string | null;
+  note: string | null;
+  suspended_matches: number;
+  suspended_from_matchday: string | null;
+  status: 'active' | 'served' | 'cancelled';
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
