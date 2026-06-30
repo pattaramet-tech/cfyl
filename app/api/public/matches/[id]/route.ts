@@ -3,6 +3,17 @@ import { NextRequest, NextResponse } from 'next/server';
 
 export const dynamic = 'force-dynamic';
 
+function isSuspendedForMatch(suspension: any, matchId: string): boolean {
+  if (suspension.suspended_from_match_id === matchId) return true;
+
+  const suspendedMatches = suspension.suspension_details?.suspended_matches;
+  if (Array.isArray(suspendedMatches)) {
+    return suspendedMatches.some((m: any) => m.match_id === matchId);
+  }
+
+  return false;
+}
+
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -101,6 +112,30 @@ export async function GET(
       .eq('match_id', matchId)
       .eq('status', 'active');
 
+    // Fetch suspensions for players in this match's teams
+    const { data: suspensions, error: suspensionsError } = await supabase
+      .from('suspensions')
+      .select(
+        `
+        id,
+        season_id,
+        age_group_id,
+        player_id,
+        team_id,
+        total_points,
+        ban_matches,
+        suspended_from_match_id,
+        suspension_reason,
+        suspension_details,
+        player:player_id(id, full_name, shirt_no, team_id),
+        team:team_id(id, name, short_name)
+      `
+      )
+      .eq('season_id', match.season_id)
+      .eq('age_group_id', match.age_group_id)
+      .in('team_id', [match.home_team_id, match.away_team_id])
+      .gt('ban_matches', 0);
+
     if (goalsError) {
       console.error('[PUBLIC_MATCH_DETAIL] Goals fetch error:', goalsError);
     }
@@ -110,6 +145,9 @@ export async function GET(
     if (staffDisciplineError) {
       console.error('[PUBLIC_MATCH_DETAIL] Staff discipline fetch error:', staffDisciplineError);
     }
+    if (suspensionsError) {
+      console.error('[PUBLIC_MATCH_DETAIL] Suspensions fetch error:', suspensionsError);
+    }
 
     const matchWithMeta = {
       ...match,
@@ -117,11 +155,17 @@ export async function GET(
       age_group,
     };
 
+    // Filter suspended players for this match
+    const suspendedPlayers = (suspensions || []).filter((s) =>
+      isSuspendedForMatch(s, match.id)
+    );
+
     return NextResponse.json({
       match: matchWithMeta,
       goals: goals || [],
       cards: cards || [],
       staff_discipline_events: staffDisciplineEvents || [],
+      suspended_players: suspendedPlayers,
     });
   } catch (error) {
     console.error('API error:', error);

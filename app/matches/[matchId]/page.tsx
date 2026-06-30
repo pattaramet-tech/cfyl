@@ -53,6 +53,30 @@ interface Card {
   } | null;
 }
 
+interface SuspendedPlayer {
+  id: string;
+  season_id: string;
+  age_group_id: string;
+  player_id: string;
+  team_id: string;
+  total_points: number;
+  ban_matches: number;
+  suspended_from_match_id?: string | null;
+  suspension_reason?: string | null;
+  suspension_details?: any;
+  player?: {
+    id: string;
+    full_name: string;
+    shirt_no?: number | null;
+    team_id?: string | null;
+  };
+  team?: {
+    id: string;
+    name: string;
+    short_name?: string | null;
+  };
+}
+
 interface MatchDetail extends Match {
   home_team?: { id?: string; name?: string; short_name?: string; logo_url?: string };
   away_team?: { id?: string; name?: string; short_name?: string; logo_url?: string };
@@ -168,7 +192,7 @@ export default function MatchPage() {
   const params = useParams<{ matchId: string }>();
   const matchId = params?.matchId;
 
-  const [data, setData] = useState<{ match: MatchDetail; goals: Goal[]; cards: Card[]; staff_discipline_events?: any[] } | null>(null);
+  const [data, setData] = useState<{ match: MatchDetail; goals: Goal[]; cards: Card[]; staff_discipline_events?: any[]; suspended_players?: SuspendedPlayer[] } | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -349,6 +373,46 @@ export default function MatchPage() {
           </div>
         </div>
 
+        {/* Suspended Players */}
+        {data.suspended_players && data.suspended_players.length > 0 && (
+          <div className="cfyl-card p-6 border-l-4 border-red-500 bg-red-50">
+            <h2 className="cfyl-section-title mb-4 text-red-800">🚫 นักกีฬาติดโทษแบนในแมตช์นี้</h2>
+
+            <div className="space-y-3">
+              {data.suspended_players.map((susp) => (
+                <div
+                  key={susp.id}
+                  className="bg-white border border-red-100 rounded-lg p-4"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="font-bold text-slate-900">
+                        #{susp.player?.shirt_no ?? '—'} {susp.player?.full_name || 'ไม่ระบุชื่อ'}
+                      </p>
+                      <p className="text-sm text-slate-600">
+                        ทีม: {susp.team?.name || susp.team?.short_name || '—'}
+                      </p>
+                      {susp.suspension_reason && (
+                        <p className="text-sm text-red-700 mt-1">
+                          เหตุผล: {susp.suspension_reason}
+                        </p>
+                      )}
+                      {susp.suspension_details?.trigger_event && (
+                        <p className="text-xs text-slate-500 mt-1">
+                          สาเหตุ: {susp.suspension_details.trigger_event}
+                        </p>
+                      )}
+                    </div>
+
+                    <span className="shrink-0 bg-red-100 text-red-700 text-xs font-bold px-3 py-1 rounded-full">
+                      แบน {susp.ban_matches} นัด
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* Timeline */}
         {timeline.length > 0 && (
