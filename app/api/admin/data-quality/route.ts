@@ -42,6 +42,16 @@ interface DataQualityResponse {
 
 export const dynamic = 'force-dynamic';
 
+function getGoalTeamId(goal: any): string | null {
+  return goal.team_id || goal.player?.team_id || null;
+}
+
+function sumGoalsForTeam(matchGoals: any[], teamId: string): number {
+  return matchGoals
+    .filter((g: any) => getGoalTeamId(g) === teamId)
+    .reduce((sum: number, g: any) => sum + Number(g.goals || 1), 0);
+}
+
 export async function GET(request: NextRequest) {
   try {
     const authResult = await verifyAdminAuth(request);
@@ -144,13 +154,9 @@ export async function GET(request: NextRequest) {
     // Check 2: Score mismatch with goals
     (matches || []).forEach((match: any) => {
       if (match.status === 'finished') {
-        const homeGoals = (goals || [])
-          .filter((g: any) => (g.team_id === match.home_team_id || g.player?.team_id === match.home_team_id))
-          .reduce((sum: number, g: any) => sum + (g.goals || 1), 0);
-
-        const awayGoals = (goals || [])
-          .filter((g: any) => (g.team_id === match.away_team_id || g.player?.team_id === match.away_team_id))
-          .reduce((sum: number, g: any) => sum + (g.goals || 1), 0);
+        const matchGoals = (goals || []).filter((g: any) => g.match_id === match.id);
+        const homeGoals = sumGoalsForTeam(matchGoals, match.home_team_id);
+        const awayGoals = sumGoalsForTeam(matchGoals, match.away_team_id);
 
         if (homeGoals !== (match.home_score || 0) || awayGoals !== (match.away_score || 0)) {
           issues.push({
@@ -163,20 +169,27 @@ export async function GET(request: NextRequest) {
             entity_id: match.id,
             match_id: match.id,
             action_url: `/admin/goals?matchId=${match.id}`,
-            meta: { home_score: match.home_score, away_score: match.away_score, home_goals: homeGoals, away_goals: awayGoals },
+            meta: {
+              home_score: match.home_score,
+              away_score: match.away_score,
+              home_goals: homeGoals,
+              away_goals: awayGoals,
+              match_goal_records: matchGoals.length,
+            },
           });
         }
       }
     });
 
-    // Check 3: Scheduled match but has score/goals/cards
+    // Check 3: Scheduled match but has score/goals/cards/staff_discipline
     (matches || []).forEach((match: any) => {
       if (match.status === 'scheduled') {
         const hasScore = match.home_score !== null || match.away_score !== null;
         const hasGoals = (goals || []).some((g: any) => g.match_id === match.id);
         const hasCards = (cards || []).some((c: any) => c.match_id === match.id);
+        const hasStaffDiscipline = (staffDiscipline || []).some((sd: any) => sd.match_id === match.id);
 
-        if (hasScore || hasGoals || hasCards) {
+        if (hasScore || hasGoals || hasCards || hasStaffDiscipline) {
           issues.push({
             id: `check3_${issueCounter++}`,
             severity: 'warning',
