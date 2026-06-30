@@ -57,6 +57,7 @@ const NAV_GROUPS: NavGroup[] = [
   {
     title: 'Publish & Tools',
     items: [
+      { href: '/admin/data-quality', label: 'Data Quality', icon: '🧪' },
       { href: '/admin/exports', label: 'Exports', icon: '📋' },
       { href: '/admin/backup', label: 'Backup', icon: '💾' },
       { href: '/admin/audit-logs', label: 'Audit Logs', icon: '🧾' },
