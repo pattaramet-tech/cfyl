@@ -110,6 +110,7 @@ export async function POST(request: NextRequest) {
 
     const body = await request.json();
     const { matchId, staffId, disciplineType, minute, reason, note, suspendedMatches } = body;
+    const normalizedDisciplineType = disciplineType === 'caution' ? 'warning' : disciplineType;
 
     if (!staffId || !disciplineType) {
       return NextResponse.json(

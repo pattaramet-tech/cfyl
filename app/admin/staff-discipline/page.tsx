@@ -50,10 +50,10 @@ const disciplineIcons: Record<string, string> = {
 };
 
 const disciplineLabels: Record<string, string> = {
-  warning: 'คาดโทษ',
-  caution: 'เตือน',
-  ejection: 'ไล่ออก',
-  ban: 'แบน',
+  warning: 'การคาดโทษ (ใบเหลือง)',
+  caution: 'การคาดโทษ (ใบเหลือง)',
+  ejection: 'การไล่ออก (ใบแดง)',
+  ban: 'แบน / ห้ามคุมทีม',
 };
 
 const statusLabels: Record<string, string> = {
