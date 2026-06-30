@@ -126,9 +126,6 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Normalize caution to warning
-    const normalizedDisciplineType = disciplineType === 'caution' ? 'warning' : disciplineType;
-
     // Validate minute if provided
     if (minute !== null && minute !== undefined) {
       const m = Number(minute);
