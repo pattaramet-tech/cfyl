@@ -106,6 +106,13 @@ function getCardIcon(cardType: string): string {
   return '';
 }
 
+function getTeamDisplayName(
+  team?: { name?: string | null; short_name?: string | null } | null,
+  fallback = '—'
+): string {
+  return team?.name || team?.short_name || fallback;
+}
+
 export default function TeamProfilePage() {
   const params = useParams<{ teamId: string }>();
   const teamId = params?.teamId;
@@ -379,12 +386,12 @@ export default function TeamProfilePage() {
                         {match.match_time && ` เวลา ${match.match_time}`}
                       </div>
                       <div className="flex items-center gap-2 sm:gap-3 mb-2">
-                        <div className="flex-1 text-right">
-                          <div className="font-semibold text-sm sm:text-base text-gray-800 truncate">
-                            {team.short_name || team.name}
+                        <div className="flex-1 text-right min-w-0">
+                          <div className="font-semibold text-sm sm:text-base text-gray-800 break-words">
+                            {team.name || team.short_name}
                           </div>
                         </div>
-                        <div className="w-16 sm:w-24 text-center">
+                        <div className="w-16 sm:w-24 shrink-0 text-center">
                           {isFinished ? (
                             <div className="font-bold text-base sm:text-lg">
                               {score.own} - {score.opponent}
@@ -393,9 +400,9 @@ export default function TeamProfilePage() {
                             <div className="font-bold text-gray-400">VS</div>
                           )}
                         </div>
-                        <div className="flex-1 text-left">
-                          <div className="font-semibold text-sm sm:text-base text-gray-800 truncate">
-                            {opponent?.short_name || opponent?.name || '-'}
+                        <div className="flex-1 text-left min-w-0">
+                          <div className="font-semibold text-sm sm:text-base text-gray-800 break-words">
+                            {getTeamDisplayName(opponent, '-')}
                           </div>
                         </div>
                       </div>
