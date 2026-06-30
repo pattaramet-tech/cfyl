@@ -1477,10 +1477,9 @@ export default function MatchManagePage() {
                     disabled={addingStaffDiscipline}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-400 text-sm"
                   >
-                    <option value="warning">⚠️ คาดโทษ</option>
-                    <option value="caution">🟧 เตือน</option>
-                    <option value="ejection">🟥 ไล่ออก</option>
-                    <option value="ban">🚫 แบน</option>
+                    <option value="warning">🟨 การคาดโทษ (ใบเหลือง)</option>
+                    <option value="ejection">🟥 การไล่ออก (ใบแดง)</option>
+                    <option value="ban">🚫 แบน / ห้ามคุมทีม</option>
                   </select>
                 </div>
 
@@ -1560,10 +1559,9 @@ export default function MatchManagePage() {
                           {event.minute !== null ? `นาที ${event.minute}'` : 'ไม่ระบุนาที'} · {event.staff?.full_name} · {event.staff?.position}
                         </p>
                         <p className="text-xs sm:text-sm text-slate-600 mt-1">
-                          {event.discipline_type === 'warning' && '⚠️ คาดโทษ'}
-                          {event.discipline_type === 'caution' && '🟧 เตือน'}
-                          {event.discipline_type === 'ejection' && '🟥 ไล่ออก'}
-                          {event.discipline_type === 'ban' && '🚫 แบน'}
+                          {(event.discipline_type === 'warning' || event.discipline_type === 'caution') && '🟨 การคาดโทษ (ใบเหลือง)'}
+                          {event.discipline_type === 'ejection' && '🟥 การไล่ออก (ใบแดง)'}
+                          {event.discipline_type === 'ban' && '🚫 แบน / ห้ามคุมทีม'}
                           {event.suspended_matches > 0 && ` · แบน ${event.suspended_matches} แมตช์`}
                           {event.reason && ` · ${event.reason}`}
                         </p>

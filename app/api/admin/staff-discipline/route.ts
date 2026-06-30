@@ -125,6 +125,9 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Normalize caution to warning
+    const normalizedDisciplineType = disciplineType === 'caution' ? 'warning' : disciplineType;
+
     // Validate minute if provided
     if (minute !== null && minute !== undefined) {
       const m = Number(minute);
@@ -179,7 +182,7 @@ export async function POST(request: NextRequest) {
         match_id: matchId || null,
         team_id: staff.team_id,
         staff_id: staffId,
-        discipline_type: disciplineType,
+        discipline_type: normalizedDisciplineType,
         minute: minute !== undefined && minute !== null ? Number(minute) : null,
         reason: reason || null,
         note: note || null,
@@ -222,8 +225,8 @@ export async function POST(request: NextRequest) {
       action: 'staff_discipline.create',
       entityType: 'staff_discipline_event',
       entityId: newEvent?.id,
-      entityLabel: `${disciplineType} - Staff #${staffId}`,
-      newData: { staff_id: staffId, discipline_type: disciplineType, match_id: matchId, minute, reason },
+      entityLabel: `${normalizedDisciplineType} - Staff #${staffId}`,
+      newData: { staff_id: staffId, discipline_type: normalizedDisciplineType, match_id: matchId, minute, reason },
     });
 
     return NextResponse.json(newEvent, { status: 201 });

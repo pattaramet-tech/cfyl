@@ -365,16 +365,16 @@ export default function MatchPage() {
 
                 // Discipline type icons and labels
                 const disciplineIcons: Record<string, string> = {
-                  warning: '⚠️',
-                  caution: '🟧',
+                  warning: '🟨',
+                  caution: '🟨',
                   ejection: '🟥',
                   ban: '🚫',
                 };
                 const disciplineLabels: Record<string, string> = {
-                  warning: 'คาดโทษ',
-                  caution: 'เตือน',
-                  ejection: 'ไล่ออก',
-                  ban: 'แบน',
+                  warning: 'การคาดโทษ (ใบเหลือง)',
+                  caution: 'การคาดโทษ (ใบเหลือง)',
+                  ejection: 'การไล่ออก (ใบแดง)',
+                  ban: 'แบน / ห้ามคุมทีม',
                 };
 
                 return (
