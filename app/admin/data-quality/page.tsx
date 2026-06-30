@@ -60,33 +60,30 @@ export default function DataQualityPage() {
   const [severityFilter, setSeverityFilter] = useState<'all' | QualitySeverity>('all');
   const [categoryFilter, setCategoryFilter] = useState('all');
   const [searchText, setSearchText] = useState('');
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   // Load seasons on mount
   useEffect(() => {
     const loadSeasons = async () => {
       try {
-        const token = localStorage.getItem('admin_token');
-        if (!token) {
-          router.push('/admin/login');
-          return;
-        }
+        const res = await fetch('/api/public/seasons');
+        if (!res.ok) throw new Error('Failed to load seasons');
 
-        const headers = { Authorization: `Bearer ${token}` };
-        const res = await fetch('/api/admin/seasons', { headers });
-        if (res.ok) {
-          const { data } = await res.json();
-          setSeasons(data || []);
-          if (data?.length > 0) {
-            setSelectedSeason(data[0].id);
-          }
+        const data = await res.json();
+        setSeasons(Array.isArray(data) ? data : []);
+
+        if (Array.isArray(data) && data.length > 0) {
+          setSelectedSeason(data[0].id);
         }
+        setLoadError(null);
       } catch (error) {
         console.error('Error loading seasons:', error);
+        setLoadError('ไม่สามารถโหลดฤดูกาลได้');
       }
     };
 
     loadSeasons();
-  }, [router]);
+  }, []);
 
   // Load age groups when season changes
   useEffect(() => {
@@ -94,24 +91,23 @@ export default function DataQualityPage() {
 
     const loadAgeGroups = async () => {
       try {
-        const token = localStorage.getItem('admin_token');
-        const headers = { Authorization: `Bearer ${token}` };
+        const res = await fetch(`/api/public/age-groups?seasonId=${selectedSeason}`);
+        if (!res.ok) throw new Error('Failed to load age groups');
 
-        const res = await fetch(
-          `/api/admin/age-groups?seasonId=${selectedSeason}`,
-          { headers }
-        );
-        if (res.ok) {
-          const { data } = await res.json();
-          setAgeGroups(data || []);
-          setSelectedAgeGroup('');
-          setSelectedDivision('');
-          setSummary(null);
-          setIssues([]);
-          setChecked(false);
-        }
+        const data = await res.json();
+        const list = Array.isArray(data) ? data : [];
+
+        setAgeGroups(list);
+        setSelectedAgeGroup(list.length > 0 ? list[0].id : '');
+        setSelectedDivision('');
+        setDivisions([]);
+        setSummary(null);
+        setIssues([]);
+        setChecked(false);
+        setLoadError(null);
       } catch (error) {
         console.error('Error loading age groups:', error);
+        setLoadError('ไม่สามารถโหลดระดับอายุได้');
       }
     };
 
@@ -124,23 +120,23 @@ export default function DataQualityPage() {
 
     const loadDivisions = async () => {
       try {
-        const token = localStorage.getItem('admin_token');
-        const headers = { Authorization: `Bearer ${token}` };
-
         const res = await fetch(
-          `/api/admin/divisions?seasonId=${selectedSeason}&ageGroupId=${selectedAgeGroup}`,
-          { headers }
+          `/api/public/divisions?seasonId=${selectedSeason}&ageGroupId=${selectedAgeGroup}`
         );
-        if (res.ok) {
-          const { data } = await res.json();
-          setDivisions(data || []);
-          setSelectedDivision('');
-          setSummary(null);
-          setIssues([]);
-          setChecked(false);
-        }
+        if (!res.ok) throw new Error('Failed to load divisions');
+
+        const data = await res.json();
+        const list = Array.isArray(data) ? data : [];
+
+        setDivisions(list);
+        setSelectedDivision('');
+        setSummary(null);
+        setIssues([]);
+        setChecked(false);
+        setLoadError(null);
       } catch (error) {
         console.error('Error loading divisions:', error);
+        setLoadError('ไม่สามารถโหลดดิวิชั่นได้');
       }
     };
 
@@ -151,8 +147,13 @@ export default function DataQualityPage() {
     if (!selectedSeason || !selectedAgeGroup) return;
 
     setLoading(true);
+    setLoadError(null);
     try {
       const token = localStorage.getItem('admin_token');
+      if (!token) {
+        router.push('/admin/login');
+        return;
+      }
       const headers = { Authorization: `Bearer ${token}` };
 
       const params = new URLSearchParams({
@@ -223,6 +224,13 @@ export default function DataQualityPage() {
         <h1 className="text-3xl font-bold mb-2">🧪 Data Quality Checker</h1>
         <p className="text-gray-600">ตรวจความครบถ้วนและความถูกต้องของข้อมูลการแข่งขัน</p>
       </div>
+
+      {/* Error message */}
+      {loadError && (
+        <div className="bg-red-50 border border-red-200 text-red-700 rounded-lg p-3 mb-4 text-sm">
+          {loadError}
+        </div>
+      )}
 
       {/* Filters */}
       <div className="bg-white rounded-lg shadow p-4 mb-6 space-y-4">
