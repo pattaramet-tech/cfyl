@@ -86,6 +86,20 @@ export function calculateMatchPoints(cards: CardCount): number {
 }
 
 /**
+ * Check if a match has second_yellow or 2+ yellows = ejection via yellow card rule
+ */
+export function isSecondYellowEjection(cards: CardCount): boolean {
+  return cards.second_yellow >= 1 || cards.yellow >= 2;
+}
+
+/**
+ * Check if a match has direct red ejection
+ */
+export function isDirectRedEjection(cards: CardCount): boolean {
+  return cards.red >= 1;
+}
+
+/**
  * CFYL Suspension Thresholds:
  * - 6 pts = 1 match ban
  * - 12 pts = 2 match ban
@@ -131,6 +145,9 @@ export async function getSeasonCards(
   points: number;
   cards: CardCount;
   reason: string;
+  is_second_yellow_ejection: boolean;
+  is_direct_red: boolean;
+  is_ejection: boolean;
 }>> {
   const timer = `[SUSPENSION_CALC] getSeasonCards`;
   console.time(timer);
@@ -190,6 +207,9 @@ export async function getSeasonCards(
       points: number;
       cards: CardCount;
       reason: string;
+      is_second_yellow_ejection: boolean;
+      is_direct_red: boolean;
+      is_ejection: boolean;
     }> = [];
 
     for (const [matchId, matchData] of Object.entries(matchCardMap)) {
@@ -209,6 +229,9 @@ export async function getSeasonCards(
             ? effectiveYellows > 0 ? `${effectiveYellows}Y + ${count.red}R` : `${count.red}R`
             : effectiveYellows >= 2 ? `${effectiveYellows}Y` : '1Y';
 
+        const isSecondYellow = isSecondYellowEjection(count);
+        const isDirectRed = isDirectRedEjection(count);
+
         result.push({
           match_id: matchId,
           matchday: matchData.matchday,
@@ -217,6 +240,9 @@ export async function getSeasonCards(
           points,
           cards: count,
           reason,
+          is_second_yellow_ejection: isSecondYellow,
+          is_direct_red: isDirectRed,
+          is_ejection: isSecondYellow || isDirectRed,
         });
       }
     }
@@ -387,10 +413,30 @@ export async function recalculatePlayerSuspension(
     });
 
     const totalPoints = cumulativePoints;
-    const banMatches = calculateBanMatches(totalPoints);
+    const pointsBanMatches = calculateBanMatches(totalPoints);
+
+    // Check for ejection-based ban (second yellow or direct red)
+    const ejectionSource = [...seasonCards].reverse().find((item) => item.is_ejection);
+
+    let banMatches = pointsBanMatches;
+    let triggerSource: PointSource | null = null;
+    let triggerEvent = '';
+
+    if (ejectionSource) {
+      // Ejection takes priority: ban at least 1 match
+      banMatches = Math.max(pointsBanMatches, 1);
+      triggerSource = pointSources.find((src) => src.match_id === ejectionSource.match_id) || null;
+
+      if (ejectionSource.is_second_yellow_ejection) {
+        triggerEvent = 'ใบเหลือง 2 ใบในนัดเดียว / ใบเหลืองที่ 2 (แบน 1 นัด)';
+      } else if (ejectionSource.is_direct_red) {
+        triggerEvent = 'ใบแดงโดยตรง (แบนอย่างน้อย 1 นัด)';
+      }
+    }
 
     console.log(
-      `[SUSPENSION_CALC] totalPoints=${totalPoints} banMatches=${banMatches} pointSources=${pointSources.length}`
+      `[SUSPENSION_CALC] totalPoints=${totalPoints} pointsBanMatches=${pointsBanMatches} banMatches=${banMatches} ` +
+      `ejectionSource=${ejectionSource ? 'yes' : 'no'} pointSources=${pointSources.length}`
     );
 
     // Build suspension_details when there's a ban
@@ -399,62 +445,68 @@ export async function recalculatePlayerSuspension(
     let suspensionReason: string | null = null;
 
     if (banMatches > 0 && pointSources.length > 0) {
-      const thresholdCrossed = getThresholdCrossed(totalPoints);
-
-      // Find trigger match: first match where cumulative crossed the threshold
-      let triggerSource: PointSource | null = null;
-      for (const src of pointSources) {
-        if (src.points_before < thresholdCrossed && src.points_after >= thresholdCrossed) {
-          triggerSource = src;
-          break;
-        }
-      }
-      // Fallback to last card
+      // If no ejection, use threshold-based trigger
       if (!triggerSource) {
-        triggerSource = pointSources[pointSources.length - 1];
+        const thresholdCrossed = getThresholdCrossed(totalPoints);
+
+        // Find trigger match: first match where cumulative crossed the threshold
+        for (const src of pointSources) {
+          if (src.points_before < thresholdCrossed && src.points_after >= thresholdCrossed) {
+            triggerSource = src;
+            break;
+          }
+        }
+        // Fallback to last card
+        if (!triggerSource) {
+          triggerSource = pointSources[pointSources.length - 1];
+        }
+
+        const triggerCardData = seasonCards.find((c) => c.match_id === triggerSource!.match_id);
+        triggerEvent = triggerCardData
+          ? getTriggerEventText(triggerCardData.reason, triggerCardData.points)
+          : 'สะสมคะแนนครบเกณฑ์';
       }
 
       console.log(
-        `[SUSPENSION_CALC] Trigger source: match_id=${triggerSource.match_id} matchday=${triggerSource.matchday} ` +
-        `points_before=${triggerSource.points_before} → points_after=${triggerSource.points_after} threshold=${thresholdCrossed}`
+        `[SUSPENSION_CALC] Trigger source: match_id=${triggerSource?.match_id} matchday=${triggerSource?.matchday} ` +
+        `triggerEvent=${triggerEvent}`
       );
 
-      const triggerCardData = seasonCards.find((c) => c.match_id === triggerSource!.match_id);
-      const triggerEvent = triggerCardData
-        ? getTriggerEventText(triggerCardData.reason, triggerCardData.points)
-        : 'สะสมคะแนนครบเกณฑ์';
+      if (triggerSource) {
+        // Find next banMatches matches for this team (date-based, pass triggerMatchId)
+        const timerNextMatch = `[SUSPENSION_CALC] findNextMatches`;
+        console.time(timerNextMatch);
+        const suspendedMatches = await findNextMatchesForSuspension(
+          teamId,
+          seasonId,
+          ageGroupId,
+          triggerSource.match_id,
+          banMatches
+        );
+        console.timeEnd(timerNextMatch);
 
-      // Find next banMatches matches for this team (date-based, pass triggerMatchId)
-      const timerNextMatch = `[SUSPENSION_CALC] findNextMatches`;
-      console.time(timerNextMatch);
-      const suspendedMatches = await findNextMatchesForSuspension(
-        teamId,
-        seasonId,
-        ageGroupId,
-        triggerSource.match_id,
-        banMatches
-      );
-      console.timeEnd(timerNextMatch);
+        suspendedFromMatchId = suspendedMatches[0]?.match_id || null;
 
-      suspendedFromMatchId = suspendedMatches[0]?.match_id || null;
+        const thresholdCrossed = ejectionSource ? 0 : getThresholdCrossed(totalPoints);
 
-      suspensionDetails = {
-        trigger_match_id: triggerSource.match_id,
-        trigger_matchday: triggerSource.matchday,
-        trigger_event: triggerEvent,
-        points_before: triggerSource.points_before,
-        points_added: triggerSource.points,
-        points_after: triggerSource.points_after,
-        threshold_crossed: thresholdCrossed,
-        ban_matches_count: banMatches,
+        suspensionDetails = {
+          trigger_match_id: triggerSource.match_id,
+          trigger_matchday: triggerSource.matchday,
+          trigger_event: triggerEvent,
+          points_before: triggerSource.points_before,
+          points_added: triggerSource.points,
+          points_after: triggerSource.points_after,
+          threshold_crossed: thresholdCrossed,
+          ban_matches_count: banMatches,
         suspended_matches: suspendedMatches,
       };
 
-      if (suspendedMatches.length > 0) {
-        const matchdays = suspendedMatches.map((m) => `MD${m.matchday}`).join(', ');
-        suspensionReason = `ติดโทษแบน ${banMatches} นัด (${totalPoints} คะแนน) - ${matchdays}`;
-      } else {
-        suspensionReason = `ครบโทษแบน ${banMatches} นัด (${totalPoints} คะแนน) - ไม่พบโปรแกรมแข่งขันนัดถัดไป`;
+        if (suspendedMatches.length > 0) {
+          const matchdays = suspendedMatches.map((m) => `MD${m.matchday}`).join(', ');
+          suspensionReason = `ติดโทษแบน ${banMatches} นัด (${totalPoints} คะแนน) - ${matchdays}`;
+        } else {
+          suspensionReason = `ครบโทษแบน ${banMatches} นัด (${totalPoints} คะแนน) - ไม่พบโปรแกรมแข่งขันนัดถัดไป`;
+        }
       }
     }
 
