@@ -62,6 +62,10 @@ export default function DataQualityPage() {
   const [searchText, setSearchText] = useState('');
   const [loadError, setLoadError] = useState<string | null>(null);
 
+  const [recalculating, setRecalculating] = useState(false);
+  const [recalculateMessage, setRecalculateMessage] = useState<string | null>(null);
+  const [recalculateError, setRecalculateError] = useState<string | null>(null);
+
   // Load seasons on mount
   useEffect(() => {
     const loadSeasons = async () => {
@@ -176,6 +180,53 @@ export default function DataQualityPage() {
     }
   }, [selectedSeason, selectedAgeGroup, selectedDivision]);
 
+  const handleRecalculateSuspensions = useCallback(async () => {
+    if (!selectedSeason || !selectedAgeGroup) return;
+
+    const confirmed = window.confirm(
+      'ต้องการคำนวณโทษแบนใหม่สำหรับรายการที่เลือกใช่ไหม? ระบบจะคำนวณจากใบเหลือง/ใบแดงล่าสุด'
+    );
+    if (!confirmed) return;
+
+    setRecalculating(true);
+    setRecalculateMessage(null);
+    setRecalculateError(null);
+
+    try {
+      const token = localStorage.getItem('admin_token');
+      const res = await fetch('/api/admin/suspensions/recalculate', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({
+          seasonId: selectedSeason,
+          ageGroupId: selectedAgeGroup,
+          divisionId: selectedDivision || undefined,
+        }),
+      });
+
+      const payload = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        throw new Error(payload.error || 'Recalculate failed');
+      }
+
+      setRecalculateMessage(
+        `คำนวณโทษแบนใหม่สำเร็จ: สำเร็จ ${payload.succeeded ?? payload.success}/${payload.processed} รายการ${payload.failed > 0 ? `, ล้มเหลว ${payload.failed}` : ''}`
+      );
+
+      // Refresh Data Quality after recalculation
+      await handleCheck();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setRecalculateError(msg);
+    } finally {
+      setRecalculating(false);
+    }
+  }, [selectedSeason, selectedAgeGroup, selectedDivision, handleCheck]);
+
   const categories = useMemo(
     () => ['all', ...new Set(issues.map((i) => i.category))],
     [issues]
@@ -229,6 +280,20 @@ export default function DataQualityPage() {
       {loadError && (
         <div className="bg-red-50 border border-red-200 text-red-700 rounded-lg p-3 mb-4 text-sm">
           {loadError}
+        </div>
+      )}
+
+      {/* Recalculate Success Message */}
+      {recalculateMessage && (
+        <div className="bg-green-50 border border-green-200 text-green-700 rounded-lg p-3 mb-4 text-sm">
+          ✓ {recalculateMessage}
+        </div>
+      )}
+
+      {/* Recalculate Error Message */}
+      {recalculateError && (
+        <div className="bg-red-50 border border-red-200 text-red-700 rounded-lg p-3 mb-4 text-sm">
+          ✗ โทษแบนล้มเหลว: {recalculateError}
         </div>
       )}
 
@@ -305,6 +370,13 @@ export default function DataQualityPage() {
               className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:bg-gray-400 font-semibold text-sm transition"
             >
               {loading ? 'กำลังตรวจสอบ...' : '✓ ตรวจสอบ'}
+            </button>
+            <button
+              onClick={handleRecalculateSuspensions}
+              disabled={!selectedSeason || !selectedAgeGroup || recalculating}
+              className="px-4 py-2 bg-purple-600 text-white rounded-md hover:bg-purple-700 disabled:bg-gray-400 font-semibold text-sm transition"
+            >
+              {recalculating ? 'กำลังคำนวณ...' : '🔄 คำนวณโทษแบน'}
             </button>
             <button
               onClick={() => window.location.reload()}
