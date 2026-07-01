@@ -52,6 +52,9 @@ export interface BulkImportApplyResponse {
     rowNumber: number;
     message: string;
   }>;
+  batchId?: string;
+  batchNo?: string;
+  logWarning?: string;
 }
 
 // Reference Data for Template
@@ -159,4 +162,54 @@ export interface PlayerUpdatesRow {
   new_shirt_no?: number;
   active?: boolean;
   note?: string;
+}
+
+// Batch Logging Types
+
+export interface MatchBulkImportBatch {
+  id: string;
+  batch_no: string;
+  file_name?: string | null;
+  import_mode: 'append_only' | 'replace' | 'update_existing';
+  season_id: string;
+  age_group_id: string;
+  division_id?: string | null;
+  status: 'success' | 'partial' | 'failed';
+  summary: Record<string, any>;
+  warnings_count: number;
+  errors_count: number;
+  matches_updated: number;
+  goals_inserted: number;
+  cards_inserted: number;
+  staff_discipline_inserted: number;
+  players_updated: number;
+  suspensions_recalculated: number;
+  affected_match_ids: string[];
+  affected_player_ids: string[];
+  affected_team_ids: string[];
+  created_by?: string | null;
+  created_by_email?: string | null;
+  created_at: string;
+  season?: { name: string } | null;
+  age_group?: { name: string } | null;
+  division?: { name: string } | null;
+}
+
+export interface MatchBulkImportBatchRow {
+  id: string;
+  batch_id: string;
+  sheet_name: string;
+  row_number?: number | null;
+  action: string;
+  status: 'success' | 'warning' | 'failed' | 'skipped';
+  message?: string | null;
+  raw_data: Record<string, any>;
+  resolved_data: Record<string, any>;
+  error?: string | null;
+  entity_type?: string | null;
+  entity_id?: string | null;
+  match_id?: string | null;
+  player_id?: string | null;
+  team_id?: string | null;
+  created_at: string;
 }

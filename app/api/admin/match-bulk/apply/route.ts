@@ -2,6 +2,7 @@ import { supabase } from '@/lib/supabase';
 import { NextRequest, NextResponse } from 'next/server';
 import { BulkImportRowResult, BulkImportApplyResponse } from '@/types/bulk-import';
 import { recalculatePlayerSuspension } from '@/lib/suspension-calc';
+import { generateImportBatchNo } from '@/lib/bulk-import-utils';
 
 export async function POST(request: NextRequest) {
   try {
@@ -210,6 +211,97 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    // Record batch log
+    let batchId: string | null = null;
+    let batchNo: string | null = null;
+    let logWarning: string | null = null;
+
+    try {
+      const batchNo_ = generateImportBatchNo();
+      const batchStatus =
+        errors.length > 0 && (matchesUpdated > 0 || goalsInserted > 0 || cardsInserted > 0 || staffDisciplineInserted > 0 || playersUpdated > 0)
+          ? 'partial'
+          : errors.length > 0
+            ? 'failed'
+            : 'success';
+
+      const warningCount = rows.filter((r) => r.status === 'warning').length;
+
+      const { data: batch, error: batchError } = await supabase
+        .from('match_bulk_import_batches')
+        .insert({
+          batch_no: batchNo_,
+          file_name: body.fileName || null,
+          import_mode: 'append_only',
+          season_id: seasonId,
+          age_group_id: ageGroupId,
+          division_id: divisionId || null,
+          status: batchStatus,
+          summary: {
+            totalRows: rows.length,
+            successCount: rows.filter((r) => r.status === 'success').length,
+            warningCount,
+            failedCount: errors.length,
+          },
+          warnings_count: warningCount,
+          errors_count: errors.length,
+          matches_updated: matchesUpdated,
+          goals_inserted: goalsInserted,
+          cards_inserted: cardsInserted,
+          staff_discipline_inserted: staffDisciplineInserted,
+          players_updated: playersUpdated,
+          suspensions_recalculated: affectedPlayersForSuspension.size,
+          affected_match_ids: [],
+          affected_player_ids: Array.from(affectedPlayersForSuspension),
+          affected_team_ids: [],
+          created_by_email: null,
+        } as any)
+        .select('id, batch_no')
+        .single();
+
+      if (batchError) {
+        console.error('[MATCH_BULK_APPLY] Batch insert error:', batchError);
+        if (batchError.message.includes('match_bulk_import_batches')) {
+          logWarning =
+            'Import applied but batch log could not be saved (table does not exist yet). Please run SQL migration.';
+        }
+      } else if (batch) {
+        batchId = batch.id;
+        batchNo = batch.batch_no;
+
+        // Insert batch rows if log was created
+        if (rows.length > 0) {
+          const batchRows = rows.map((row) => ({
+            batch_id: batch.id,
+            sheet_name: row.sheet,
+            row_number: row.rowNumber,
+            action: row.action,
+            status: row.status,
+            message: row.message || null,
+            raw_data: row.raw || {},
+            resolved_data: row.resolved || {},
+            error: null,
+            entity_type: null,
+            entity_id: null,
+            match_id: null,
+            player_id: null,
+            team_id: null,
+          }));
+
+          const { error: rowsInsertError } = await supabase
+            .from('match_bulk_import_batch_rows')
+            .insert(batchRows as any);
+
+          if (rowsInsertError) {
+            console.error('[MATCH_BULK_APPLY] Batch rows insert error:', rowsInsertError);
+          }
+        }
+      }
+    } catch (err) {
+      console.error('[MATCH_BULK_APPLY] Batch log error:', err);
+      logWarning = 'Batch log creation failed but import was applied';
+    }
+
     const response: BulkImportApplyResponse = {
       success: errors.length === 0,
       message:
@@ -225,6 +317,9 @@ export async function POST(request: NextRequest) {
         affectedPlayersForSuspension: Array.from(affectedPlayersForSuspension),
       },
       errors,
+      ...(batchId && { batchId }),
+      ...(batchNo && { batchNo }),
+      ...(logWarning && { logWarning }),
     };
 
     return NextResponse.json(response);
