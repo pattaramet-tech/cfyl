@@ -789,24 +789,65 @@ export default function MatchManagePage() {
   const handleFinishMatch = async (confirmed = false) => {
     if (!selectedMatch) return;
 
-    const consistency = calculateGoalConsistency();
-    if (!consistency) return;
-
-    const { homeMatches, awayMatches } = consistency;
-
-    if (!homeMatches || !awayMatches) {
-      if (!confirmed) {
-        setShowFinishValidation(true);
-        return;
-      }
-    }
-
     setSaving(true);
     setError(null);
     setSuccess(null);
 
     try {
+      // Fetch latest goals from server BEFORE validation
       const token = localStorage.getItem('admin_token');
+      const goalsRes = await fetch(`/api/admin/goals?match_id=${selectedMatch.id}`, {
+        headers: token ? { 'Authorization': `Bearer ${token}` } : {},
+      });
+
+      let freshGoals = goals;
+      if (goalsRes.ok) {
+        const goalsData = await goalsRes.json();
+        freshGoals = goalsData || [];
+        setGoals(freshGoals);
+        console.debug('[MATCH_MANAGE] Fetched fresh goals:', freshGoals.length, 'records');
+      } else {
+        console.warn('[MATCH_MANAGE] Failed to fetch fresh goals, using cached state');
+      }
+
+      // Calculate consistency with fresh goals
+      const homeGoalSum = freshGoals
+        .filter((g: Goal) => getGoalTeamId(g) === selectedMatch.home_team_id)
+        .reduce((sum, g: Goal) => sum + Number(g.goals || 0), 0);
+
+      const awayGoalSum = freshGoals
+        .filter((g: Goal) => getGoalTeamId(g) === selectedMatch.away_team_id)
+        .reduce((sum, g: Goal) => sum + Number(g.goals || 0), 0);
+
+      const homeScoreNum = parseInt(homeScore);
+      const awayScoreNum = parseInt(awayScore);
+
+      const homeMatches = homeGoalSum === homeScoreNum;
+      const awayMatches = awayGoalSum === awayScoreNum;
+
+      console.debug('[MATCH_MANAGE] Fresh consistency check:', {
+        homeGoalSum,
+        awayGoalSum,
+        homeScoreNum,
+        awayScoreNum,
+        homeMatches,
+        awayMatches,
+      });
+
+      // Show validation modal if there's a mismatch
+      if (!homeMatches || !awayMatches) {
+        if (!confirmed) {
+          setShowFinishValidation(true);
+          setSaving(false);
+          return;
+        }
+      }
+
+      // Proceed with finishing the match
+      if (!token) {
+        throw new Error('Not authenticated');
+      }
+
       const res = await fetch(`/api/admin/matches/${selectedMatch.id}`, {
         method: 'PUT',
         headers: {
@@ -814,8 +855,8 @@ export default function MatchManagePage() {
           'Authorization': `Bearer ${token}`,
         },
         body: JSON.stringify({
-          home_score: parseInt(homeScore),
-          away_score: parseInt(awayScore),
+          home_score: homeScoreNum,
+          away_score: awayScoreNum,
           status: 'finished',
         }),
       });
@@ -995,9 +1036,20 @@ export default function MatchManagePage() {
 
       {/* Finish Match Validation Modal */}
       {showFinishValidation && selectedMatch && (() => {
-        const consistency = calculateGoalConsistency();
-        if (!consistency) return null;
-        const { homeMatches, awayMatches, homeGoalSum, awayGoalSum, homeScoreNum, awayScoreNum } = consistency;
+        // Use goals from state (which should be fresh after fetch)
+        const homeGoalSum = goals
+          .filter((g) => getGoalTeamId(g) === selectedMatch.home_team_id)
+          .reduce((sum, g) => sum + Number(g.goals || 0), 0);
+
+        const awayGoalSum = goals
+          .filter((g) => getGoalTeamId(g) === selectedMatch.away_team_id)
+          .reduce((sum, g) => sum + Number(g.goals || 0), 0);
+
+        const homeScoreNum = parseInt(homeScore);
+        const awayScoreNum = parseInt(awayScore);
+
+        const homeMatches = homeGoalSum === homeScoreNum;
+        const awayMatches = awayGoalSum === awayScoreNum;
         const hasError = !homeMatches || !awayMatches;
 
         return (
