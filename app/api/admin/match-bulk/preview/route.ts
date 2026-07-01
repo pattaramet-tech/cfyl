@@ -186,12 +186,13 @@ export async function POST(request: NextRequest) {
       sheet.eachRow((row, rowNumber) => {
         if (rowNumber === 1) return;
 
-        const matchId = trimString(getCellValue(row.getCell(1)));
-        const teamName = trimString(getCellValue(row.getCell(3)));
-        const shirtNo = getCellValue(row.getCell(4));
-        const playerName = trimString(getCellValue(row.getCell(5)));
-        const goals = getCellValue(row.getCell(6));
-        const minute = getCellValue(row.getCell(7));
+        const goalId = trimString(getCellValue(row.getCell(1)));
+        const matchId = trimString(getCellValue(row.getCell(2)));
+        const teamName = trimString(getCellValue(row.getCell(4)));
+        const shirtNo = getCellValue(row.getCell(5));
+        const playerName = trimString(getCellValue(row.getCell(6)));
+        const goals = getCellValue(row.getCell(7));
+        const minute = getCellValue(row.getCell(8));
 
         if (!matchId) {
           results.push(createErrorResult('Goals', rowNumber, 'insert_goal', 'match_id จำเป็น'));
@@ -272,16 +273,29 @@ export async function POST(request: NextRequest) {
           return;
         }
 
+        const message = goalId
+          ? 'ข้อมูลจาก current export - v1 ยัง append only (จะเพิ่มเป็นรายการใหม่ ไม่แก้รายการเดิม)'
+          : 'ตรวจสอบสำเร็จ';
+
         results.push(
-          createValidResult('Goals', rowNumber, 'insert_goal', {
-            match_id: matchId,
-            player_id: player.id,
-            team_id: team.id,
-            goals: goalsResult.value,
-            minute: minuteResult.value,
-          })
+          goalId
+            ? createWarningResult('Goals', rowNumber, 'insert_goal', message, {
+                match_id: matchId,
+                player_id: player.id,
+                team_id: team.id,
+                goals: goalsResult.value,
+                minute: minuteResult.value,
+              })
+            : createValidResult('Goals', rowNumber, 'insert_goal', {
+                match_id: matchId,
+                player_id: player.id,
+                team_id: team.id,
+                goals: goalsResult.value,
+                minute: minuteResult.value,
+              })
         );
         summary.goals++;
+        if (goalId) summary.warnings++;
       });
     };
 
@@ -292,13 +306,14 @@ export async function POST(request: NextRequest) {
       sheet.eachRow((row, rowNumber) => {
         if (rowNumber === 1) return;
 
-        const matchId = trimString(getCellValue(row.getCell(1)));
-        const teamName = trimString(getCellValue(row.getCell(3)));
-        const shirtNo = getCellValue(row.getCell(4));
-        const playerName = trimString(getCellValue(row.getCell(5)));
-        const cardType = trimString(getCellValue(row.getCell(6)));
-        const minute = getCellValue(row.getCell(7));
-        const count = getCellValue(row.getCell(8));
+        const cardId = trimString(getCellValue(row.getCell(1)));
+        const matchId = trimString(getCellValue(row.getCell(2)));
+        const teamName = trimString(getCellValue(row.getCell(4)));
+        const shirtNo = getCellValue(row.getCell(5));
+        const playerName = trimString(getCellValue(row.getCell(6)));
+        const cardType = trimString(getCellValue(row.getCell(7)));
+        const minute = getCellValue(row.getCell(8));
+        const count = getCellValue(row.getCell(9));
 
         if (!matchId || !teamName || !cardType) {
           results.push(
@@ -389,12 +404,16 @@ export async function POST(request: NextRequest) {
           return;
         }
 
+        const warningMsg = cardId
+          ? `ข้อมูลจากเดิม - จะเพิ่ม ${countResult.value} บัตรใหม่ (v1 append only)`
+          : `จะเพิ่ม ${countResult.value} บัตรของนักเตะ`;
+
         results.push(
           createWarningResult(
             'Cards',
             rowNumber,
             'insert_card',
-            `จะเพิ่ม ${countResult.value} บัตรของนักเตะ`,
+            warningMsg,
             {
               match_id: matchId,
               player_id: player.id,
@@ -417,11 +436,12 @@ export async function POST(request: NextRequest) {
       sheet.eachRow((row, rowNumber) => {
         if (rowNumber === 1) return;
 
-        const matchId = trimString(getCellValue(row.getCell(1)));
-        const teamName = trimString(getCellValue(row.getCell(3)));
-        const staffName = trimString(getCellValue(row.getCell(4)));
-        const disciplineType = trimString(getCellValue(row.getCell(6)));
-        const minute = getCellValue(row.getCell(7));
+        const eventId = trimString(getCellValue(row.getCell(1)));
+        const matchId = trimString(getCellValue(row.getCell(2)));
+        const teamName = trimString(getCellValue(row.getCell(4)));
+        const staffName = trimString(getCellValue(row.getCell(5)));
+        const disciplineType = trimString(getCellValue(row.getCell(7)));
+        const minute = getCellValue(row.getCell(8));
 
         if (!matchId || !teamName || !staffName || !disciplineType) {
           results.push(
@@ -520,16 +540,35 @@ export async function POST(request: NextRequest) {
         }
 
         const staff = staffMembers[0];
+        const message = eventId
+          ? 'ข้อมูลจากเดิม - v1 ยัง append only (จะเพิ่มเป็นรายการใหม่)'
+          : 'ตรวจสอบสำเร็จ';
+
         results.push(
-          createValidResult('StaffDiscipline', rowNumber, 'insert_staff_discipline', {
-            match_id: matchId,
-            staff_id: staff.id,
-            team_id: team.id,
-            discipline_type: disciplineTypeResult.normalized,
-            minute: minuteResult.value,
-          })
+          eventId
+            ? createWarningResult(
+                'StaffDiscipline',
+                rowNumber,
+                'insert_staff_discipline',
+                message,
+                {
+                  match_id: matchId,
+                  staff_id: staff.id,
+                  team_id: team.id,
+                  discipline_type: disciplineTypeResult.normalized,
+                  minute: minuteResult.value,
+                }
+              )
+            : createValidResult('StaffDiscipline', rowNumber, 'insert_staff_discipline', {
+                match_id: matchId,
+                staff_id: staff.id,
+                team_id: team.id,
+                discipline_type: disciplineTypeResult.normalized,
+                minute: minuteResult.value,
+              })
         );
         summary.staffDiscipline++;
+        if (eventId) summary.warnings++;
       });
     };
 

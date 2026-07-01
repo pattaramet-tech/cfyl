@@ -49,15 +49,18 @@ export async function POST(request: NextRequest) {
         if (row.status === 'error') continue;
 
         try {
-          const { player_id, full_name } = row.resolved || {};
+          const { player_id, full_name, shirt_no, active } = row.resolved || {};
           if (!player_id) throw new Error('player_id missing');
 
-          await supabase
-            .from('players')
-            .update({ full_name })
-            .eq('id', player_id);
+          const updatePayload: any = {};
+          if (full_name) updatePayload.full_name = full_name;
+          if (shirt_no !== undefined && shirt_no !== null) updatePayload.shirt_no = shirt_no;
+          if (active !== undefined && active !== null) updatePayload.active = active;
 
-          playersUpdated++;
+          if (Object.keys(updatePayload).length > 0) {
+            await supabase.from('players').update(updatePayload).eq('id', player_id);
+            playersUpdated++;
+          }
         } catch (err) {
           errors.push({
             sheet: 'PlayerUpdates',

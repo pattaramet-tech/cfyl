@@ -131,6 +131,42 @@ export default function MatchBulkImportPage() {
     }
   };
 
+  const handleExportCurrentData = async () => {
+    if (!selectedSeason || !selectedAgeGroup) {
+      alert('กรุณาเลือกฤดูกาลและระดับอายุ');
+      return;
+    }
+
+    try {
+      const params = new URLSearchParams({
+        seasonId: selectedSeason,
+        ageGroupId: selectedAgeGroup,
+        ...(selectedDivision && { divisionId: selectedDivision }),
+      });
+
+      const token = localStorage.getItem('admin_token');
+      const res = await fetch(`/api/admin/match-bulk/export-current?${params}`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+
+      if (!res.ok) throw new Error('Download failed');
+
+      const blob = await res.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      const filename = res.headers.get('content-disposition')?.split('filename="')[1]?.split('"')[0] ||
+        `cfyl-current-data-${selectedAgeGroup}.xlsx`;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Download failed');
+    }
+  };
+
   const handlePreview = async () => {
     if (!file) {
       alert('กรุณาเลือกไฟล์');
@@ -256,6 +292,22 @@ export default function MatchBulkImportPage() {
         <p className="text-gray-600">Import ข้อมูลแมตช์จำนวนมากจากไฟล์ Excel</p>
       </div>
 
+      {/* Warning Message */}
+      <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 mb-6">
+        <div className="flex gap-3">
+          <span className="text-2xl">⚠️</span>
+          <div>
+            <p className="font-semibold text-amber-900 mb-2">หมายเหตุสำคัญ</p>
+            <ul className="text-sm text-amber-800 space-y-1">
+              <li>• <strong>Matches</strong> และ <strong>PlayerUpdates</strong> สามารถแก้ข้อมูลเดิมได้</li>
+              <li>• <strong>Goals / Cards / StaffDiscipline</strong> ใน Phase 1 เป็น <strong>Append Only</strong></li>
+              <li>• ถ้านำ Current Data ที่มี event เดิมกลับเข้าไป จะเกิดข้อมูลซ้ำ</li>
+              <li>• หากต้องการแก้ event เดิม ให้แก้ใน Match Management หรือรอ Replace Mode (Phase 2)</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
       {/* Filters */}
       <div className="bg-white rounded-lg shadow p-4 mb-6 space-y-4">
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
@@ -312,14 +364,21 @@ export default function MatchBulkImportPage() {
             </select>
           </div>
 
-          {/* Download Button */}
-          <div className="flex items-end">
+          {/* Download Buttons */}
+          <div className="col-span-1 md:col-span-2 flex items-end gap-2">
             <button
               onClick={handleDownloadTemplate}
               disabled={!selectedSeason || !selectedAgeGroup}
-              className="w-full px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:bg-gray-400 font-semibold text-sm transition"
+              className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:bg-gray-400 font-semibold text-sm transition"
             >
-              📤 Download Template
+              📄 Blank Template
+            </button>
+            <button
+              onClick={handleExportCurrentData}
+              disabled={!selectedSeason || !selectedAgeGroup}
+              className="flex-1 px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 disabled:bg-gray-400 font-semibold text-sm transition"
+            >
+              📥 Current Data
             </button>
           </div>
         </div>
