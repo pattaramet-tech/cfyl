@@ -364,8 +364,8 @@ export default function MatchBulkImportPage() {
             </select>
           </div>
 
-          {/* Download Buttons */}
-          <div className="col-span-1 md:col-span-2 flex items-end gap-2">
+          {/* Download & History Buttons */}
+          <div className="col-span-1 md:col-span-3 flex items-end gap-2">
             <button
               onClick={handleDownloadTemplate}
               disabled={!selectedSeason || !selectedAgeGroup}
@@ -380,6 +380,12 @@ export default function MatchBulkImportPage() {
             >
               📥 Current Data
             </button>
+            <Link
+              href="/admin/match-bulk-import/history"
+              className="flex-1 px-4 py-2 bg-slate-700 text-white rounded-md hover:bg-slate-800 font-semibold text-sm transition text-center"
+            >
+              📜 History
+            </Link>
           </div>
         </div>
       </div>
@@ -517,6 +523,27 @@ export default function MatchBulkImportPage() {
             <h2 className="text-xl font-bold mb-2">{applyResult.success ? '✅ Success!' : '❌ Failed'}</h2>
             <p>{applyResult.message}</p>
           </div>
+
+          {/* Batch Log Info */}
+          {applyResult.batchId && (
+            <div className="bg-blue-50 border border-blue-200 text-blue-800 rounded-lg p-4">
+              <p className="font-semibold">📜 บันทึกประวัติ Import แล้ว</p>
+              <p className="text-sm">Batch: {applyResult.batchNo}</p>
+              <Link
+                href={`/admin/match-bulk-import/history/${applyResult.batchId}`}
+                className="inline-block mt-2 px-3 py-1 bg-blue-600 text-white text-sm rounded hover:bg-blue-700 font-semibold"
+              >
+                ดูรายละเอียด →
+              </Link>
+            </div>
+          )}
+
+          {/* Log Warning */}
+          {applyResult.logWarning && (
+            <div className="bg-yellow-50 border border-yellow-200 text-yellow-800 rounded-lg p-4">
+              ⚠️ {applyResult.logWarning}
+            </div>
+          )}
 
           {/* Summary */}
           <div className="bg-gray-50 p-4 rounded">
