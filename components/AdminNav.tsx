@@ -35,6 +35,7 @@ const NAV_GROUPS: NavGroup[] = [
       { href: '/admin/cards', label: 'Cards', icon: '🟨' },
       { href: '/admin/suspensions', label: 'Suspensions', icon: '🚨' },
       { href: '/admin/staff-discipline', label: 'Staff Discipline', icon: '👔' },
+      { href: '/admin/match-bulk-import', label: 'Bulk Import', icon: '📥' },
     ],
   },
   {
