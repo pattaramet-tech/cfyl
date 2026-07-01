@@ -163,23 +163,6 @@ export default function MatchManagePage() {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
-  // Finish validation state
-  interface FinishValidationData {
-    matchId: string;
-    homeTeamId: string;
-    awayTeamId: string;
-    homeTeamName: string;
-    awayTeamName: string;
-    homeGoalSum: number;
-    awayGoalSum: number;
-    homeScoreNum: number;
-    awayScoreNum: number;
-    homeMatches: boolean;
-    awayMatches: boolean;
-    freshGoalsCount: number;
-  }
-  const [finishValidationData, setFinishValidationData] = useState<FinishValidationData | null>(null);
-
   // Card row helpers
   const addCardRow = () => {
     setCardRows((prev) => [...prev, createCardRow()]);
@@ -248,7 +231,6 @@ export default function MatchManagePage() {
   const sortedHomeStaffs = [...homeStaffs].sort((a, b) => staffPositionPriority(a.position) - staffPositionPriority(b.position));
   const sortedAwayStaffs = [...awayStaffs].sort((a, b) => staffPositionPriority(a.position) - staffPositionPriority(b.position));
 
-  const [showFinishValidation, setShowFinishValidation] = useState(false);
   const [isEditingFinishedMatch, setIsEditingFinishedMatch] = useState(false);
   const [showConfirmEditFinished, setShowConfirmEditFinished] = useState(false);
 
@@ -433,8 +415,6 @@ export default function MatchManagePage() {
       setHomeScore('0');
       setAwayScore('0');
       setMatchStatus('scheduled');
-      setShowFinishValidation(false);
-      setFinishValidationData(null);
       return;
     }
 
@@ -447,8 +427,6 @@ export default function MatchManagePage() {
   const handleMatchSelect = (matchId: string) => {
     setSelectedMatchId(matchId);
     setIsEditingFinishedMatch(false);
-    setFinishValidationData(null);
-    setShowFinishValidation(false);
     setError(null);
     setSuccess(null);
   };
@@ -830,105 +808,73 @@ export default function MatchManagePage() {
     }
   };
 
-  const handleFinishMatch = async (confirmed = false) => {
-    // Get fresh match from matches list using selectedMatchId as source of truth
-    const match = matches.find((m) => m.id === selectedMatchId);
-    if (!match) {
-      setError('ไม่พบแมตช์ที่เลือก กรุณาเลือกแมตช์ใหม่อีกครั้ง');
+  const refreshCurrentMatchAfterSave = async () => {
+    if (!seasonId || !ageGroupId || !divisionId || !selectedMatchId) return;
+
+    try {
+      const token = localStorage.getItem('admin_token');
+      const res = await fetch(
+        `/api/public/matches?seasonId=${seasonId}&ageGroupId=${ageGroupId}&divisionId=${divisionId}`,
+        {
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+        }
+      );
+
+      if (res.ok) {
+        const data = await res.json();
+        setMatches(data);
+
+        const current = data.find((m: MatchWithTeams) => m.id === selectedMatchId);
+        if (current) {
+          setHomeScore((current.home_score ?? homeScore).toString());
+          setAwayScore((current.away_score ?? awayScore).toString());
+          setMatchStatus(current.status || 'scheduled');
+          await loadMatchDataCallback(current);
+        }
+      }
+    } catch (err) {
+      console.error('[MATCH_MANAGE] Failed to refresh after save:', err);
+    }
+  };
+
+  const handleFinishMatch = async () => {
+    if (!selectedMatchId) {
+      setError('กรุณาเลือกแมตช์ก่อน');
       return;
     }
+
+    const homeScoreNum = Number(homeScore);
+    const awayScoreNum = Number(awayScore);
+
+    if (!Number.isInteger(homeScoreNum) || !Number.isInteger(awayScoreNum)) {
+      setError('กรุณากรอกสกอร์เป็นตัวเลข');
+      return;
+    }
+
+    if (homeScoreNum < 0 || awayScoreNum < 0) {
+      setError('สกอร์ต้องไม่ติดลบ');
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `ต้องการจบการแข่งขันและบันทึกผล ${homeScoreNum}-${awayScoreNum} ใช่ไหม?\n\nหากจำนวนผู้ทำประตูไม่ตรงกับสกอร์ ระบบ Data Quality Checker จะตรวจพบภายหลัง`
+    );
+
+    if (!confirmed) return;
 
     setSaving(true);
     setError(null);
     setSuccess(null);
 
     try {
-      // Fetch latest goals from server BEFORE validation
       const token = localStorage.getItem('admin_token');
-      const goalsRes = await fetch(`/api/admin/goals?match_id=${match.id}`, {
-        headers: token ? { 'Authorization': `Bearer ${token}` } : {},
-      });
+      if (!token) throw new Error('Not authenticated');
 
-      let freshGoals = goals;
-      if (goalsRes.ok) {
-        const goalsData = await goalsRes.json();
-        freshGoals = goalsData || [];
-        setGoals(freshGoals);
-        console.debug('[MATCH_MANAGE] Fetched fresh goals:', freshGoals.length, 'records');
-      } else {
-        console.warn('[MATCH_MANAGE] Failed to fetch fresh goals, using cached state');
-      }
-
-      // Calculate consistency with fresh goals
-      const homeGoalSum = freshGoals
-        .filter((g: Goal) => getGoalTeamId(g) === match.home_team_id)
-        .reduce((sum, g: Goal) => sum + Number(g.goals || 0), 0);
-
-      const awayGoalSum = freshGoals
-        .filter((g: Goal) => getGoalTeamId(g) === match.away_team_id)
-        .reduce((sum, g: Goal) => sum + Number(g.goals || 0), 0);
-
-      const homeScoreNum = parseInt(homeScore);
-      const awayScoreNum = parseInt(awayScore);
-
-      const homeMatches = homeGoalSum === homeScoreNum;
-      const awayMatches = awayGoalSum === awayScoreNum;
-
-      // Build validation data with match context
-      const validationData: FinishValidationData = {
-        matchId: match.id,
-        homeTeamId: match.home_team_id,
-        awayTeamId: match.away_team_id,
-        homeTeamName: match.home_team?.name || 'ทีมเหย้า',
-        awayTeamName: match.away_team?.name || 'ทีมเยือน',
-        homeGoalSum,
-        awayGoalSum,
-        homeScoreNum,
-        awayScoreNum,
-        homeMatches,
-        awayMatches,
-        freshGoalsCount: freshGoals.length,
-      };
-
-      console.debug('[MATCH_MANAGE] Finish match using:', {
-        selectedMatchId,
-        matchId: match.id,
-        homeTeamId: match.home_team_id,
-        awayTeamId: match.away_team_id,
-        homeScore,
-        awayScore,
-      });
-      console.debug('[MATCH_MANAGE] Finish validation data:', validationData);
-
-      // Show validation modal if there's a mismatch
-      if (!homeMatches || !awayMatches) {
-        if (!confirmed) {
-          setFinishValidationData(validationData);
-          setShowFinishValidation(true);
-          setSaving(false);
-          return;
-        }
-      }
-
-      // Verify validation data still matches current selection
-      if (finishValidationData && finishValidationData.matchId !== match.id) {
-        setError('ข้อมูลตรวจสอบไม่ตรงกับแมตช์ที่เลือก กรุณาตรวจสอบใหม่');
-        setShowFinishValidation(false);
-        setFinishValidationData(null);
-        setSaving(false);
-        return;
-      }
-
-      // Proceed with finishing the match
-      if (!token) {
-        throw new Error('Not authenticated');
-      }
-
-      const res = await fetch(`/api/admin/matches/${match.id}`, {
+      const res = await fetch(`/api/admin/matches/${selectedMatchId}`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`,
+          Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({
           home_score: homeScoreNum,
@@ -938,23 +884,23 @@ export default function MatchManagePage() {
       });
 
       if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error || 'ไม่สามารถจบการแข่งขันได้');
+        const payload = await res.json().catch(() => ({}));
+        throw new Error(payload.error || 'ไม่สามารถจบการแข่งขันได้');
       }
 
-      const updated = await res.json();
       setMatchStatus('finished');
-      setShowFinishValidation(false);
-      setFinishValidationData(null);
       if (isEditingFinishedMatch) {
         setIsEditingFinishedMatch(false);
-        setSuccess(`✓ ยืนยันการแก้ไขผลการแข่งขันเรียบร้อย (${updated.home_score}-${updated.away_score})`);
+        setSuccess(`✓ ยืนยันการแก้ไขผลการแข่งขันเรียบร้อย (${homeScoreNum}-${awayScoreNum})`);
       } else {
-        setSuccess(`✓ จบการแข่งขันเรียบร้อย (${updated.home_score}-${updated.away_score}) · ข้อมูล Sync ไปยังหน้า Public`);
+        setSuccess(`✓ จบการแข่งขันเรียบร้อย (${homeScoreNum}-${awayScoreNum}) · ข้อมูล Sync ไปยังหน้า Public`);
       }
+
+      // Refresh match data
+      await refreshCurrentMatchAfterSave();
     } catch (err) {
-      const errorMsg = err instanceof Error ? err.message : 'เกิดข้อผิดพลาด';
-      setError(errorMsg);
+      const msg = err instanceof Error ? err.message : String(err);
+      setError(msg);
     } finally {
       setSaving(false);
     }
@@ -1107,110 +1053,6 @@ export default function MatchManagePage() {
         </div>
       )}
 
-      {/* Finish Match Validation Modal */}
-      {showFinishValidation && finishValidationData && finishValidationData.matchId === selectedMatchId && (() => {
-        // Use validation data from state (calculated from fresh goals server-side)
-        const {
-          matchId,
-          homeTeamId,
-          awayTeamId,
-          homeTeamName,
-          awayTeamName,
-          homeGoalSum,
-          awayGoalSum,
-          homeScoreNum,
-          awayScoreNum,
-          homeMatches,
-          awayMatches,
-          freshGoalsCount,
-        } = finishValidationData;
-
-        const hasError = !homeMatches || !awayMatches;
-
-        return (
-          <div className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-50">
-            <div className="bg-white rounded-t-2xl sm:rounded-2xl w-full sm:w-full max-w-md p-4 sm:p-6 space-y-4">
-              <h3 className="text-lg sm:text-xl font-bold text-gray-800">ตรวจสอบก่อนจบการแข่งขัน</h3>
-
-              <div className="space-y-3 sm:space-y-4 py-2">
-                {/* Home Team */}
-                <div className="p-3 sm:p-4 rounded-lg border-2" style={{ borderColor: homeMatches ? '#10b981' : '#ef4444', backgroundColor: homeMatches ? '#ecfdf5' : '#fef2f2' }}>
-                  <div className="flex items-center justify-between">
-                    <span className="font-semibold text-gray-800">{homeTeamName}</span>
-                    <span className="text-2xl">{homeMatches ? '✅' : '⚠️'}</span>
-                  </div>
-                  <div className="text-sm text-gray-600 mt-2">
-                    <p>Score: <span className="font-bold text-gray-800">{homeScoreNum}</span></p>
-                    <p>Goals: <span className="font-bold text-gray-800">{homeGoalSum}</span></p>
-                    {homeMatches ? (
-                      <p className="text-green-600 font-semibold mt-1">✓ ตรงกัน</p>
-                    ) : (
-                      <p className="text-red-600 font-semibold mt-1">✗ ไม่ตรงกัน</p>
-                    )}
-                  </div>
-                </div>
-
-                {/* Away Team */}
-                <div className="p-3 sm:p-4 rounded-lg border-2" style={{ borderColor: awayMatches ? '#10b981' : '#ef4444', backgroundColor: awayMatches ? '#ecfdf5' : '#fef2f2' }}>
-                  <div className="flex items-center justify-between">
-                    <span className="font-semibold text-gray-800">{awayTeamName}</span>
-                    <span className="text-2xl">{awayMatches ? '✅' : '⚠️'}</span>
-                  </div>
-                  <div className="text-sm text-gray-600 mt-2">
-                    <p>Score: <span className="font-bold text-gray-800">{awayScoreNum}</span></p>
-                    <p>Goals: <span className="font-bold text-gray-800">{awayGoalSum}</span></p>
-                    {awayMatches ? (
-                      <p className="text-green-600 font-semibold mt-1">✓ ตรงกัน</p>
-                    ) : (
-                      <p className="text-red-600 font-semibold mt-1">✗ ไม่ตรงกัน</p>
-                    )}
-                  </div>
-                </div>
-              </div>
-
-              <div className="bg-slate-100 p-3 sm:p-4 rounded-lg text-sm text-slate-700">
-                {hasError ? (
-                  <p>ข้อมูลประตู ({freshGoalsCount}) ไม่ตรงกับสกอร์ ({homeScoreNum}-{awayScoreNum}) ตรวจสอบข้อมูลการลงทะเบียนของผู้เล่นหรือปรับสกอร์</p>
-                ) : (
-                  <p className="text-green-700 font-semibold">✓ ข้อมูลถูกต้อง ({freshGoalsCount} goals, {homeScoreNum}-{awayScoreNum} score) พร้อมจบการแข่งขัน</p>
-                )}
-              </div>
-
-              <div className="space-y-2 sm:space-y-0 sm:flex sm:gap-3">
-                <button
-                  onClick={() => {
-                    setShowFinishValidation(false);
-                    setFinishValidationData(null);
-                  }}
-                  className="w-full sm:flex-1 px-4 py-3 sm:py-2 bg-gray-300 text-gray-800 rounded-lg hover:bg-gray-400 font-semibold text-sm sm:text-base transition"
-                >
-                  ยกเลิก
-                </button>
-                <button
-                  onClick={() => handleFinishMatch(false)}
-                  disabled={saving}
-                  className="w-full sm:flex-1 px-4 py-3 sm:py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:opacity-50 font-semibold text-sm sm:text-base transition"
-                  title="ดึงข้อมูลล่าสุดจาก server"
-                >
-                  {saving ? '🔄 กำลังตรวจใหม่...' : '🔄 ตรวจใหม่'}
-                </button>
-                <button
-                  onClick={() => handleFinishMatch(true)}
-                  disabled={saving}
-                  className={`w-full sm:flex-1 px-4 py-3 sm:py-2 rounded-lg font-semibold text-sm sm:text-base transition ${
-                    hasError
-                      ? 'bg-orange-600 text-white hover:bg-orange-700 disabled:opacity-50'
-                      : 'bg-green-600 text-white hover:bg-green-700 disabled:opacity-50'
-                  }`}
-                >
-                  {saving ? 'กำลังประมวลผล...' : (hasError ? '🚨 จบแมตช์แม้ไม่ตรง' : '✓ จบการแข่งขัน')}
-                </button>
-              </div>
-            </div>
-          </div>
-        );
-      })()}
-
       {/* Match Detail & Management */}
       {selectedMatch && (
         <>
@@ -1328,21 +1170,29 @@ export default function MatchManagePage() {
                 </div>
               </div>
             ) : (
-              <div className="space-y-2 sm:space-y-0 sm:grid sm:grid-cols-2 sm:gap-3">
-                <button
-                  onClick={handleSaveScore}
-                  disabled={saving || loadingMatchData}
-                  className="bg-blue-600 text-white px-4 py-3 sm:py-2 rounded-lg hover:bg-blue-700 disabled:opacity-50 font-semibold text-sm sm:text-base transition"
-                >
-                  {saving ? 'กำลังบันทึก...' : 'บันทึกสกอร์'}
-                </button>
-                <button
-                  onClick={() => handleFinishMatch()}
-                  disabled={saving || loadingMatchData}
-                  className="bg-green-600 text-white px-4 py-3 sm:py-2 rounded-lg hover:bg-green-700 disabled:opacity-50 font-semibold text-sm sm:text-base transition"
-                >
-                  {saving ? 'กำลังประมวลผล...' : '🏁 จบการแข่งขัน'}
-                </button>
+              <div className="space-y-3 sm:space-y-0">
+                <div className="space-y-2 sm:space-y-0 sm:grid sm:grid-cols-2 sm:gap-3">
+                  <button
+                    onClick={handleSaveScore}
+                    disabled={saving || loadingMatchData}
+                    className="bg-blue-600 text-white px-4 py-3 sm:py-2 rounded-lg hover:bg-blue-700 disabled:opacity-50 font-semibold text-sm sm:text-base transition"
+                  >
+                    {saving ? 'กำลังบันทึก...' : 'บันทึกสกอร์'}
+                  </button>
+                  <button
+                    onClick={handleFinishMatch}
+                    disabled={saving || loadingMatchData}
+                    className="bg-green-600 text-white px-4 py-3 sm:py-2 rounded-lg hover:bg-green-700 disabled:opacity-50 font-semibold text-sm sm:text-base transition"
+                  >
+                    {saving ? 'กำลังประมวลผล...' : '🏁 จบการแข่งขัน'}
+                  </button>
+                </div>
+
+                {!isReadOnlyFinished && !isEditingFinishedMatch && (
+                  <div className="mt-3 text-xs text-blue-700 bg-blue-50 border border-blue-200 rounded-lg p-3">
+                    หลังจบการแข่งขัน ระบบจะไม่บล็อกด้วยจำนวนผู้ทำประตู หากสกอร์ไม่ตรงกับข้อมูลประตู สามารถตรวจสอบได้ที่ Data Quality Checker
+                  </div>
+                )}
               </div>
             )}
           </div>
