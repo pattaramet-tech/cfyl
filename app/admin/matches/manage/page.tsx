@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { GoalsList } from '@/components/GoalsList';
 import type { Match } from '@/types/db';
 
@@ -129,13 +129,18 @@ export default function MatchManagePage() {
   const [divisions, setDivisions] = useState<Array<{ id: string; name: string }>>([]);
   const [matches, setMatches] = useState<MatchWithTeams[]>([]);
 
-  const [selectedMatch, setSelectedMatch] = useState<MatchWithTeams | null>(null);
   const [homeScore, setHomeScore] = useState<string>('0');
   const [awayScore, setAwayScore] = useState<string>('0');
   const [matchStatus, setMatchStatus] = useState<string>('scheduled');
   const [goals, setGoals] = useState<Goal[]>([]);
   const [cards, setCards] = useState<Card[]>([]);
   const [players, setPlayers] = useState<Player[]>([]);
+
+  // Derive selectedMatch from selectedMatchId and matches list
+  const selectedMatch = useMemo(
+    () => matches.find((m) => m.id === selectedMatchId) || null,
+    [matches, selectedMatchId]
+  );
 
   // Card form states
   const [cardRows, setCardRows] = useState<CardRow[]>([createCardRow()]);
@@ -160,6 +165,11 @@ export default function MatchManagePage() {
 
   // Finish validation state
   interface FinishValidationData {
+    matchId: string;
+    homeTeamId: string;
+    awayTeamId: string;
+    homeTeamName: string;
+    awayTeamName: string;
     homeGoalSum: number;
     awayGoalSum: number;
     homeScoreNum: number;
@@ -314,7 +324,6 @@ export default function MatchManagePage() {
   useEffect(() => {
     if (!seasonId || !ageGroupId || !divisionId) {
       setMatches([]);
-      setSelectedMatch(null);
       setSelectedMatchId('');
       return;
     }
@@ -332,6 +341,13 @@ export default function MatchManagePage() {
         if (!res.ok) throw new Error('Failed to load matches');
         const data = await res.json();
         setMatches(data);
+
+        // Preserve selectedMatchId if it exists, otherwise auto-select first match
+        if (selectedMatchId && !data.some((m: MatchWithTeams) => m.id === selectedMatchId)) {
+          setSelectedMatchId('');
+        } else if (!selectedMatchId && data.length > 0) {
+          setSelectedMatchId(data[0].id);
+        }
       } catch (err) {
         console.error('[MATCH_MANAGE] Load matches error:', err);
         setError('ไม่สามารถโหลดข้อมูลแมตช์ได้');
@@ -343,14 +359,6 @@ export default function MatchManagePage() {
     loadMatches();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [seasonId, ageGroupId, divisionId]);
-
-  // Load match data when selectedMatch changes
-  useEffect(() => {
-    if (!selectedMatch) return;
-    loadMatchDataCallback(selectedMatch);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedMatchId]);
-
 
   const loadMatchDataCallback = useCallback(
     async (match: MatchWithTeams) => {
@@ -414,12 +422,35 @@ export default function MatchManagePage() {
     []
   );
 
-  const handleMatchSelect = (match: MatchWithTeams) => {
-    setSelectedMatch(match);
-    setSelectedMatchId(match.id);
+  // Load match data when selectedMatch changes
+  useEffect(() => {
+    if (!selectedMatchId) {
+      setGoals([]);
+      setCards([]);
+      setPlayers([]);
+      setStaffs([]);
+      setStaffDisciplineEvents([]);
+      setHomeScore('0');
+      setAwayScore('0');
+      setMatchStatus('scheduled');
+      setShowFinishValidation(false);
+      setFinishValidationData(null);
+      return;
+    }
+
+    if (!selectedMatch) return;
+
+    loadMatchDataCallback(selectedMatch);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedMatchId]);
+
+  const handleMatchSelect = (matchId: string) => {
+    setSelectedMatchId(matchId);
     setIsEditingFinishedMatch(false);
     setFinishValidationData(null);
     setShowFinishValidation(false);
+    setError(null);
+    setSuccess(null);
   };
 
   const handleSaveScore = async () => {
@@ -460,7 +491,6 @@ export default function MatchManagePage() {
       }
 
       const updated = await res.json();
-      setSelectedMatch(updated);
       setSuccess('✓ บันทึกสกอร์เรียบร้อย');
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : 'An error occurred';
@@ -801,7 +831,12 @@ export default function MatchManagePage() {
   };
 
   const handleFinishMatch = async (confirmed = false) => {
-    if (!selectedMatch) return;
+    // Get fresh match from matches list using selectedMatchId as source of truth
+    const match = matches.find((m) => m.id === selectedMatchId);
+    if (!match) {
+      setError('ไม่พบแมตช์ที่เลือก กรุณาเลือกแมตช์ใหม่อีกครั้ง');
+      return;
+    }
 
     setSaving(true);
     setError(null);
@@ -810,7 +845,7 @@ export default function MatchManagePage() {
     try {
       // Fetch latest goals from server BEFORE validation
       const token = localStorage.getItem('admin_token');
-      const goalsRes = await fetch(`/api/admin/goals?match_id=${selectedMatch.id}`, {
+      const goalsRes = await fetch(`/api/admin/goals?match_id=${match.id}`, {
         headers: token ? { 'Authorization': `Bearer ${token}` } : {},
       });
 
@@ -826,11 +861,11 @@ export default function MatchManagePage() {
 
       // Calculate consistency with fresh goals
       const homeGoalSum = freshGoals
-        .filter((g: Goal) => getGoalTeamId(g) === selectedMatch.home_team_id)
+        .filter((g: Goal) => getGoalTeamId(g) === match.home_team_id)
         .reduce((sum, g: Goal) => sum + Number(g.goals || 0), 0);
 
       const awayGoalSum = freshGoals
-        .filter((g: Goal) => getGoalTeamId(g) === selectedMatch.away_team_id)
+        .filter((g: Goal) => getGoalTeamId(g) === match.away_team_id)
         .reduce((sum, g: Goal) => sum + Number(g.goals || 0), 0);
 
       const homeScoreNum = parseInt(homeScore);
@@ -839,8 +874,13 @@ export default function MatchManagePage() {
       const homeMatches = homeGoalSum === homeScoreNum;
       const awayMatches = awayGoalSum === awayScoreNum;
 
-      // Build validation data
+      // Build validation data with match context
       const validationData: FinishValidationData = {
+        matchId: match.id,
+        homeTeamId: match.home_team_id,
+        awayTeamId: match.away_team_id,
+        homeTeamName: match.home_team?.name || 'ทีมเหย้า',
+        awayTeamName: match.away_team?.name || 'ทีมเยือน',
         homeGoalSum,
         awayGoalSum,
         homeScoreNum,
@@ -850,6 +890,14 @@ export default function MatchManagePage() {
         freshGoalsCount: freshGoals.length,
       };
 
+      console.debug('[MATCH_MANAGE] Finish match using:', {
+        selectedMatchId,
+        matchId: match.id,
+        homeTeamId: match.home_team_id,
+        awayTeamId: match.away_team_id,
+        homeScore,
+        awayScore,
+      });
       console.debug('[MATCH_MANAGE] Finish validation data:', validationData);
 
       // Show validation modal if there's a mismatch
@@ -862,12 +910,21 @@ export default function MatchManagePage() {
         }
       }
 
+      // Verify validation data still matches current selection
+      if (finishValidationData && finishValidationData.matchId !== match.id) {
+        setError('ข้อมูลตรวจสอบไม่ตรงกับแมตช์ที่เลือก กรุณาตรวจสอบใหม่');
+        setShowFinishValidation(false);
+        setFinishValidationData(null);
+        setSaving(false);
+        return;
+      }
+
       // Proceed with finishing the match
       if (!token) {
         throw new Error('Not authenticated');
       }
 
-      const res = await fetch(`/api/admin/matches/${selectedMatch.id}`, {
+      const res = await fetch(`/api/admin/matches/${match.id}`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -886,7 +943,6 @@ export default function MatchManagePage() {
       }
 
       const updated = await res.json();
-      setSelectedMatch(updated);
       setMatchStatus('finished');
       setShowFinishValidation(false);
       setFinishValidationData(null);
@@ -981,10 +1037,7 @@ export default function MatchManagePage() {
             <select
               value={selectedMatchId}
               onChange={(e) => {
-                const match = matches.find((m) => m.id === e.target.value);
-                if (match) {
-                  handleMatchSelect(match);
-                }
+                handleMatchSelect(e.target.value);
               }}
               className="w-full px-3 sm:px-4 py-2.5 sm:py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-600 text-sm sm:text-base"
             >
@@ -1055,9 +1108,14 @@ export default function MatchManagePage() {
       )}
 
       {/* Finish Match Validation Modal */}
-      {showFinishValidation && selectedMatch && finishValidationData && (() => {
+      {showFinishValidation && finishValidationData && finishValidationData.matchId === selectedMatchId && (() => {
         // Use validation data from state (calculated from fresh goals server-side)
         const {
+          matchId,
+          homeTeamId,
+          awayTeamId,
+          homeTeamName,
+          awayTeamName,
           homeGoalSum,
           awayGoalSum,
           homeScoreNum,
@@ -1078,7 +1136,7 @@ export default function MatchManagePage() {
                 {/* Home Team */}
                 <div className="p-3 sm:p-4 rounded-lg border-2" style={{ borderColor: homeMatches ? '#10b981' : '#ef4444', backgroundColor: homeMatches ? '#ecfdf5' : '#fef2f2' }}>
                   <div className="flex items-center justify-between">
-                    <span className="font-semibold text-gray-800">{selectedMatch.home_team?.name || 'ทีมเหย้า'}</span>
+                    <span className="font-semibold text-gray-800">{homeTeamName}</span>
                     <span className="text-2xl">{homeMatches ? '✅' : '⚠️'}</span>
                   </div>
                   <div className="text-sm text-gray-600 mt-2">
@@ -1095,7 +1153,7 @@ export default function MatchManagePage() {
                 {/* Away Team */}
                 <div className="p-3 sm:p-4 rounded-lg border-2" style={{ borderColor: awayMatches ? '#10b981' : '#ef4444', backgroundColor: awayMatches ? '#ecfdf5' : '#fef2f2' }}>
                   <div className="flex items-center justify-between">
-                    <span className="font-semibold text-gray-800">{selectedMatch.away_team?.name || 'ทีมเยือน'}</span>
+                    <span className="font-semibold text-gray-800">{awayTeamName}</span>
                     <span className="text-2xl">{awayMatches ? '✅' : '⚠️'}</span>
                   </div>
                   <div className="text-sm text-gray-600 mt-2">
