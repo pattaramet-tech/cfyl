@@ -158,6 +158,18 @@ export default function MatchManagePage() {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
+  // Finish validation state
+  interface FinishValidationData {
+    homeGoalSum: number;
+    awayGoalSum: number;
+    homeScoreNum: number;
+    awayScoreNum: number;
+    homeMatches: boolean;
+    awayMatches: boolean;
+    freshGoalsCount: number;
+  }
+  const [finishValidationData, setFinishValidationData] = useState<FinishValidationData | null>(null);
+
   // Card row helpers
   const addCardRow = () => {
     setCardRows((prev) => [...prev, createCardRow()]);
@@ -406,6 +418,8 @@ export default function MatchManagePage() {
     setSelectedMatch(match);
     setSelectedMatchId(match.id);
     setIsEditingFinishedMatch(false);
+    setFinishValidationData(null);
+    setShowFinishValidation(false);
   };
 
   const handleSaveScore = async () => {
@@ -825,18 +839,23 @@ export default function MatchManagePage() {
       const homeMatches = homeGoalSum === homeScoreNum;
       const awayMatches = awayGoalSum === awayScoreNum;
 
-      console.debug('[MATCH_MANAGE] Fresh consistency check:', {
+      // Build validation data
+      const validationData: FinishValidationData = {
         homeGoalSum,
         awayGoalSum,
         homeScoreNum,
         awayScoreNum,
         homeMatches,
         awayMatches,
-      });
+        freshGoalsCount: freshGoals.length,
+      };
+
+      console.debug('[MATCH_MANAGE] Finish validation data:', validationData);
 
       // Show validation modal if there's a mismatch
       if (!homeMatches || !awayMatches) {
         if (!confirmed) {
+          setFinishValidationData(validationData);
           setShowFinishValidation(true);
           setSaving(false);
           return;
@@ -870,6 +889,7 @@ export default function MatchManagePage() {
       setSelectedMatch(updated);
       setMatchStatus('finished');
       setShowFinishValidation(false);
+      setFinishValidationData(null);
       if (isEditingFinishedMatch) {
         setIsEditingFinishedMatch(false);
         setSuccess(`✓ ยืนยันการแก้ไขผลการแข่งขันเรียบร้อย (${updated.home_score}-${updated.away_score})`);
@@ -1035,21 +1055,18 @@ export default function MatchManagePage() {
       )}
 
       {/* Finish Match Validation Modal */}
-      {showFinishValidation && selectedMatch && (() => {
-        // Use goals from state (which should be fresh after fetch)
-        const homeGoalSum = goals
-          .filter((g) => getGoalTeamId(g) === selectedMatch.home_team_id)
-          .reduce((sum, g) => sum + Number(g.goals || 0), 0);
+      {showFinishValidation && selectedMatch && finishValidationData && (() => {
+        // Use validation data from state (calculated from fresh goals server-side)
+        const {
+          homeGoalSum,
+          awayGoalSum,
+          homeScoreNum,
+          awayScoreNum,
+          homeMatches,
+          awayMatches,
+          freshGoalsCount,
+        } = finishValidationData;
 
-        const awayGoalSum = goals
-          .filter((g) => getGoalTeamId(g) === selectedMatch.away_team_id)
-          .reduce((sum, g) => sum + Number(g.goals || 0), 0);
-
-        const homeScoreNum = parseInt(homeScore);
-        const awayScoreNum = parseInt(awayScore);
-
-        const homeMatches = homeGoalSum === homeScoreNum;
-        const awayMatches = awayGoalSum === awayScoreNum;
         const hasError = !homeMatches || !awayMatches;
 
         return (
@@ -1095,18 +1112,29 @@ export default function MatchManagePage() {
 
               <div className="bg-slate-100 p-3 sm:p-4 rounded-lg text-sm text-slate-700">
                 {hasError ? (
-                  <p>ข้อมูลประตูไม่ตรงกับสกอร์ ตรวจสอบข้อมูลการลงทะเบียนของผู้เล่นหรือปรับสกอร์</p>
+                  <p>ข้อมูลประตู ({freshGoalsCount}) ไม่ตรงกับสกอร์ ({homeScoreNum}-{awayScoreNum}) ตรวจสอบข้อมูลการลงทะเบียนของผู้เล่นหรือปรับสกอร์</p>
                 ) : (
-                  <p className="text-green-700 font-semibold">✓ ข้อมูลถูกต้อง พร้อมจบการแข่งขัน</p>
+                  <p className="text-green-700 font-semibold">✓ ข้อมูลถูกต้อง ({freshGoalsCount} goals, {homeScoreNum}-{awayScoreNum} score) พร้อมจบการแข่งขัน</p>
                 )}
               </div>
 
               <div className="space-y-2 sm:space-y-0 sm:flex sm:gap-3">
                 <button
-                  onClick={() => setShowFinishValidation(false)}
+                  onClick={() => {
+                    setShowFinishValidation(false);
+                    setFinishValidationData(null);
+                  }}
                   className="w-full sm:flex-1 px-4 py-3 sm:py-2 bg-gray-300 text-gray-800 rounded-lg hover:bg-gray-400 font-semibold text-sm sm:text-base transition"
                 >
                   ยกเลิก
+                </button>
+                <button
+                  onClick={() => handleFinishMatch(false)}
+                  disabled={saving}
+                  className="w-full sm:flex-1 px-4 py-3 sm:py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:opacity-50 font-semibold text-sm sm:text-base transition"
+                  title="ดึงข้อมูลล่าสุดจาก server"
+                >
+                  {saving ? '🔄 กำลังตรวจใหม่...' : '🔄 ตรวจใหม่'}
                 </button>
                 <button
                   onClick={() => handleFinishMatch(true)}
