@@ -469,15 +469,21 @@ export default function MatchPage() {
                         </>
                       ) : (
                         <>
-                          <span className="font-semibold text-slate-800">
-                            #{data.player?.shirt_no || '?'} {data.player?.full_name || 'ไม่ระบุ'}
-                          </span>
+                          {data.is_own_goal ? (
+                            <span className="font-semibold text-orange-700">
+                              ⚽ Own Goal
+                            </span>
+                          ) : (
+                            <span className="font-semibold text-slate-800">
+                              #{data.player?.shirt_no || '?'} {data.player?.full_name || 'ไม่ระบุ'}
+                            </span>
+                          )}
                           {isGoal && Number(data.goals || 1) > 1 && (
                             <span className="ml-2 text-xs font-bold text-blue-700 bg-blue-50 px-2 py-0.5 rounded-full">
                               ×{data.goals}
                             </span>
                           )}
-                          {isCard && data.note && (
+                          {(isCard || (isGoal && data.note)) && data.note && (
                             <span className="text-slate-500 ml-1">• {data.note}</span>
                           )}
                         </>

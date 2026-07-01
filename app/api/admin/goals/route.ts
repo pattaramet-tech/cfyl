@@ -48,6 +48,8 @@ export async function GET(request: NextRequest) {
         team_id,
         goals,
         minute,
+        is_own_goal,
+        note,
         created_at,
         updated_at,
         player:player_id(id, full_name, shirt_no, team_id, team:team_id(id, name, short_name)),
@@ -100,16 +102,34 @@ export async function POST(request: NextRequest) {
 
     // Parse request body
     const body = await request.json();
-    const { match_id, player_id, goals, minute } = body;
+    const { match_id, player_id, team_id, goals, minute, is_own_goal, note } = body;
 
-    console.log('[GOALS_POST] Creating goal:', { match_id, player_id, goals, minute });
+    console.log('[GOALS_POST] Creating goal:', { match_id, player_id, team_id, goals, minute, is_own_goal });
 
     // Validate inputs
-    if (!match_id || !player_id) {
+    if (!match_id) {
       return NextResponse.json(
-        { error: 'match_id and player_id are required' },
+        { error: 'match_id is required' },
         { status: 400 }
       );
+    }
+
+    // Validate own goal vs normal goal
+    const isOwnGoal = is_own_goal === true;
+    if (isOwnGoal) {
+      if (!team_id) {
+        return NextResponse.json(
+          { error: 'กรุณาเลือกทีมที่ได้รับประตูจาก Own Goal' },
+          { status: 400 }
+        );
+      }
+    } else {
+      if (!player_id) {
+        return NextResponse.json(
+          { error: 'player_id is required for normal goals' },
+          { status: 400 }
+        );
+      }
     }
 
     if (goals == null || typeof goals !== 'number' || goals < 1 || goals > 10) {
@@ -135,7 +155,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Get match to find teams and verify player is in match
+    // Get match to find teams
     const { data: match, error: matchError } = await supabaseAdmin
       .from('matches')
       .select('id, home_team_id, away_team_id')
@@ -150,41 +170,64 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Get player to verify they're in one of the match teams
-    const { data: player, error: playerError } = await supabaseAdmin
-      .from('players')
-      .select('id, team_id, full_name')
-      .eq('id', player_id)
-      .single();
+    let finalTeamId: string;
+    let finalPlayerId: string | null = null;
 
-    if (playerError || !player) {
-      console.error('[GOALS_POST] Player not found:', player_id);
-      return NextResponse.json(
-        { error: 'Player not found' },
-        { status: 404 }
-      );
-    }
+    if (isOwnGoal) {
+      // Own Goal: verify team_id is one of the match teams
+      const teamIsInMatch = team_id === match.home_team_id || team_id === match.away_team_id;
+      if (!teamIsInMatch) {
+        console.warn('[GOALS_POST] Team not in match:', { team_id, match_id });
+        return NextResponse.json(
+          { error: 'Team is not in this match' },
+          { status: 400 }
+        );
+      }
+      finalTeamId = team_id;
+    } else {
+      // Normal goal: verify player is in match
+      const { data: player, error: playerError } = await supabaseAdmin
+        .from('players')
+        .select('id, team_id, full_name')
+        .eq('id', player_id)
+        .single();
 
-    // Verify player is in match's teams
-    const playerInMatch = player.team_id === match.home_team_id || player.team_id === match.away_team_id;
-    if (!playerInMatch) {
-      console.warn('[GOALS_POST] Player not in match teams:', { player_id, match_id });
-      return NextResponse.json(
-        { error: 'Player is not in this match' },
-        { status: 400 }
-      );
+      if (playerError || !player) {
+        console.error('[GOALS_POST] Player not found:', player_id);
+        return NextResponse.json(
+          { error: 'Player not found' },
+          { status: 404 }
+        );
+      }
+
+      // Verify player is in match's teams
+      const playerInMatch = player.team_id === match.home_team_id || player.team_id === match.away_team_id;
+      if (!playerInMatch) {
+        console.warn('[GOALS_POST] Player not in match teams:', { player_id, match_id });
+        return NextResponse.json(
+          { error: 'Player is not in this match' },
+          { status: 400 }
+        );
+      }
+
+      finalTeamId = player.team_id;
+      finalPlayerId = player_id;
     }
 
     // Create goal entry
+    const goalData = {
+      match_id,
+      player_id: finalPlayerId,
+      team_id: finalTeamId,
+      goals,
+      minute: minuteValue,
+      is_own_goal: isOwnGoal,
+      note: note?.trim() || (isOwnGoal ? 'Own Goal' : null),
+    };
+
     const { data: newGoal, error: createError } = await supabaseAdmin
       .from('goals')
-      .insert({
-        match_id,
-        player_id,
-        team_id: player.team_id,
-        goals,
-        minute: minuteValue,
-      })
+      .insert(goalData)
       .select(`
         id,
         match_id,
@@ -192,6 +235,8 @@ export async function POST(request: NextRequest) {
         team_id,
         goals,
         minute,
+        is_own_goal,
+        note,
         created_at,
         updated_at,
         player:player_id(id, full_name, shirt_no, team_id, team:team_id(id, name, short_name)),
@@ -209,13 +254,17 @@ export async function POST(request: NextRequest) {
 
     console.log('[GOALS_POST] Goal created:', newGoal?.id);
 
+    const entityLabel = isOwnGoal
+      ? `Own Goal (${goals}${minuteValue ? ` @ ${minuteValue}'` : ''})`
+      : `Goal (${goals}${minuteValue ? ` @ ${minuteValue}'` : ''})`;
+
     await logAdminAction({
       admin: { id: authResult.profile!.id, email: authResult.profile!.email },
       action: 'goal.create',
       entityType: 'goal',
       entityId: newGoal?.id,
-      entityLabel: `${player.full_name} (${goals}${minuteValue ? ` @ ${minuteValue}'` : ''})`,
-      newData: { match_id, player_id, team_id: player.team_id, goals, minute: minuteValue },
+      entityLabel,
+      newData: goalData,
     });
 
     return NextResponse.json(

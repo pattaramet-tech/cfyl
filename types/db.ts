@@ -120,12 +120,30 @@ export interface BracketMatch {
 export interface Goal {
   id: string;
   match_id: string;
-  player_id: string;
+  player_id?: string | null;
   team_id: string;
   goals: number;
   minute?: number | null;
+  is_own_goal?: boolean;
+  note?: string | null;
   created_at: string;
   updated_at: string;
+  player?: {
+    id: string;
+    full_name: string;
+    shirt_no?: number | null;
+    team_id?: string | null;
+    team?: {
+      id?: string;
+      name?: string;
+      short_name?: string;
+    } | null;
+  } | null;
+  team?: {
+    id: string;
+    name: string;
+    short_name?: string;
+  };
 }
 
 export interface Card {

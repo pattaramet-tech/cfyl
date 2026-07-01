@@ -102,7 +102,7 @@ export async function GET(request: NextRequest) {
     const [{ data: goals }, { data: cards }, { data: staffDiscipline }, { data: suspensions }, { data: teams }, { data: players }, { data: staffs }] = await Promise.all([
       supabaseAdmin
         .from('goals')
-        .select('match_id, team_id, player_id, goals, player:player_id(team_id)')
+        .select('match_id, team_id, player_id, goals, is_own_goal, player:player_id(team_id)')
         .in('match_id', matchIds),
       supabaseAdmin
         .from('cards')

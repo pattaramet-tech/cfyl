@@ -7,21 +7,29 @@ import { BulkGoalForm } from './BulkGoalForm';
 interface Goal {
   id: string;
   match_id: string;
-  player_id: string;
+  player_id?: string | null;
   team_id: string;
   goals: number;
   minute?: number | null;
+  is_own_goal?: boolean;
+  note?: string | null;
   created_at: string;
   updated_at: string;
   player?: {
     id: string;
     full_name: string;
-    shirt_no?: number;
-  };
+    shirt_no?: number | null;
+    team_id?: string | null;
+    team?: {
+      id?: string;
+      name?: string;
+      short_name?: string;
+    } | null;
+  } | null;
   team?: {
     id: string;
     name: string;
-    short_name: string;
+    short_name?: string;
   };
 }
 
@@ -84,10 +92,10 @@ export function GoalsList({
     }
   };
 
-  // Calculate total goals per player
+  // Calculate total goals per player (or own goal)
   const goalsByPlayer = goals.reduce(
     (acc, goal) => {
-      const key = goal.player_id;
+      const key = goal.is_own_goal ? `OG-${goal.team_id}` : (goal.player_id || `UNKNOWN-${goal.id}`);
       if (!acc[key]) {
         acc[key] = { ...goal, totalGoals: 0, count: 0, minutes: [] as (number | null)[] };
       }
@@ -150,13 +158,20 @@ export function GoalsList({
               {aggregatedGoals.map((goal) => (
                 <tr key={goal.id} className="hover:bg-gray-50 transition">
                   <td className="px-6 py-4">
-                    <p className="font-semibold text-gray-800">{goal.player?.full_name}</p>
+                    {goal.is_own_goal ? (
+                      <p className="font-bold text-orange-700">⚽ Own Goal</p>
+                    ) : (
+                      <>
+                        <p className="font-semibold text-gray-800">{goal.player?.full_name || 'ไม่ระบุผู้เล่น'}</p>
+                        {goal.note && <p className="text-xs text-slate-500 mt-1">{goal.note}</p>}
+                      </>
+                    )}
                   </td>
                   <td className="px-6 py-4 text-sm text-gray-600">
-                    #{goal.player?.shirt_no || '—'}
+                    {goal.is_own_goal ? 'OG' : `#${goal.player?.shirt_no || '—'}`}
                   </td>
                   <td className="px-6 py-4 text-sm text-gray-600">
-                    {goal.team?.name || goal.team?.short_name || '—'}
+                    {goal.team?.name || goal.team?.short_name || goal.player?.team?.name || '—'}
                   </td>
                   <td className="px-6 py-4 text-center">
                     <span className="inline-block px-3 py-1 bg-blue-100 text-blue-800 rounded-full font-bold">

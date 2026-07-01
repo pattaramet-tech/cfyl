@@ -103,6 +103,8 @@ export async function PUT(
         team_id,
         goals,
         minute,
+        is_own_goal,
+        note,
         created_at,
         updated_at,
         player:player_id(id, full_name, shirt_no, team_id, team:team_id(id, name, short_name)),
@@ -120,12 +122,17 @@ export async function PUT(
 
     console.log('[GOALS_PUT] Goal updated:', goalId);
 
+    const updatedGoalData = updatedGoal as any;
+    const entityLabel = updatedGoalData?.is_own_goal
+      ? 'Own Goal'
+      : updatedGoalData?.player?.full_name ?? goalId;
+
     await logAdminAction({
       admin: { id: authResult.profile!.id, email: authResult.profile!.email },
       action: 'goal.update',
       entityType: 'goal',
       entityId: goalId,
-      entityLabel: (updatedGoal as any)?.player?.full_name ?? goalId,
+      entityLabel,
       oldData: { goals: currentGoal.goals, minute: currentGoal.minute },
       newData: { goals: updatedGoal?.goals, minute: updatedGoal?.minute },
     });
@@ -204,12 +211,15 @@ export async function DELETE(
 
     console.log('[GOALS_DELETE] Goal deleted:', goalId);
 
+    const goalData = goal as any;
+    const entityLabel = goalData?.is_own_goal ? 'Own Goal' : goalData?.player?.full_name ?? goalId;
+
     await logAdminAction({
       admin: { id: authResult.profile!.id, email: authResult.profile!.email },
       action: 'goal.delete',
       entityType: 'goal',
       entityId: goalId,
-      entityLabel: goalId,
+      entityLabel,
       oldData: goal,
     });
 

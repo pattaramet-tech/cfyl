@@ -31,6 +31,9 @@ export function GoalForm({
   const [minute, setMinute] = useState(
     initialMinute != null ? initialMinute.toString() : ''
   );
+  const [isOwnGoal, setIsOwnGoal] = useState(false);
+  const [ownGoalTeamId, setOwnGoalTeamId] = useState('');
+  const [goalNote, setGoalNote] = useState('');
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
@@ -41,9 +44,18 @@ export function GoalForm({
     setSuccessMessage(null);
 
     // Validate
-    if (!isEditing && !playerId) {
-      setError('Please select a player');
-      return;
+    if (!isEditing) {
+      if (isOwnGoal) {
+        if (!ownGoalTeamId) {
+          setError('กรุณาเลือกทีมที่ได้รับประตูจาก Own Goal');
+          return;
+        }
+      } else {
+        if (!playerId) {
+          setError('Please select a player');
+          return;
+        }
+      }
     }
 
     if (isEditing && !goalId) {
@@ -101,18 +113,33 @@ export function GoalForm({
       } else {
         // Create goal
         console.log('[GOAL_FORM] Creating goal');
+        const goalData: any = {
+          match_id: matchId,
+          goals: goalsNum,
+          minute: minuteNum,
+          is_own_goal: isOwnGoal,
+        };
+
+        if (isOwnGoal) {
+          goalData.team_id = ownGoalTeamId;
+          goalData.player_id = null;
+          if (goalNote.trim()) {
+            goalData.note = goalNote.trim();
+          }
+        } else {
+          goalData.player_id = playerId;
+          if (goalNote.trim()) {
+            goalData.note = goalNote.trim();
+          }
+        }
+
         const response = await fetch('/api/admin/goals', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
             'Authorization': `Bearer ${token}`,
           },
-          body: JSON.stringify({
-            match_id: matchId,
-            player_id: playerId,
-            goals: goalsNum,
-            minute: minuteNum,
-          }),
+          body: JSON.stringify(goalData),
         });
 
         if (!response.ok) {
@@ -120,11 +147,14 @@ export function GoalForm({
           throw new Error(data.error || 'Failed to create goal');
         }
 
-        setSuccessMessage('✓ Goal added');
+        setSuccessMessage(isOwnGoal ? '✓ Own Goal added' : '✓ Goal added');
         // Reset form
         setPlayerId('');
         setGoals('1');
         setMinute('');
+        setIsOwnGoal(false);
+        setOwnGoalTeamId('');
+        setGoalNote('');
       }
 
       // Call success callback
@@ -159,14 +189,54 @@ export function GoalForm({
       )}
 
       {!isEditing && (
-        <PlayerSelector
-          matchId={matchId}
-          homeTeamId={homeTeamId}
-          awayTeamId={awayTeamId}
-          onSelect={setPlayerId}
-          value={playerId}
-          disabled={isSaving}
-        />
+        <>
+          {/* Own Goal checkbox */}
+          <label className="flex items-center gap-2 text-sm font-semibold text-gray-700 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={isOwnGoal}
+              onChange={(e) => {
+                setIsOwnGoal(e.target.checked);
+                if (e.target.checked) {
+                  setPlayerId('');
+                } else {
+                  setOwnGoalTeamId('');
+                }
+              }}
+              disabled={isSaving}
+              className="w-4 h-4"
+            />
+            Own Goal / ทำเข้าประตูตัวเอง
+          </label>
+
+          {/* Player or Team selector */}
+          {isOwnGoal ? (
+            <div>
+              <label className="block text-sm font-semibold text-gray-700 mb-1">
+                ทีมที่ได้รับประตู
+              </label>
+              <select
+                value={ownGoalTeamId}
+                onChange={(e) => setOwnGoalTeamId(e.target.value)}
+                disabled={isSaving}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-600 disabled:bg-gray-100"
+              >
+                <option value="">-- เลือกทีมที่ได้รับประตู --</option>
+                <option value={homeTeamId}>ทีมเหย้า</option>
+                <option value={awayTeamId}>ทีมเยือน</option>
+              </select>
+            </div>
+          ) : (
+            <PlayerSelector
+              matchId={matchId}
+              homeTeamId={homeTeamId}
+              awayTeamId={awayTeamId}
+              onSelect={setPlayerId}
+              value={playerId}
+              disabled={isSaving}
+            />
+          )}
+        </>
       )}
 
       {/* Goals count input */}
@@ -208,14 +278,36 @@ export function GoalForm({
         </p>
       </div>
 
+      {/* Goal note */}
+      {!isEditing && (
+        <div>
+          <label className="block text-sm font-semibold text-gray-700 mb-1">
+            หมายเหตุ (ไม่บังคับ)
+          </label>
+          <textarea
+            value={goalNote}
+            onChange={(e) => setGoalNote(e.target.value)}
+            disabled={isSaving}
+            placeholder="เช่น Own Goal, ทำเข้าประตูตัวเอง"
+            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-600 disabled:bg-gray-100"
+            rows={2}
+          />
+        </div>
+      )}
+
       {/* Submit button */}
-      <button
-        type="submit"
-        disabled={isSaving || (!isEditing && !playerId)}
-        className="w-full px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white rounded-lg font-semibold transition text-sm"
-      >
-        {isSaving ? '⏳ Saving...' : isEditing ? '💾 Update Goal' : '➕ Add Goal'}
-      </button>
+      {(() => {
+        const isDisabled = isSaving || (!isEditing && (isOwnGoal ? !ownGoalTeamId : !playerId));
+        return (
+          <button
+            type="submit"
+            disabled={isDisabled}
+            className="w-full px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white rounded-lg font-semibold transition text-sm"
+          >
+            {isSaving ? '⏳ Saving...' : isEditing ? '💾 Update Goal' : '➕ Add Goal'}
+          </button>
+        );
+      })()}
     </form>
   );
 }
