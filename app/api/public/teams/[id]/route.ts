@@ -40,10 +40,13 @@ export async function GET(
   try {
     const { id } = await params;
     const teamId = id;
+    const debug = request.nextUrl.searchParams.get('debug') === '1';
 
     if (!teamId) {
       return NextResponse.json({ error: 'Team ID required' }, { status: 400 });
     }
+
+    const errorLogs: Record<string, string | null> = {};
 
     // Fetch team with metadata
     const { data: team, error: teamError } = await supabaseAdmin
@@ -74,12 +77,13 @@ export async function GET(
     // Fetch players
     const { data: players, error: playersError } = await supabaseAdmin
       .from('players')
-      .select('id, full_name, shirt_no, position, team_id')
+      .select('id, full_name, shirt_no, team_id')
       .eq('team_id', teamId)
       .order('shirt_no', { ascending: true, nullsFirst: false })
       .order('full_name', { ascending: true });
 
     if (playersError) {
+      errorLogs.players = playersError.message;
       console.error('[PUBLIC_TEAM_PROFILE] Players fetch error:', playersError);
     }
 
@@ -99,6 +103,7 @@ export async function GET(
       .order('match_time', { ascending: true });
 
     if (matchesError) {
+      errorLogs.matches = matchesError.message;
       console.error('[PUBLIC_TEAM_PROFILE] Matches fetch error:', matchesError);
     }
 
@@ -116,13 +121,14 @@ export async function GET(
         is_own_goal,
         note,
         created_at,
-        player:player_id(id, full_name, shirt_no, position, team_id),
+        player:player_id(id, full_name, shirt_no, team_id),
         team:team_id(id, name, short_name)
       `
       )
       .eq('team_id', teamId);
 
     if (goalsError) {
+      errorLogs.goals = goalsError.message;
       console.error('[PUBLIC_TEAM_PROFILE] Goals fetch error:', goalsError);
     }
 
@@ -138,13 +144,14 @@ export async function GET(
         minute,
         note,
         created_at,
-        player:player_id(id, full_name, shirt_no, position, team_id),
+        player:player_id(id, full_name, shirt_no, team_id),
         match:match_id(id, matchday, match_date, status)
       `
       )
       .eq('team_id', teamId);
 
     if (cardsError) {
+      errorLogs.cards = cardsError.message;
       console.error('[PUBLIC_TEAM_PROFILE] Cards fetch error:', cardsError);
     }
 
@@ -195,6 +202,7 @@ export async function GET(
       : { data: [], error: null };
 
     if (suspensionsError) {
+      errorLogs.suspensions = suspensionsError.message;
       console.error('[PUBLIC_TEAM_PROFILE] Suspensions fetch error:', suspensionsError);
     }
 
@@ -222,14 +230,31 @@ export async function GET(
       suspensions: suspensionsWithPlayer?.length || 0,
     });
 
-    return NextResponse.json({
+    const responsePayload: any = {
       team,
       players: mergedPlayers,
       matches: matches || [],
       goals: goals || [],
       cards: cards || [],
       suspensions: suspensionsWithPlayer || [],
-    });
+    };
+
+    if (debug) {
+      responsePayload.debug = {
+        teamId,
+        directPlayersCount: players?.length || 0,
+        mergedPlayersCount: mergedPlayers.length,
+        errors: {
+          players: errorLogs.players || null,
+          matches: errorLogs.matches || null,
+          goals: errorLogs.goals || null,
+          cards: errorLogs.cards || null,
+          suspensions: errorLogs.suspensions || null,
+        },
+      };
+    }
+
+    return NextResponse.json(responsePayload);
   } catch (error) {
     console.error('[PUBLIC_TEAM_PROFILE] API error:', error);
     return NextResponse.json(
