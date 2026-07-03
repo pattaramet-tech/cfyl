@@ -12,6 +12,27 @@ const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey);
 
 export const dynamic = 'force-dynamic';
 
+// Normalize relation array or single object
+function normalizeRelation<T = any>(value: T | T[] | null | undefined): T | null {
+  if (Array.isArray(value)) return value[0] || null;
+  return value || null;
+}
+
+// Add or merge player into map
+function addPlayerToMap(map: Map<string, any>, player: any) {
+  if (!player?.id) return;
+
+  const existing = map.get(player.id);
+
+  map.set(player.id, {
+    id: player.id,
+    full_name: player.full_name || existing?.full_name || 'ไม่ทราบชื่อ',
+    shirt_no: player.shirt_no ?? existing?.shirt_no ?? null,
+    position: player.position ?? existing?.position ?? null,
+    team_id: player.team_id || existing?.team_id || null,
+  });
+}
+
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -95,7 +116,7 @@ export async function GET(
         is_own_goal,
         note,
         created_at,
-        player:player_id(id, full_name, shirt_no),
+        player:player_id(id, full_name, shirt_no, position, team_id),
         team:team_id(id, name, short_name)
       `
       )
@@ -117,7 +138,7 @@ export async function GET(
         minute,
         note,
         created_at,
-        player:player_id(id, full_name, shirt_no, team_id),
+        player:player_id(id, full_name, shirt_no, position, team_id),
         match:match_id(id, matchday, match_date, status)
       `
       )
@@ -127,8 +148,34 @@ export async function GET(
       console.error('[PUBLIC_TEAM_PROFILE] Cards fetch error:', cardsError);
     }
 
-    // Fetch suspensions for players in this team
-    const playerIds = (players || []).map((p: any) => p.id).filter(Boolean);
+    // Merge players from direct query + goals + cards relations (fallback if team_id link is broken)
+    const playersMap = new Map<string, any>();
+
+    // Add from direct players query
+    (players || []).forEach((p: any) => addPlayerToMap(playersMap, p));
+
+    // Add from goals player relation (exclude own goals)
+    (goals || []).forEach((g: any) => {
+      if (g.is_own_goal) return;
+      const player = normalizeRelation(g.player);
+      addPlayerToMap(playersMap, player);
+    });
+
+    // Add from cards player relation
+    (cards || []).forEach((c: any) => {
+      const player = normalizeRelation(c.player);
+      addPlayerToMap(playersMap, player);
+    });
+
+    const mergedPlayers = Array.from(playersMap.values()).sort((a, b) => {
+      const shirtA = a.shirt_no ?? 9999;
+      const shirtB = b.shirt_no ?? 9999;
+      if (shirtA !== shirtB) return shirtA - shirtB;
+      return String(a.full_name || '').localeCompare(String(b.full_name || ''), 'th');
+    });
+
+    // Fetch suspensions for players in this team (using merged players)
+    const playerIds = mergedPlayers.map((p: any) => p.id).filter(Boolean);
     const { data: suspensions, error: suspensionsError } = playerIds.length
       ? await supabaseAdmin
           .from('suspensions')
@@ -167,7 +214,8 @@ export async function GET(
 
     console.log('[PUBLIC_TEAM_PROFILE] Result counts:', {
       teamId,
-      players: players?.length || 0,
+      directPlayers: players?.length || 0,
+      mergedPlayers: mergedPlayers.length,
       matches: matches?.length || 0,
       goals: goals?.length || 0,
       cards: cards?.length || 0,
@@ -176,7 +224,7 @@ export async function GET(
 
     return NextResponse.json({
       team,
-      players: players || [],
+      players: mergedPlayers,
       matches: matches || [],
       goals: goals || [],
       cards: cards || [],
