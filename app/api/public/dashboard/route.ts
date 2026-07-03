@@ -78,6 +78,50 @@ interface PublicDashboardResponse {
   } | null;
 }
 
+// Helper to safely get team name from relation
+function getTeamName(team: any, fallback = 'ไม่ระบุทีม') {
+  if (Array.isArray(team)) {
+    const first = team[0];
+    return first?.name || first?.short_name || fallback;
+  }
+  return team?.name || team?.short_name || fallback;
+}
+
+// Helper to get sortable datetime value for match
+function getMatchDateTimeValue(match: any): number {
+  const datePart = match.match_date || '9999-12-31';
+  const timePart = match.match_time || '23:59:59';
+
+  const value = new Date(`${datePart}T${timePart}`).getTime();
+
+  if (Number.isNaN(value)) {
+    return Number.MAX_SAFE_INTEGER;
+  }
+
+  return value;
+}
+
+// Helper to get sortable value for finished match (latest first)
+function getFinishedMatchSortValue(match: any): number {
+  const dateTime = getMatchDateTimeValue(match);
+  if (dateTime !== Number.MAX_SAFE_INTEGER) return dateTime;
+
+  const fallback = new Date(match.updated_at || match.created_at || 0).getTime();
+  return Number.isNaN(fallback) ? 0 : fallback;
+}
+
+// Helper to get team name with fallback to teams lookup
+function getTeamNameFromMatch(match: any, side: 'home' | 'away', teamsById: Map<string, any>) {
+  const relation = side === 'home' ? match.home_team : match.away_team;
+  const fallbackId = side === 'home' ? match.home_team_id : match.away_team_id;
+
+  const relName = getTeamName(relation, '');
+  if (relName) return relName;
+
+  const team = teamsById.get(fallbackId);
+  return team?.name || team?.short_name || 'ไม่ระบุทีม';
+}
+
 export async function GET(request: NextRequest) {
   try {
     const searchParams = request.nextUrl.searchParams;
@@ -152,7 +196,28 @@ export async function GET(request: NextRequest) {
 
     // Build base query condition
     let teamQuery = supabase.from('teams').select('id, name').eq('season_id', seasonId).eq('age_group_id', ageGroupId);
-    let matchQuery = supabase.from('matches').select('*').eq('season_id', seasonId).eq('age_group_id', ageGroupId);
+    let matchQuery = supabase
+      .from('matches')
+      .select(`
+        id,
+        season_id,
+        age_group_id,
+        division_id,
+        matchday,
+        match_date,
+        match_time,
+        status,
+        home_score,
+        away_score,
+        created_at,
+        updated_at,
+        home_team_id,
+        away_team_id,
+        home_team:home_team_id(id, name, short_name),
+        away_team:away_team_id(id, name, short_name)
+      `)
+      .eq('season_id', seasonId)
+      .eq('age_group_id', ageGroupId);
 
     if (divisionId) {
       teamQuery = teamQuery.eq('division_id', divisionId);
@@ -164,6 +229,7 @@ export async function GET(request: NextRequest) {
 
     const teamIds = teams?.map(t => t.id) || [];
     const matchIds = matches?.map(m => m.id) || [];
+    const teamsById = new Map((teams || []).map((t: any) => [t.id, t]));
 
     // Fetch players, goals, cards
     const [{ data: players }, { data: goals }, { data: cards }, { data: staffDiscipline }] = await Promise.all([
@@ -244,12 +310,12 @@ export async function GET(request: NextRequest) {
 
     // Find highest scoring match
     const highestScoringMatch = (matches || [])
-      .filter(m => m.status === 'finished' && m.home_score !== null && m.away_score !== null)
-      .map(m => ({
+      .filter((m: any) => m.status === 'finished' && m.home_score !== null && m.away_score !== null)
+      .map((m: any) => ({
         match_id: m.id,
         matchday: m.matchday,
-        home_team_name: m.home_team?.name || 'ไม่ระบุทีม',
-        away_team_name: m.away_team?.name || 'ไม่ระบุทีม',
+        home_team_name: getTeamNameFromMatch(m, 'home', teamsById),
+        away_team_name: getTeamNameFromMatch(m, 'away', teamsById),
         home_score: m.home_score || 0,
         away_score: m.away_score || 0,
         total_goals: (m.home_score || 0) + (m.away_score || 0),
@@ -259,40 +325,49 @@ export async function GET(request: NextRequest) {
 
     // Find latest finished match
     const latestMatch = (matches || [])
-      .filter(m => m.status === 'finished')
-      .sort((a, b) => {
-        const dateA = new Date(a.match_date || a.updated_at || 0).getTime();
-        const dateB = new Date(b.match_date || b.updated_at || 0).getTime();
-        return dateB - dateA;
-      })[0] || null;
+      .filter((m: any) => m.status === 'finished')
+      .sort((a: any, b: any) => getFinishedMatchSortValue(b) - getFinishedMatchSortValue(a))[0] || null;
 
     const latestFinishedMatch = latestMatch
       ? {
           match_id: latestMatch.id,
           matchday: latestMatch.matchday,
-          home_team_name: latestMatch.home_team?.name || 'ไม่ระบุทีม',
-          away_team_name: latestMatch.away_team?.name || 'ไม่ระบุทีม',
+          home_team_name: getTeamNameFromMatch(latestMatch, 'home', teamsById),
+          away_team_name: getTeamNameFromMatch(latestMatch, 'away', teamsById),
           home_score: latestMatch.home_score || 0,
           away_score: latestMatch.away_score || 0,
           match_date: latestMatch.match_date,
         }
       : null;
 
-    // Find next match
-    const nextMatch = (matches || [])
-      .filter(m => m.status === 'scheduled')
-      .sort((a, b) => {
-        const dateA = new Date(a.match_date || 0).getTime();
-        const dateB = new Date(b.match_date || 0).getTime();
-        return dateA - dateB;
-      })[0] || null;
+    // Find next match (sorted by date+time)
+    const now = Date.now();
+
+    const upcomingMatches = (matches || [])
+      .filter((m: any) => m.status === 'scheduled')
+      .sort((a: any, b: any) => {
+        const timeA = getMatchDateTimeValue(a);
+        const timeB = getMatchDateTimeValue(b);
+
+        if (timeA !== timeB) return timeA - timeB;
+
+        // tie-breaker by matchday if times equal
+        const mdA = String(a.matchday || '');
+        const mdB = String(b.matchday || '');
+        return mdA.localeCompare(mdB, 'th');
+      });
+
+    const nextMatch =
+      upcomingMatches.find((m: any) => getMatchDateTimeValue(m) >= now) ||
+      upcomingMatches[0] ||
+      null;
 
     const nextMatchData = nextMatch
       ? {
           match_id: nextMatch.id,
           matchday: nextMatch.matchday,
-          home_team_name: nextMatch.home_team?.name || 'ไม่ระบุทีม',
-          away_team_name: nextMatch.away_team?.name || 'ไม่ระบุทีม',
+          home_team_name: getTeamNameFromMatch(nextMatch, 'home', teamsById),
+          away_team_name: getTeamNameFromMatch(nextMatch, 'away', teamsById),
           match_date: nextMatch.match_date,
           match_time: nextMatch.match_time,
         }
