@@ -190,7 +190,6 @@ export async function GET(
       team_id,
       total_points,
       ban_matches,
-      status,
       suspended_from_match_id,
       suspension_reason,
       suspension_details,
@@ -232,14 +231,8 @@ export async function GET(
 
     const suspensions = Array.from(suspensionMap.values());
 
-    // Filter active suspensions (exclude completed and those with no bans)
+    // Filter active suspensions (based on ban_matches or total_points)
     const activeSuspensions = (suspensions || []).filter((s: any) => {
-      const status = s.status || 'active';
-
-      // Skip completed suspensions
-      if (status === 'completed') return false;
-
-      // Include if has active bans/points
       const banMatches = Number(s.ban_matches || 0);
       const totalPoints = Number(s.total_points || 0);
 
@@ -255,7 +248,7 @@ export async function GET(
       shirt_no: s.player?.shirt_no ?? null,
       total_points: Number(s.total_points || 0),
       ban_matches: Number(s.ban_matches || 0),
-      status: s.status || 'active',
+      status: 'active',
       suspension_reason: s.suspension_reason || null,
       suspended_from_match_id: s.suspended_from_match_id || null,
       suspension_details: s.suspension_details || null,
@@ -289,12 +282,20 @@ export async function GET(
         teamId,
         directPlayersCount: players?.length || 0,
         mergedPlayersCount: mergedPlayers.length,
+        goalsCount: goals?.length || 0,
+        cardsCount: cards?.length || 0,
+        playerIdsCount: playerIds.length,
+        rawSuspensionsCount: suspensions.length,
+        activeSuspensionsCount: suspensionsWithPlayer.length,
+        needsSuspensionRecalculation:
+          (cards?.length || 0) > 0 && suspensions.length === 0,
         errors: {
           players: errorLogs.players || null,
           matches: errorLogs.matches || null,
           goals: errorLogs.goals || null,
           cards: errorLogs.cards || null,
           suspensions: errorLogs.suspensions || null,
+          suspensionsByTeam: errorLogs.suspensionsByTeam || null,
         },
       };
     }
