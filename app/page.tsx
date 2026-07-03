@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { SeasonSelector } from '@/components/SeasonSelector';
+import { PublicDashboard } from '@/components/PublicDashboard';
 import { MatchCard } from '@/components/MatchCard';
 import { StandingsTable } from '@/components/StandingsTable';
 import { TopScorersTable } from '@/components/TopScorersTable';
@@ -98,10 +99,18 @@ export default function Home() {
 
       {!seasonId || !ageGroupId ? (
         <div className="cfyl-empty">โปรดเลือกฤดูกาลและรุ่นอายุเพื่อดูข้อมูล</div>
-      ) : loading ? (
-        <div className="cfyl-loading">
-          <span className="cfyl-spinner w-5 h-5" />
-          กำลังโหลดข้อมูล...
+      ) : (
+        <>
+          <PublicDashboard seasonId={seasonId} ageGroupId={ageGroupId} />
+        </>
+      )}
+
+      {!seasonId || !ageGroupId ? null : loading ? (
+        <div className="cfyl-section">
+          <div className="cfyl-loading">
+            <span className="cfyl-spinner w-5 h-5" />
+            กำลังโหลดข้อมูล...
+          </div>
         </div>
       ) : (
         <>
