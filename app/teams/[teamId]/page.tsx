@@ -68,6 +68,9 @@ interface TeamProfile {
     total_points?: number | null;
     ban_matches?: number | null;
     status?: string | null;
+    suspension_reason?: string | null;
+    suspended_from_match_id?: string | null;
+    suspension_details?: string | null;
   }>;
 }
 
@@ -552,9 +555,7 @@ export default function TeamProfilePage() {
           <div className="cfyl-card text-center py-6 text-gray-600">ไม่มีผู้เล่นติดโทษแบน</div>
         ) : (
           <div className="space-y-2">
-            {suspensions
-              .filter((s) => s.status !== 'completed')
-              .map((susp) => (
+            {suspensions.map((susp) => (
                 <div key={susp.player_id} className="cfyl-card p-3 sm:p-4">
                   <div className="flex items-center justify-between gap-3">
                     <div className="flex items-center gap-3 flex-1 min-w-0">
@@ -564,13 +565,18 @@ export default function TeamProfilePage() {
                           {susp.player_name || playersById.get(susp.player_id)?.full_name || 'ไม่ทราบชื่อ'}
                         </div>
                         <div className="text-xs text-gray-500">
-                          #{susp.shirt_no ?? playersById.get(susp.player_id)?.shirt_no ?? '-'} • คะแนนที่คุมไว้: {susp.total_points || 0}
+                          #{susp.shirt_no ?? playersById.get(susp.player_id)?.shirt_no ?? '-'} • คะแนนสะสม: {susp.total_points || 0}
                         </div>
+                        {susp.suspension_reason && (
+                          <div className="text-xs text-red-600 mt-1.5 leading-tight">
+                            {susp.suspension_reason}
+                          </div>
+                        )}
                       </div>
                     </div>
                     <div className="shrink-0 text-right">
                       <div className="text-sm font-bold text-red-600">
-                        {susp.ban_matches ? `แบน ${susp.ban_matches} แมตช์` : 'รอการตัดสินใจ'}
+                        {susp.ban_matches && susp.ban_matches > 0 ? `แบน ${susp.ban_matches} นัด` : 'ตรวจสอบ'}
                       </div>
                     </div>
                   </div>

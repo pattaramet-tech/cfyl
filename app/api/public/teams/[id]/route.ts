@@ -183,39 +183,82 @@ export async function GET(
 
     // Fetch suspensions for players in this team (using merged players)
     const playerIds = mergedPlayers.map((p: any) => p.id).filter(Boolean);
-    const { data: suspensions, error: suspensionsError } = playerIds.length
+
+    const suspensionSelector = `
+      id,
+      player_id,
+      team_id,
+      total_points,
+      ban_matches,
+      status,
+      suspended_from_match_id,
+      suspension_reason,
+      suspension_details,
+      created_at,
+      updated_at,
+      player:player_id(id, full_name, shirt_no, team_id)
+    `;
+
+    // Query suspensions by player_id
+    const { data: suspensionsByPlayers, error: suspensionsByPlayersError } = playerIds.length
       ? await supabaseAdmin
           .from('suspensions')
-          .select(`
-            id,
-            player_id,
-            total_points,
-            ban_matches,
-            status,
-            reason,
-            created_at,
-            updated_at,
-            player:player_id(id, full_name, shirt_no, team_id)
-          `)
+          .select(suspensionSelector)
           .in('player_id', playerIds)
-          .neq('status', 'completed')
       : { data: [], error: null };
 
-    if (suspensionsError) {
-      errorLogs.suspensions = suspensionsError.message;
-      console.error('[PUBLIC_TEAM_PROFILE] Suspensions fetch error:', suspensionsError);
+    if (suspensionsByPlayersError) {
+      errorLogs.suspensions = suspensionsByPlayersError.message;
+      console.error('[PUBLIC_TEAM_PROFILE] Suspensions by players fetch error:', suspensionsByPlayersError);
     }
 
-    // Normalize suspensions response with player names
-    const suspensionsWithPlayer = (suspensions || []).map((s: any) => ({
+    // Query suspensions by team_id (fallback for data consistency)
+    const { data: suspensionsByTeam, error: suspensionsByTeamError } = await supabaseAdmin
+      .from('suspensions')
+      .select(suspensionSelector)
+      .eq('team_id', teamId);
+
+    if (suspensionsByTeamError) {
+      errorLogs.suspensionsByTeam = suspensionsByTeamError.message;
+      console.error('[PUBLIC_TEAM_PROFILE] Suspensions by team fetch error:', suspensionsByTeamError);
+    }
+
+    // Merge and dedupe suspensions from both queries
+    const suspensionMap = new Map<string, any>();
+    [...(suspensionsByPlayers || []), ...(suspensionsByTeam || [])].forEach((s: any) => {
+      if (!s?.id) return;
+      suspensionMap.set(s.id, s);
+    });
+
+    const suspensions = Array.from(suspensionMap.values());
+
+    // Filter active suspensions (exclude completed and those with no bans)
+    const activeSuspensions = (suspensions || []).filter((s: any) => {
+      const status = s.status || 'active';
+
+      // Skip completed suspensions
+      if (status === 'completed') return false;
+
+      // Include if has active bans/points
+      const banMatches = Number(s.ban_matches || 0);
+      const totalPoints = Number(s.total_points || 0);
+
+      return banMatches > 0 || totalPoints >= 6;
+    });
+
+    // Normalize suspensions response with player names and all details
+    const suspensionsWithPlayer = activeSuspensions.map((s: any) => ({
       id: s.id,
       player_id: s.player_id,
+      team_id: s.team_id,
       player_name: s.player?.full_name || null,
       shirt_no: s.player?.shirt_no ?? null,
-      total_points: s.total_points ?? 0,
-      ban_matches: s.ban_matches ?? 0,
+      total_points: Number(s.total_points || 0),
+      ban_matches: Number(s.ban_matches || 0),
       status: s.status || 'active',
-      reason: s.reason || null,
+      suspension_reason: s.suspension_reason || null,
+      suspended_from_match_id: s.suspended_from_match_id || null,
+      suspension_details: s.suspension_details || null,
       created_at: s.created_at,
       updated_at: s.updated_at,
     }));
@@ -227,7 +270,9 @@ export async function GET(
       matches: matches?.length || 0,
       goals: goals?.length || 0,
       cards: cards?.length || 0,
-      suspensions: suspensionsWithPlayer?.length || 0,
+      playerIds: playerIds.length,
+      rawSuspensions: suspensions.length,
+      activeSuspensions: suspensionsWithPlayer?.length || 0,
     });
 
     const responsePayload: any = {
