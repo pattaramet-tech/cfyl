@@ -42,10 +42,12 @@ interface TeamProfile {
   }>;
   goals: Array<{
     id: string;
-    player_id: string;
+    player_id?: string | null;
     team_id: string;
     match_id?: string | null;
     goals: number;
+    is_own_goal?: boolean;
+    note?: string | null;
     player?: { id: string; full_name: string; shirt_no?: number | null } | null;
   }>;
   cards: Array<{
@@ -185,6 +187,7 @@ export default function TeamProfilePage() {
   const goals = data.goals || [];
   const cards = data.cards || [];
   const suspensions = data.suspensions || [];
+  const playersById = new Map(players.map((p) => [p.id, p]));
 
   const finishedMatches = matches.filter((m) => m.status === 'finished');
   const wins = finishedMatches.filter((m) => {
@@ -230,8 +233,13 @@ export default function TeamProfilePage() {
   const playerGoalsMap = new Map<string, number>();
   const topScorersMap = new Map<string, TopScorer>();
 
-  goals.forEach((g) => {
-    const playerId = g.player_id || g.player?.id || `unknown-${g.id}`;
+  goals.forEach((g: any) => {
+    // Skip own goals - they don't count toward player scoring
+    if (g.is_own_goal || !g.player_id || !g.player) {
+      return;
+    }
+
+    const playerId = g.player_id;
     const goalCount = Number(g.goals || 0);
 
     playerGoalsMap.set(playerId, (playerGoalsMap.get(playerId) ?? 0) + goalCount);
@@ -446,7 +454,12 @@ export default function TeamProfilePage() {
                     </div>
                     <div className="shrink-0 text-right">
                       <div className="text-sm font-semibold">⚽ {playerGoals}</div>
-                      <div className="text-sm text-gray-600">🟨 {playerCards} {banStatus}</div>
+                      <div className="text-sm text-gray-600">
+                        🟨 {playerCards}
+                        {banStatus !== '-' && (
+                          <span className="ml-2 text-red-600 font-semibold">🚨 ติดโทษแบน</span>
+                        )}
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -548,10 +561,10 @@ export default function TeamProfilePage() {
                       <div className="text-xl shrink-0">🚨</div>
                       <div className="flex-1 min-w-0">
                         <div className="font-semibold text-gray-900 text-sm sm:text-base">
-                          {susp.player_name || 'ไม่ทราบชื่อ'}
+                          {susp.player_name || playersById.get(susp.player_id)?.full_name || 'ไม่ทราบชื่อ'}
                         </div>
                         <div className="text-xs text-gray-500">
-                          #{susp.shirt_no || '-'} • คะแนนที่คุมไว้: {susp.total_points || 0}
+                          #{susp.shirt_no ?? playersById.get(susp.player_id)?.shirt_no ?? '-'} • คะแนนที่คุมไว้: {susp.total_points || 0}
                         </div>
                       </div>
                     </div>
