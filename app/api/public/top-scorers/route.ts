@@ -16,52 +16,64 @@ export async function GET(request: NextRequest) {
       .select(
         `
         player_id,
-        player:player_id(player_code, full_name, shirt_no, team_id),
-        team:team_id(name),
+        is_own_goal,
+        player:player_id(player_code, full_name, shirt_no, team_id, season_id, age_group_id, division_id),
+        team:team_id(name, short_name),
         goals
       `
-      );
-
-    if (seasonId) {
-      query = query.eq('player.season_id', seasonId);
-    }
+      )
+      .eq('is_own_goal', false)
+      .not('player_id', 'is', null);
 
     const { data: rawData, error } = await query;
 
     if (error) throw error;
 
-    // Transform and aggregate
+    // Filter records before aggregation
+    const filteredRecords = (rawData || []).filter((record: any) => {
+      // Skip if player or own goal issue
+      if (!record.player_id || record.is_own_goal || !record.player) {
+        return false;
+      }
+
+      // Filter by season (from player data)
+      if (seasonId && record.player.season_id !== seasonId) {
+        return false;
+      }
+
+      // Filter by age group (from player data)
+      if (ageGroupId && record.player.age_group_id !== ageGroupId) {
+        return false;
+      }
+
+      // Filter by division (from player data)
+      if (divisionId && record.player.division_id !== divisionId) {
+        return false;
+      }
+
+      return true;
+    });
+
+    // Transform and aggregate from filtered records
     const scorerMap = new Map<string, any>();
 
-    rawData?.forEach((record: any) => {
+    filteredRecords.forEach((record: any) => {
       const key = record.player_id;
       if (!scorerMap.has(key)) {
         scorerMap.set(key, {
           player_id: record.player_id,
-          player_code: record.player.player_code,
-          full_name: record.player.full_name,
+          player_code: record.player.player_code || '',
+          full_name: record.player.full_name || 'ไม่ระบุชื่อ',
           shirt_no: record.player.shirt_no,
           team_id: record.player.team_id,
-          team_name: record.team.name,
+          team_name: record.team?.name || record.team?.short_name || 'ไม่ระบุทีม',
           total_goals: 0,
         });
       }
-      scorerMap.get(key).total_goals += record.goals;
+      scorerMap.get(key).total_goals += Number(record.goals || 1);
     });
 
     let scorers = Array.from(scorerMap.values());
-
-    // Filter by age group and division if needed
-    if (ageGroupId && divisionId) {
-      const { data: playerIds } = await supabase
-        .from('players')
-        .select('id')
-        .eq('age_group_id', ageGroupId)
-        .eq('division_id', divisionId);
-
-      const playerIdSet = new Set(playerIds?.map(p => p.id) || []);
-      scorers = scorers.filter(s => playerIdSet.has(s.player_id));
-    }
 
     // Sort by goals (desc), name (asc)
     scorers.sort((a, b) => {
@@ -74,7 +86,10 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json(scorers);
   } catch (error) {
-    console.error('API error:', error);
-    return NextResponse.json({ error: 'Failed to fetch top scorers' }, { status: 500 });
+    console.error('[PUBLIC_TOP_SCORERS] Error:', error);
+    return NextResponse.json(
+      { error: 'Failed to fetch top scorers' },
+      { status: 500 }
+    );
   }
 }
