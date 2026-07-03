@@ -43,13 +43,27 @@ interface DataQualityResponse {
 export const dynamic = 'force-dynamic';
 
 function getGoalTeamId(goal: any): string | null {
-  return goal.team_id || goal.player?.team_id || null;
+  // team_id หมายถึงทีมที่ได้รับประตูเสมอ รวมถึง Own Goal
+  if (goal.team_id) return goal.team_id;
+
+  // fallback สำหรับข้อมูลเก่าที่ goal ไม่มี team_id
+  return goal.player?.team_id || null;
+}
+
+function getGoalValue(goal: any): number {
+  const value = Number(goal.goals ?? goal.goal_count ?? 1);
+  if (!Number.isFinite(value) || value <= 0) return 1;
+  return value;
+}
+
+function isOwnGoal(goal: any): boolean {
+  return goal.is_own_goal === true;
 }
 
 function sumGoalsForTeam(matchGoals: any[], teamId: string): number {
   return matchGoals
     .filter((g: any) => getGoalTeamId(g) === teamId)
-    .reduce((sum: number, g: any) => sum + Number(g.goals || 1), 0);
+    .reduce((sum: number, g: any) => sum + getGoalValue(g), 0);
 }
 
 export async function GET(request: NextRequest) {
@@ -102,7 +116,16 @@ export async function GET(request: NextRequest) {
     const [{ data: goals }, { data: cards }, { data: staffDiscipline }, { data: suspensions }, { data: teams }, { data: players }, { data: staffs }] = await Promise.all([
       supabaseAdmin
         .from('goals')
-        .select('match_id, team_id, player_id, goals, is_own_goal, player:player_id(team_id)')
+        .select(`
+          id,
+          match_id,
+          team_id,
+          player_id,
+          goals,
+          is_own_goal,
+          note,
+          player:player_id(id, full_name, shirt_no, team_id)
+        `)
         .in('match_id', matchIds),
       supabaseAdmin
         .from('cards')
@@ -151,20 +174,22 @@ export async function GET(request: NextRequest) {
       }
     });
 
-    // Check 2: Score mismatch with goals
+    // Check 2: Score mismatch with goals (including Own Goals)
     (matches || []).forEach((match: any) => {
       if (match.status === 'finished') {
         const matchGoals = (goals || []).filter((g: any) => g.match_id === match.id);
         const homeGoals = sumGoalsForTeam(matchGoals, match.home_team_id);
         const awayGoals = sumGoalsForTeam(matchGoals, match.away_team_id);
+        const ownGoalRecords = matchGoals.filter((g: any) => isOwnGoal(g));
+        const normalGoalRecords = matchGoals.filter((g: any) => !isOwnGoal(g));
 
         if (homeGoals !== (match.home_score || 0) || awayGoals !== (match.away_score || 0)) {
           issues.push({
             id: `check2_${issueCounter++}`,
             severity: 'error',
             category: 'Score Consistency',
-            title: 'สกอร์ไม่ตรงกับจำนวนผู้ทำประตู',
-            description: `MD${match.matchday} ${match.home_team?.name} ${match.home_score}-${match.away_score} ${match.away_team?.name} แต่จำนวนประตู ${homeGoals}-${awayGoals}`,
+            title: 'สกอร์ไม่ตรงกับจำนวนประตูที่บันทึก',
+            description: `MD${match.matchday} ${match.home_team?.name} ${match.home_score}-${match.away_score} ${match.away_team?.name} แต่จำนวนประตูที่บันทึก ${homeGoals}-${awayGoals}${ownGoalRecords.length ? ` (รวม Own Goal ${ownGoalRecords.length} รายการ)` : ''}`,
             entity_type: 'match',
             entity_id: match.id,
             match_id: match.id,
@@ -175,6 +200,8 @@ export async function GET(request: NextRequest) {
               home_goals: homeGoals,
               away_goals: awayGoals,
               match_goal_records: matchGoals.length,
+              own_goal_records: ownGoalRecords.length,
+              normal_goal_records: normalGoalRecords.length,
             },
           });
         }
@@ -205,7 +232,7 @@ export async function GET(request: NextRequest) {
       }
     });
 
-    // Check 4: Match finished with score > 0 but no goals
+    // Check 4: Match finished with score > 0 but no goals/own goals
     (matches || []).forEach((match: any) => {
       if (match.status === 'finished') {
         const totalScore = (match.home_score || 0) + (match.away_score || 0);
@@ -216,8 +243,8 @@ export async function GET(request: NextRequest) {
             id: `check4_${issueCounter++}`,
             severity: 'warning',
             category: 'Goal Data',
-            title: 'มีสกอร์แต่ยังไม่มีผู้ทำประตู',
-            description: `MD${match.matchday} ${match.home_team?.name} ${match.home_score}-${match.away_score} ${match.away_team?.name}`,
+            title: 'มีสกอร์แต่ยังไม่มีข้อมูลประตู',
+            description: `MD${match.matchday} ${match.home_team?.name} ${match.home_score}-${match.away_score} ${match.away_team?.name} แต่ยังไม่มีรายการประตูหรือ Own Goal`,
             entity_type: 'match',
             entity_id: match.id,
             match_id: match.id,
@@ -227,7 +254,55 @@ export async function GET(request: NextRequest) {
       }
     });
 
-    // Check 5: Red/second_yellow card but no suspension
+    // Check 5A: Own Goal must have team_id
+    (goals || []).forEach((goal: any) => {
+      if (isOwnGoal(goal) && !goal.team_id) {
+        issues.push({
+          id: `check5a_${issueCounter++}`,
+          severity: 'error',
+          category: 'Goal Data',
+          title: 'Own Goal ไม่มีทีมที่ได้รับประตู',
+          description: `Goal ${goal.id || ''} เป็น Own Goal แต่ไม่มี team_id จึงไม่สามารถนับสกอร์ได้`,
+          entity_type: 'match',
+          entity_id: goal.match_id,
+          match_id: goal.match_id,
+          team_id: null,
+          action_url: `/admin/goals?matchId=${goal.match_id}`,
+          meta: {
+            goal_id: goal.id,
+            is_own_goal: goal.is_own_goal,
+            team_id: goal.team_id,
+            player_id: goal.player_id,
+          },
+        });
+      }
+    });
+
+    // Check 5B: Normal goal (not own goal) must have player_id
+    (goals || []).forEach((goal: any) => {
+      if (!isOwnGoal(goal) && !goal.player_id) {
+        issues.push({
+          id: `check5b_${issueCounter++}`,
+          severity: 'error',
+          category: 'Goal Data',
+          title: 'รายการประตูไม่มีผู้ทำประตู',
+          description: `Goal ${goal.id || ''} ไม่ใช่ Own Goal แต่ไม่มี player_id`,
+          entity_type: 'match',
+          entity_id: goal.match_id,
+          match_id: goal.match_id,
+          team_id: goal.team_id || null,
+          action_url: `/admin/goals?matchId=${goal.match_id}`,
+          meta: {
+            goal_id: goal.id,
+            is_own_goal: goal.is_own_goal,
+            team_id: goal.team_id,
+            player_id: goal.player_id,
+          },
+        });
+      }
+    });
+
+    // Check 6: Red/second_yellow card but no suspension
     (cards || []).forEach((card: any) => {
       if (card.card_type === 'red' || card.card_type === 'second_yellow') {
         const suspension = (suspensions || []).find(
@@ -236,7 +311,7 @@ export async function GET(request: NextRequest) {
 
         if (!suspension || suspension.ban_matches === 0) {
           issues.push({
-            id: `check5_${issueCounter++}`,
+            id: `check6_${issueCounter++}`,
             severity: 'error',
             category: 'Suspension',
             title: 'มีใบแดง/ใบเหลืองที่ 2 แต่ยังไม่เกิดโทษแบน',
@@ -250,11 +325,11 @@ export async function GET(request: NextRequest) {
       }
     });
 
-    // Check 6: Suspension with ban but no suspended_from_match_id
+    // Check 7: Suspension with ban but no suspended_from_match_id
     (suspensions || []).forEach((susp: any) => {
       if (susp.ban_matches > 0 && !susp.suspended_from_match_id) {
         issues.push({
-          id: `check6_${issueCounter++}`,
+          id: `check7_${issueCounter++}`,
           severity: 'warning',
           category: 'Suspension',
           title: 'มีโทษแบนแต่ไม่พบแมตช์ถัดไป',
@@ -267,11 +342,11 @@ export async function GET(request: NextRequest) {
       }
     });
 
-    // Check 7: Staff discipline without reason
+    // Check 8: Staff discipline without reason
     (staffDiscipline || []).forEach((sd: any) => {
       if (sd.status === 'active' && (!sd.reason || sd.reason.trim() === '')) {
         issues.push({
-          id: `check7_${issueCounter++}`,
+          id: `check8_${issueCounter++}`,
           severity: 'warning',
           category: 'Staff Discipline',
           title: 'บันทึกโทษเจ้าหน้าที่ทีมไม่มีเหตุผล',
@@ -284,11 +359,11 @@ export async function GET(request: NextRequest) {
       }
     });
 
-    // Check 8: Staff discipline ejection/ban without suspended_matches
+    // Check 9: Staff discipline ejection/ban without suspended_matches
     (staffDiscipline || []).forEach((sd: any) => {
       if ((sd.discipline_type === 'ejection' || sd.discipline_type === 'ban') && (sd.suspended_matches === 0 || !sd.suspended_matches)) {
         issues.push({
-          id: `check8_${issueCounter++}`,
+          id: `check9_${issueCounter++}`,
           severity: 'warning',
           category: 'Staff Discipline',
           title: 'เจ้าหน้าที่ทีมถูกไล่ออก/แบน แต่ยังไม่ได้ระบุจำนวนแมตช์ที่แบน',
