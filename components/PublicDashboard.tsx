@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { getByeLabelForTeam } from '@/lib/match-utils';
 
 interface StatCardProps {
   label: string;
@@ -171,10 +172,35 @@ export function PublicDashboard({ seasonId, ageGroupId, divisionId }: PublicDash
                     })
                   : 'ไม่ระบุวันที่'}
               </p>
-              <p className="font-semibold text-slate-800 text-sm mb-2">
-                {data.latest_finished_match.home_team_name} vs{' '}
-                {data.latest_finished_match.away_team_name}
-              </p>
+              <div className="space-y-1 mb-2">
+                <p className="font-semibold text-slate-800 text-sm">
+                  {data.latest_finished_match.home_team_name}
+                  {data.latest_finished_match.result_type === 'home_win_by_bye' && (
+                    <span className="ml-2 text-xs font-medium px-2 py-0.5 rounded bg-amber-100 text-amber-700">
+                      ชนะบาย
+                    </span>
+                  )}
+                  {data.latest_finished_match.result_type === 'away_win_by_bye' && (
+                    <span className="ml-2 text-xs font-medium px-2 py-0.5 rounded bg-amber-100 text-amber-700">
+                      แพ้บาย
+                    </span>
+                  )}
+                </p>
+                <p className="font-semibold text-slate-800 text-sm">
+                  vs{' '}
+                  {data.latest_finished_match.away_team_name}
+                  {data.latest_finished_match.result_type === 'away_win_by_bye' && (
+                    <span className="ml-2 text-xs font-medium px-2 py-0.5 rounded bg-amber-100 text-amber-700">
+                      ชนะบาย
+                    </span>
+                  )}
+                  {data.latest_finished_match.result_type === 'home_win_by_bye' && (
+                    <span className="ml-2 text-xs font-medium px-2 py-0.5 rounded bg-amber-100 text-amber-700">
+                      แพ้บาย
+                    </span>
+                  )}
+                </p>
+              </div>
               <p className="text-2xl font-bold text-slate-900">
                 {data.latest_finished_match.home_score} - {data.latest_finished_match.away_score}
               </p>

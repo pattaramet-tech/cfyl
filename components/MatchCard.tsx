@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import type { Match } from '@/types/db';
 import { TeamLogo } from './TeamLogo';
+import { getByeLabelForTeam } from '@/lib/match-utils';
 
 interface MatchCardProps {
   match: Match & {
@@ -70,17 +71,22 @@ export function MatchCard({ match, variant, badgeText }: MatchCardProps) {
 
       {/* Teams + score */}
       <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2 sm:gap-3">
-        <div className="flex items-center justify-end gap-2 min-w-0">
+        <div className="flex flex-col items-end justify-center gap-1 min-w-0">
           <div className="text-sm font-semibold text-slate-800 text-right break-words">
             {homeTeam}
           </div>
-          <TeamLogo
-            logoUrl={match.home_team?.logo_url}
-            name={match.home_team?.name}
-            shortName={match.home_team?.short_name}
-            size="sm"
-          />
+          {getByeLabelForTeam(match, match.home_team_id) && (
+            <span className="text-xs font-medium px-2 py-0.5 rounded bg-amber-100 text-amber-700">
+              {getByeLabelForTeam(match, match.home_team_id)}
+            </span>
+          )}
         </div>
+        <TeamLogo
+          logoUrl={match.home_team?.logo_url}
+          name={match.home_team?.name}
+          shortName={match.home_team?.short_name}
+          size="sm"
+        />
 
         <div className="flex items-center justify-center min-w-[56px] sm:min-w-[64px]">
           {isFinished ? (
@@ -94,7 +100,7 @@ export function MatchCard({ match, variant, badgeText }: MatchCardProps) {
           )}
         </div>
 
-        <div className="flex items-center gap-2 min-w-0">
+        <div className="flex flex-col items-start justify-center gap-1 min-w-0">
           <TeamLogo
             logoUrl={match.away_team?.logo_url}
             name={match.away_team?.name}
@@ -104,6 +110,11 @@ export function MatchCard({ match, variant, badgeText }: MatchCardProps) {
           <div className="text-sm font-semibold text-slate-800 break-words">
             {awayTeam}
           </div>
+          {getByeLabelForTeam(match, match.away_team_id) && (
+            <span className="text-xs font-medium px-2 py-0.5 rounded bg-amber-100 text-amber-700">
+              {getByeLabelForTeam(match, match.away_team_id)}
+            </span>
+          )}
         </div>
       </div>
 

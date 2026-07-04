@@ -66,6 +66,7 @@ interface PublicDashboardResponse {
     home_score: number;
     away_score: number;
     match_date?: string | null;
+    result_type?: string | null;
   } | null;
 
   next_match?: {
@@ -75,6 +76,7 @@ interface PublicDashboardResponse {
     away_team_name: string;
     match_date?: string | null;
     match_time?: string | null;
+    result_type?: string | null;
   } | null;
 }
 
@@ -209,6 +211,7 @@ export async function GET(request: NextRequest) {
         status,
         home_score,
         away_score,
+        result_type,
         created_at,
         updated_at,
         home_team_id,
@@ -337,6 +340,7 @@ export async function GET(request: NextRequest) {
           home_score: latestMatch.home_score || 0,
           away_score: latestMatch.away_score || 0,
           match_date: latestMatch.match_date,
+          result_type: latestMatch.result_type || 'normal',
         }
       : null;
 
@@ -370,6 +374,7 @@ export async function GET(request: NextRequest) {
           away_team_name: getTeamNameFromMatch(nextMatch, 'away', teamsById),
           match_date: nextMatch.match_date,
           match_time: nextMatch.match_time,
+          result_type: nextMatch.result_type || 'normal',
         }
       : null;
 
