@@ -219,7 +219,11 @@ export default function TeamProfilePage() {
   }, 0);
 
   const points = wins * 3 + draws;
-  const suspensionsCount = suspensions.filter((s) => s.status !== 'completed').length;
+  const suspensionsCount = suspensions.filter((s) => {
+    const banMatches = Number(s.ban_matches || 0);
+    const totalPoints = Number(s.total_points || 0);
+    return banMatches > 0 || totalPoints >= 6;
+  }).length;
 
   const yellowCards = cards.filter((c) => c.card_type === 'yellow').length;
   const redCards = cards.filter((c) => c.card_type === 'red').length;
@@ -279,8 +283,9 @@ export default function TeamProfilePage() {
   const getPlayerBanStatus = (playerId: string): string => {
     const suspension = suspensions.find((s) => s.player_id === playerId);
     if (!suspension) return '-';
-    if (suspension.status === 'completed') return '-';
-    return suspension.ban_matches || suspension.total_points ? '🚨' : '-';
+    const banMatches = Number(suspension.ban_matches || 0);
+    const totalPoints = Number(suspension.total_points || 0);
+    return banMatches > 0 || totalPoints >= 6 ? '🚨' : '-';
   };
 
   const getTeamLogo = (): string => {
