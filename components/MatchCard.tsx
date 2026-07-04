@@ -53,6 +53,18 @@ export function MatchCard({ match, variant, badgeText }: MatchCardProps) {
     return '⏰ ยังไม่แข่ง';
   };
 
+  function ByeBadge({ label }: { label: 'ชนะบาย' | 'แพ้บาย' | null }) {
+    if (!label) return null;
+    return (
+      <span className="inline-flex rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700">
+        {label}
+      </span>
+    );
+  }
+
+  const homeByeLabel = getByeLabelForTeam(match, 'home');
+  const awayByeLabel = getByeLabelForTeam(match, 'away');
+
   return (
     <div className={`cfyl-card p-4 hover:shadow-md transition ${cardClass}`}>
       {/* Meta row */}
@@ -71,50 +83,49 @@ export function MatchCard({ match, variant, badgeText }: MatchCardProps) {
 
       {/* Teams + score */}
       <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2 sm:gap-3">
-        <div className="flex flex-col items-end justify-center gap-1 min-w-0">
-          <div className="text-sm font-semibold text-slate-800 text-right break-words">
-            {homeTeam}
+        {/* Home */}
+        <div className="flex min-w-0 flex-col items-end gap-1">
+          <div className="flex min-w-0 items-center justify-end gap-2">
+            <div className="min-w-0 text-right text-sm font-semibold text-slate-800 break-words">
+              {homeTeam}
+            </div>
+            <TeamLogo
+              logoUrl={match.home_team?.logo_url}
+              name={match.home_team?.name}
+              shortName={match.home_team?.short_name}
+              size="sm"
+            />
           </div>
-          {getByeLabelForTeam(match, match.home_team_id) && (
-            <span className="text-xs font-medium px-2 py-0.5 rounded bg-amber-100 text-amber-700">
-              {getByeLabelForTeam(match, match.home_team_id)}
-            </span>
-          )}
+          <ByeBadge label={homeByeLabel} />
         </div>
-        <TeamLogo
-          logoUrl={match.home_team?.logo_url}
-          name={match.home_team?.name}
-          shortName={match.home_team?.short_name}
-          size="sm"
-        />
 
+        {/* Score */}
         <div className="flex items-center justify-center min-w-[56px] sm:min-w-[64px]">
           {isFinished ? (
-            <div className="flex items-center gap-2 px-3 py-1 rounded-lg bg-blue-50">
-              <span className="text-lg sm:text-xl font-bold text-blue-900">{match.home_score}</span>
+            <div className="flex items-center gap-2 rounded-lg bg-blue-50 px-3 py-2 text-lg font-bold text-blue-900">
+              <span>{match.home_score ?? 0}</span>
               <span className="text-slate-400">-</span>
-              <span className="text-lg sm:text-xl font-bold text-blue-900">{match.away_score}</span>
+              <span>{match.away_score ?? 0}</span>
             </div>
           ) : (
-            <span className="text-slate-400 text-xs sm:text-sm font-medium">VS</span>
+            <span className="text-xs font-medium text-slate-400 sm:text-sm">vs</span>
           )}
         </div>
 
-        <div className="flex flex-col items-start justify-center gap-1 min-w-0">
-          <TeamLogo
-            logoUrl={match.away_team?.logo_url}
-            name={match.away_team?.name}
-            shortName={match.away_team?.short_name}
-            size="sm"
-          />
-          <div className="text-sm font-semibold text-slate-800 break-words">
-            {awayTeam}
+        {/* Away */}
+        <div className="flex min-w-0 flex-col items-start gap-1">
+          <div className="flex min-w-0 items-center gap-2">
+            <TeamLogo
+              logoUrl={match.away_team?.logo_url}
+              name={match.away_team?.name}
+              shortName={match.away_team?.short_name}
+              size="sm"
+            />
+            <div className="min-w-0 text-sm font-semibold text-slate-800 break-words">
+              {awayTeam}
+            </div>
           </div>
-          {getByeLabelForTeam(match, match.away_team_id) && (
-            <span className="text-xs font-medium px-2 py-0.5 rounded bg-amber-100 text-amber-700">
-              {getByeLabelForTeam(match, match.away_team_id)}
-            </span>
-          )}
+          <ByeBadge label={awayByeLabel} />
         </div>
       </div>
 
