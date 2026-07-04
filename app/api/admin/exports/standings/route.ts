@@ -110,28 +110,34 @@ export async function GET(request: NextRequest) {
         )
       );
 
-      // Fetch teams by division_id
+      // Fetch teams by division_id - filter active teams only
       const { data: teamsByDiv } = await supabaseAdmin
         .from('teams')
-        .select('id, name')
+        .select('id, name, active')
         .eq('season_id', seasonId)
         .eq('age_group_id', ag.id)
-        .eq('division_id', div.id);
+        .eq('division_id', div.id)
+        .eq('active', true);
 
-      // Fetch teams from match ids (handles division_id = null case)
+      // Fetch teams from match ids (handles division_id = null case) - filter active teams only
       let teamsByMatchIds: any[] = [];
       if (teamIdsFromMatches.length > 0) {
         const { data: matchTeams } = await supabaseAdmin
           .from('teams')
-          .select('id, name')
-          .in('id', teamIdsFromMatches);
+          .select('id, name, active')
+          .in('id', teamIdsFromMatches)
+          .eq('active', true);
         teamsByMatchIds = matchTeams || [];
       }
 
-      // Merge teams
+      // Merge teams and ensure all are active
       const teamMap = new Map<string, any>();
-      (teamsByDiv || []).forEach((t) => teamMap.set(t.id, t));
-      (teamsByMatchIds || []).forEach((t) => teamMap.set(t.id, t));
+      (teamsByDiv || []).forEach((t) => {
+        if (t.active !== false) teamMap.set(t.id, t);
+      });
+      (teamsByMatchIds || []).forEach((t) => {
+        if (t.active !== false) teamMap.set(t.id, t);
+      });
       const safeTeams = Array.from(teamMap.values());
 
       // Skip only if no teams AND no matches

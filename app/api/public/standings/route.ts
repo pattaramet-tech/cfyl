@@ -41,35 +41,42 @@ export async function GET(request: NextRequest) {
       )
     );
 
-    // Get teams by division_id (primary)
+    // Get teams by division_id (primary) - filter active teams only
     const { data: teamsByDiv, error: teamDivError } = await supabase
       .from('teams')
-      .select('id, name, short_name, logo_url')
+      .select('id, name, short_name, logo_url, active')
       .eq('season_id', seasonId)
       .eq('age_group_id', ageGroupId)
-      .eq('division_id', divisionId);
+      .eq('division_id', divisionId)
+      .eq('active', true);
 
     if (teamDivError) throw teamDivError;
 
-    // Get teams by match ids (handles division_id = null case)
+    // Get teams by match ids (handles division_id = null case) - filter active teams only
     let teamsByMatchIds: any[] = [];
     if (teamIdsFromMatches.length > 0) {
       const { data: matchTeams, error: matchTeamError } = await supabase
         .from('teams')
-        .select('id, name, short_name, logo_url')
-        .in('id', teamIdsFromMatches);
+        .select('id, name, short_name, logo_url, active')
+        .in('id', teamIdsFromMatches)
+        .eq('active', true);
 
       if (matchTeamError) throw matchTeamError;
 
       teamsByMatchIds = matchTeams || [];
     }
 
-    // Merge teams by id (avoid duplicates)
+    // Merge teams by id (avoid duplicates) and ensure all are active
     const teamMap = new Map<string, any>();
-    (teamsByDiv || []).forEach((t) => teamMap.set(t.id, t));
-    teamsByMatchIds.forEach((t) => teamMap.set(t.id, t));
+    (teamsByDiv || []).forEach((t) => {
+      if (t.active !== false) teamMap.set(t.id, t);
+    });
+    teamsByMatchIds.forEach((t) => {
+      if (t.active !== false) teamMap.set(t.id, t);
+    });
 
     const teams = Array.from(teamMap.values());
+    const inactiveTeamsFiltered = (teamsByDiv || []).length + teamsByMatchIds.length - teams.length;
 
     // Filter: finished matches with scores
     const scoredMatches = (safeMatches as Match[]).filter(
@@ -116,6 +123,7 @@ export async function GET(request: NextRequest) {
           divisionId,
           teamsByDivisionCount: (teamsByDiv || []).length,
           teamsFromMatchesCount: teamsByMatchIds.length,
+          inactiveTeamsFiltered,
           finalTeamsCount: teams.length,
           allMatchesCount: safeMatches.length,
           scoredMatchesCount: scoredMatches.length,
