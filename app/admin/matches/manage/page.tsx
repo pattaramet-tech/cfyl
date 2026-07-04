@@ -473,7 +473,31 @@ export default function MatchManagePage() {
         throw new Error(data.error || 'ไม่สามารถบันทึกสกอร์ได้');
       }
 
-      const updated = await res.json();
+      const data = await res.json();
+      const updatedMatch = data.match || data;
+
+      // Update matches list with new data
+      setMatches((prev) =>
+        prev.map((m) =>
+          m.id === selectedMatch.id
+            ? {
+                ...m,
+                ...updatedMatch,
+                result_type: updatedMatch.result_type || resultType,
+                home_score: updatedMatch.home_score ?? homeScoreNum,
+                away_score: updatedMatch.away_score ?? awayScoreNum,
+                status: updatedMatch.status || (resultType === 'normal' ? matchStatus : 'finished'),
+              }
+            : m
+        )
+      );
+
+      // Update form state to match saved data
+      setResultType((updatedMatch.result_type as any) || resultType);
+      setMatchStatus(updatedMatch.status || (resultType === 'normal' ? matchStatus : 'finished'));
+      setHomeScore(String(updatedMatch.home_score ?? homeScoreNum));
+      setAwayScore(String(updatedMatch.away_score ?? awayScoreNum));
+
       setSuccess('✓ บันทึกสกอร์เรียบร้อย');
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : 'An error occurred';
