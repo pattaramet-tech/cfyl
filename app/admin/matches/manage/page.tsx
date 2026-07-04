@@ -120,6 +120,54 @@ function createCardRow(): CardRow {
   };
 }
 
+type MatchResultType = 'normal' | 'home_win_by_bye' | 'away_win_by_bye';
+
+function normalizeMatchResultType(value: unknown): MatchResultType {
+  if (value === 'home_win_by_bye' || value === 'away_win_by_bye') {
+    return value;
+  }
+  return 'normal';
+}
+
+interface BuildMatchResultPayloadParams {
+  homeScore: number;
+  awayScore: number;
+  status: string;
+  resultType: unknown;
+}
+
+interface MatchResultPayload {
+  home_score: number;
+  away_score: number;
+  status: string;
+  result_type: MatchResultType;
+}
+
+function buildMatchResultPayload(params: BuildMatchResultPayloadParams): MatchResultPayload {
+  const normalizedResultType = normalizeMatchResultType(params.resultType);
+
+  let finalHomeScore = params.homeScore;
+  let finalAwayScore = params.awayScore;
+  let finalStatus = normalizedResultType === 'normal' ? params.status : 'finished';
+
+  if (normalizedResultType === 'home_win_by_bye') {
+    finalHomeScore = 2;
+    finalAwayScore = 0;
+    finalStatus = 'finished';
+  } else if (normalizedResultType === 'away_win_by_bye') {
+    finalHomeScore = 0;
+    finalAwayScore = 2;
+    finalStatus = 'finished';
+  }
+
+  return {
+    home_score: finalHomeScore,
+    away_score: finalAwayScore,
+    status: finalStatus,
+    result_type: normalizedResultType,
+  };
+}
+
 export default function MatchManagePage() {
   const [seasonId, setSeasonId] = useState<string>('');
   const [ageGroupId, setAgeGroupId] = useState<string>('');
@@ -455,34 +503,14 @@ export default function MatchManagePage() {
 
       const token = localStorage.getItem('admin_token');
 
-      // Force bye score and status based on result type
-      let finalHomeScore = homeScoreNum;
-      let finalAwayScore = awayScoreNum;
-      let finalStatus = resultType === 'normal' ? matchStatus : 'finished';
+      const payload = buildMatchResultPayload({
+        homeScore: homeScoreNum,
+        awayScore: awayScoreNum,
+        status: matchStatus,
+        resultType,
+      });
 
-      if (resultType === 'home_win_by_bye') {
-        finalHomeScore = 2;
-        finalAwayScore = 0;
-        finalStatus = 'finished';
-      } else if (resultType === 'away_win_by_bye') {
-        finalHomeScore = 0;
-        finalAwayScore = 2;
-        finalStatus = 'finished';
-      }
-
-      const payload = {
-        home_score: finalHomeScore,
-        away_score: finalAwayScore,
-        status: finalStatus,
-        result_type: resultType || 'normal',
-      };
-
-      // Guard: result_type must always be in payload
-      if (!payload.result_type || !['normal', 'home_win_by_bye', 'away_win_by_bye'].includes(payload.result_type)) {
-        throw new Error(`Invalid result_type in payload: ${payload.result_type}`);
-      }
-
-      console.info('[MATCH_MANAGE] Saving match payload v3', {
+      console.info('[MATCH_MANAGE] Saving match payload (handleSaveScore)', {
         matchId: selectedMatch.id,
         selectedResultType: resultType,
         payload,
@@ -538,9 +566,9 @@ export default function MatchManagePage() {
 
       // Update form state to match saved data
       setResultType((updatedMatch.result_type as any) || resultType);
-      setMatchStatus(updatedMatch.status || finalStatus);
-      setHomeScore(String(updatedMatch.home_score ?? finalHomeScore));
-      setAwayScore(String(updatedMatch.away_score ?? finalAwayScore));
+      setMatchStatus(updatedMatch.status || payload.status);
+      setHomeScore(String(updatedMatch.home_score ?? payload.home_score));
+      setAwayScore(String(updatedMatch.away_score ?? payload.away_score));
 
       setSuccess('✓ บันทึกสกอร์เรียบร้อย');
     } catch (err) {
@@ -943,30 +971,51 @@ export default function MatchManagePage() {
       const token = localStorage.getItem('admin_token');
       if (!token) throw new Error('Not authenticated');
 
+      const payload = buildMatchResultPayload({
+        homeScore: homeScoreNum,
+        awayScore: awayScoreNum,
+        status: 'finished',
+        resultType,
+      });
+
+      console.info('[MATCH_MANAGE] Finishing match payload (handleFinishMatch)', {
+        matchId: selectedMatchId,
+        selectedResultType: resultType,
+        payload,
+      });
+
       const res = await fetch(`/api/admin/matches/${selectedMatchId}`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({
-          home_score: homeScoreNum,
-          away_score: awayScoreNum,
-          status: 'finished',
-        }),
+        body: JSON.stringify(payload),
       });
 
       if (!res.ok) {
-        const payload = await res.json().catch(() => ({}));
-        throw new Error(payload.error || 'ไม่สามารถจบการแข่งขันได้');
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || 'ไม่สามารถจบการแข่งขันได้');
+      }
+
+      const data = await res.json();
+      const updatedMatch = data.match || data;
+      const savedResultType = updatedMatch.result_type || 'normal';
+
+      // Verify result_type was saved correctly
+      if (resultType !== 'normal' && savedResultType !== resultType) {
+        setError(
+          `ยืนยันผลแล้ว แต่ result_type ไม่ตรงกัน: เลือก ${resultType}, DB เป็น ${savedResultType}. กรุณาตรวจ version/deploy`
+        );
+        return;
       }
 
       setMatchStatus('finished');
       if (isEditingFinishedMatch) {
         setIsEditingFinishedMatch(false);
-        setSuccess(`✓ ยืนยันการแก้ไขผลการแข่งขันเรียบร้อย (${homeScoreNum}-${awayScoreNum})`);
+        setSuccess(`✓ ยืนยันการแก้ไขผลการแข่งขันเรียบร้อย (${payload.home_score}-${payload.away_score})`);
       } else {
-        setSuccess(`✓ จบการแข่งขันเรียบร้อย (${homeScoreNum}-${awayScoreNum}) · ข้อมูล Sync ไปยังหน้า Public`);
+        setSuccess(`✓ จบการแข่งขันเรียบร้อย (${payload.home_score}-${payload.away_score}) · ข้อมูล Sync ไปยังหน้า Public`);
       }
 
       // Refresh match data
