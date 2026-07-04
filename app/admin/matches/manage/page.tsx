@@ -1126,12 +1126,12 @@ export default function MatchManagePage() {
                     setResultType(next);
 
                     if (next === 'home_win_by_bye') {
-                      setHomeScore('3');
+                      setHomeScore('2');
                       setAwayScore('0');
                       setMatchStatus('finished');
                     } else if (next === 'away_win_by_bye') {
                       setHomeScore('0');
-                      setAwayScore('3');
+                      setAwayScore('2');
                       setMatchStatus('finished');
                     }
                   }}

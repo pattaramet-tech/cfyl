@@ -44,20 +44,23 @@ export async function PUT(
     const { home_score, away_score, status, winner_team_id, result_type } = body;
 
     // Validate inputs
-    if (home_score == null || away_score == null) {
+    const isByeResult = result_type && result_type !== 'normal';
+    if (!isByeResult && (home_score == null || away_score == null)) {
       return badRequestResponse('home_score and away_score are required');
     }
 
-    if (typeof home_score !== 'number' || typeof away_score !== 'number') {
-      return badRequestResponse('Scores must be numbers');
+    if (home_score != null && typeof home_score !== 'number') {
+      return badRequestResponse('home_score must be a number');
+    }
+    if (away_score != null && typeof away_score !== 'number') {
+      return badRequestResponse('away_score must be a number');
     }
 
-    if (home_score < 0 || away_score < 0) {
-      return badRequestResponse('Scores cannot be negative');
+    if (home_score != null && (home_score < 0 || home_score > 99)) {
+      return badRequestResponse('home_score must be between 0 and 99');
     }
-
-    if (home_score > 99 || away_score > 99) {
-      return badRequestResponse('Scores cannot exceed 99');
+    if (away_score != null && (away_score < 0 || away_score > 99)) {
+      return badRequestResponse('away_score must be between 0 and 99');
     }
 
     if (status && !['scheduled', 'finished', 'postponed', 'cancelled'].includes(status)) {
@@ -93,17 +96,27 @@ export async function PUT(
     }
 
     // Update match
-    // If bye result, force status to finished
+    // If bye result, force status to finished and set default scores if not provided
     let finalStatus = status || currentMatch.status;
+    let finalHomeScore = home_score;
+    let finalAwayScore = away_score;
+
     if (result_type && result_type !== 'normal') {
       finalStatus = 'finished';
+      if (result_type === 'home_win_by_bye') {
+        finalHomeScore = home_score ?? 2;
+        finalAwayScore = away_score ?? 0;
+      } else if (result_type === 'away_win_by_bye') {
+        finalHomeScore = home_score ?? 0;
+        finalAwayScore = away_score ?? 2;
+      }
     }
 
     const { data: updatedMatch, error: updateError } = await supabaseAdmin
       .from('matches')
       .update({
-        home_score,
-        away_score,
+        home_score: finalHomeScore,
+        away_score: finalAwayScore,
         status: finalStatus,
         result_type: result_type || 'normal',
         ...winnerUpdate,
