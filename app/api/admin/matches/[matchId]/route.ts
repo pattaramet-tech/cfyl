@@ -41,7 +41,7 @@ export async function PUT(
 
     // Parse request body
     const body = await request.json();
-    const { home_score, away_score, status, winner_team_id } = body;
+    const { home_score, away_score, status, winner_team_id, result_type } = body;
 
     // Validate inputs
     if (home_score == null || away_score == null) {
@@ -62,6 +62,11 @@ export async function PUT(
 
     if (status && !['scheduled', 'finished', 'postponed', 'cancelled'].includes(status)) {
       return badRequestResponse('Invalid status');
+    }
+
+    const allowedResultTypes = ['normal', 'home_win_by_bye', 'away_win_by_bye'];
+    if (result_type && !allowedResultTypes.includes(result_type)) {
+      return badRequestResponse('Invalid result_type');
     }
 
     // Get current match
@@ -88,12 +93,19 @@ export async function PUT(
     }
 
     // Update match
+    // If bye result, force status to finished
+    let finalStatus = status || currentMatch.status;
+    if (result_type && result_type !== 'normal') {
+      finalStatus = 'finished';
+    }
+
     const { data: updatedMatch, error: updateError } = await supabaseAdmin
       .from('matches')
       .update({
         home_score,
         away_score,
-        status: status || currentMatch.status,
+        status: finalStatus,
+        result_type: result_type || 'normal',
         ...winnerUpdate,
         updated_at: new Date().toISOString(),
       })

@@ -134,6 +134,7 @@ export default function MatchManagePage() {
   const [homeScore, setHomeScore] = useState<string>('0');
   const [awayScore, setAwayScore] = useState<string>('0');
   const [matchStatus, setMatchStatus] = useState<string>('scheduled');
+  const [resultType, setResultType] = useState<'normal' | 'home_win_by_bye' | 'away_win_by_bye'>('normal');
   const [goals, setGoals] = useState<Goal[]>([]);
   const [cards, setCards] = useState<Card[]>([]);
   const [players, setPlayers] = useState<Player[]>([]);
@@ -394,6 +395,7 @@ export default function MatchManagePage() {
         setHomeScore((match.home_score ?? 0).toString());
         setAwayScore((match.away_score ?? 0).toString());
         setMatchStatus(match.status || 'scheduled');
+        setResultType((match.result_type as any) || 'normal');
 
         // Reset card form
         setCardRows([createCardRow()]);
@@ -461,7 +463,8 @@ export default function MatchManagePage() {
         body: JSON.stringify({
           home_score: homeScoreNum,
           away_score: awayScoreNum,
-          status: matchStatus,
+          status: resultType === 'normal' ? matchStatus : 'finished',
+          result_type: resultType,
         }),
       });
 
@@ -1111,6 +1114,33 @@ export default function MatchManagePage() {
                   <option value="finished">แข่งจบแล้ว</option>
                   <option value="postponed">เลื่อนการแข่ง</option>
                   <option value="cancelled">ยกเลิก</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-2">ผลการแข่งขัน</label>
+                <select
+                  value={resultType}
+                  onChange={(e) => {
+                    const next = e.target.value as 'normal' | 'home_win_by_bye' | 'away_win_by_bye';
+                    setResultType(next);
+
+                    if (next === 'home_win_by_bye') {
+                      setHomeScore('3');
+                      setAwayScore('0');
+                      setMatchStatus('finished');
+                    } else if (next === 'away_win_by_bye') {
+                      setHomeScore('0');
+                      setAwayScore('3');
+                      setMatchStatus('finished');
+                    }
+                  }}
+                  disabled={isReadOnlyFinished}
+                  className="w-full px-3 sm:px-4 py-3 sm:py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-600 disabled:bg-gray-100 text-sm sm:text-base"
+                >
+                  <option value="normal">ผลแข่งขันปกติ</option>
+                  <option value="home_win_by_bye">ทีมเหย้าชนะบาย / ทีมเยือนแพ้บาย</option>
+                  <option value="away_win_by_bye">ทีมเยือนชนะบาย / ทีมเหย้าแพ้บาย</option>
                 </select>
               </div>
 

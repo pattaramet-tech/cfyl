@@ -75,6 +75,7 @@ export interface Match {
   home_score: number | null;
   away_score: number | null;
   status: 'scheduled' | 'finished' | 'postponed' | 'cancelled';
+  result_type?: 'normal' | 'home_win_by_bye' | 'away_win_by_bye';
   stage?: string | null;
   tournament_group_id?: string | null;
   venue?: string | null;

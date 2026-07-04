@@ -56,6 +56,10 @@ function getGoalValue(goal: any): number {
   return value;
 }
 
+function isByeResult(match: any): boolean {
+  return match.result_type === 'home_win_by_bye' || match.result_type === 'away_win_by_bye';
+}
+
 function isOwnGoal(goal: any): boolean {
   return goal.is_own_goal === true;
 }
@@ -92,7 +96,7 @@ export async function GET(request: NextRequest) {
     let matchQuery = supabaseAdmin
       .from('matches')
       .select(`
-        id, matchday, status, home_score, away_score,
+        id, matchday, status, home_score, away_score, result_type,
         home_team_id, away_team_id, match_date, match_time,
         home_team:home_team_id(name),
         away_team:away_team_id(name)
@@ -176,7 +180,7 @@ export async function GET(request: NextRequest) {
 
     // Check 2: Score mismatch with goals (including Own Goals)
     (matches || []).forEach((match: any) => {
-      if (match.status === 'finished') {
+      if (match.status === 'finished' && !isByeResult(match)) {
         const matchGoals = (goals || []).filter((g: any) => g.match_id === match.id);
         const homeGoals = sumGoalsForTeam(matchGoals, match.home_team_id);
         const awayGoals = sumGoalsForTeam(matchGoals, match.away_team_id);
@@ -234,7 +238,7 @@ export async function GET(request: NextRequest) {
 
     // Check 4: Match finished with score > 0 but no goals/own goals
     (matches || []).forEach((match: any) => {
-      if (match.status === 'finished') {
+      if (match.status === 'finished' && !isByeResult(match)) {
         const totalScore = (match.home_score || 0) + (match.away_score || 0);
         const matchGoals = (goals || []).filter((g: any) => g.match_id === match.id);
 
@@ -478,6 +482,65 @@ export async function GET(request: NextRequest) {
           });
         }
       });
+    });
+
+    // Check 5C: Bye result validation
+    (matches || []).forEach((match: any) => {
+      if (match.result_type === 'home_win_by_bye') {
+        if (match.status !== 'finished') {
+          issues.push({
+            id: `check5c_${issueCounter++}`,
+            severity: 'error',
+            category: 'Bye Result',
+            title: 'ผลชนะบายไม่สอดคล้องกับสถานะ',
+            description: `MD${match.matchday} ${match.home_team?.name} vs ${match.away_team?.name} marked as home_win_by_bye but status is ${match.status}, should be finished`,
+            entity_type: 'match',
+            entity_id: match.id,
+            match_id: match.id,
+            action_url: `/admin/matches/manage?matchId=${match.id}`,
+          });
+        }
+        if ((match.home_score || 0) <= (match.away_score || 0)) {
+          issues.push({
+            id: `check5c_${issueCounter++}`,
+            severity: 'error',
+            category: 'Bye Result',
+            title: 'ผลชนะบายไม่สอดคล้องกับสกอร์',
+            description: `MD${match.matchday} ${match.home_team?.name} vs ${match.away_team?.name} marked as home_win_by_bye but score is ${match.home_score}-${match.away_score}, home should win`,
+            entity_type: 'match',
+            entity_id: match.id,
+            match_id: match.id,
+            action_url: `/admin/matches/manage?matchId=${match.id}`,
+          });
+        }
+      } else if (match.result_type === 'away_win_by_bye') {
+        if (match.status !== 'finished') {
+          issues.push({
+            id: `check5c_${issueCounter++}`,
+            severity: 'error',
+            category: 'Bye Result',
+            title: 'ผลชนะบายไม่สอดคล้องกับสถานะ',
+            description: `MD${match.matchday} ${match.home_team?.name} vs ${match.away_team?.name} marked as away_win_by_bye but status is ${match.status}, should be finished`,
+            entity_type: 'match',
+            entity_id: match.id,
+            match_id: match.id,
+            action_url: `/admin/matches/manage?matchId=${match.id}`,
+          });
+        }
+        if ((match.away_score || 0) <= (match.home_score || 0)) {
+          issues.push({
+            id: `check5c_${issueCounter++}`,
+            severity: 'error',
+            category: 'Bye Result',
+            title: 'ผลชนะบายไม่สอดคล้องกับสกอร์',
+            description: `MD${match.matchday} ${match.home_team?.name} vs ${match.away_team?.name} marked as away_win_by_bye but score is ${match.home_score}-${match.away_score}, away should win`,
+            entity_type: 'match',
+            entity_id: match.id,
+            match_id: match.id,
+            action_url: `/admin/matches/manage?matchId=${match.id}`,
+          });
+        }
+      }
     });
 
     // Calculate summary

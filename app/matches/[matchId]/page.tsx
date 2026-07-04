@@ -5,6 +5,7 @@ import { useParams } from 'next/navigation';
 import { useEffect, useMemo, useState } from 'react';
 import type { Match } from '@/types/db';
 import { TeamLogo } from '@/components/TeamLogo';
+import { getByeLabelForTeam } from '@/lib/match-utils';
 
 interface Goal {
   id: string;
@@ -327,6 +328,9 @@ export default function MatchPage() {
                   {m.home_team?.short_name && (
                     <p className="text-xs text-slate-500">{m.home_team.short_name}</p>
                   )}
+                  {getByeLabelForTeam(m, m.home_team?.id) && (
+                    <p className="text-xs font-semibold text-amber-600 mt-1 bg-amber-100 px-2 py-0.5 rounded inline-block">{getByeLabelForTeam(m, m.home_team?.id)}</p>
+                  )}
                 </div>
                 <TeamLogo
                   logoUrl={m.home_team?.logo_url}
@@ -366,6 +370,9 @@ export default function MatchPage() {
                   </Link>
                   {m.away_team?.short_name && (
                     <p className="text-xs text-slate-500">{m.away_team.short_name}</p>
+                  )}
+                  {getByeLabelForTeam(m, m.away_team?.id) && (
+                    <p className="text-xs font-semibold text-amber-600 mt-1 bg-amber-100 px-2 py-0.5 rounded inline-block">{getByeLabelForTeam(m, m.away_team?.id)}</p>
                   )}
                 </div>
               </div>
