@@ -183,6 +183,8 @@ export default function MatchManagePage() {
   const [awayScore, setAwayScore] = useState<string>('0');
   const [matchStatus, setMatchStatus] = useState<string>('scheduled');
   const [resultType, setResultType] = useState<'normal' | 'home_win_by_bye' | 'away_win_by_bye'>('normal');
+  const [matchDate, setMatchDate] = useState<string>('');
+  const [matchTime, setMatchTime] = useState<string>('');
   const [goals, setGoals] = useState<Goal[]>([]);
   const [cards, setCards] = useState<Card[]>([]);
   const [players, setPlayers] = useState<Player[]>([]);
@@ -444,6 +446,8 @@ export default function MatchManagePage() {
         setAwayScore((match.away_score ?? 0).toString());
         setMatchStatus(match.status || 'scheduled');
         setResultType((match.result_type as any) || 'normal');
+        setMatchDate(match.match_date || '');
+        setMatchTime(match.match_time ? match.match_time.substring(0, 5) : '');
 
         // Reset card form
         setCardRows([createCardRow()]);
@@ -467,6 +471,8 @@ export default function MatchManagePage() {
       setHomeScore('0');
       setAwayScore('0');
       setMatchStatus('scheduled');
+      setMatchDate('');
+      setMatchTime('');
       return;
     }
 
@@ -503,16 +509,27 @@ export default function MatchManagePage() {
 
       const token = localStorage.getItem('admin_token');
 
-      const payload = buildMatchResultPayload({
+      const basePayload = buildMatchResultPayload({
         homeScore: homeScoreNum,
         awayScore: awayScoreNum,
         status: matchStatus,
         resultType,
       });
 
+      const payload: any = { ...basePayload };
+
+      // Override for postponed status
+      if (matchStatus === 'postponed') {
+        payload.status = 'postponed';
+        payload.result_type = 'normal';
+        payload.match_date = matchDate || null;
+        payload.match_time = matchTime || null;
+      }
+
       console.info('[MATCH_MANAGE] Saving match payload (handleSaveScore)', {
         matchId: selectedMatch.id,
         selectedResultType: resultType,
+        matchStatus,
         payload,
       });
 
@@ -971,12 +988,22 @@ export default function MatchManagePage() {
       const token = localStorage.getItem('admin_token');
       if (!token) throw new Error('Not authenticated');
 
-      const payload = buildMatchResultPayload({
+      const basePayload = buildMatchResultPayload({
         homeScore: homeScoreNum,
         awayScore: awayScoreNum,
         status: 'finished',
         resultType,
       });
+
+      const payload: any = { ...basePayload };
+
+      // Include date/time for all updates
+      if (matchDate) {
+        payload.match_date = matchDate;
+      }
+      if (matchTime) {
+        payload.match_time = matchTime;
+      }
 
       console.info('[MATCH_MANAGE] Finishing match payload (handleFinishMatch)', {
         matchId: selectedMatchId,
@@ -1233,6 +1260,44 @@ export default function MatchManagePage() {
                   <option value="cancelled">ยกเลิก</option>
                 </select>
               </div>
+
+              {matchStatus === 'postponed' && (
+                <div className="col-span-1 sm:col-span-2 bg-amber-50 border border-amber-200 rounded-lg p-3">
+                  <p className="text-xs text-amber-700 font-semibold">
+                    แมตช์นี้ถูกเลื่อนการแข่งขัน สามารถกำหนดวันที่และเวลาแข่งขันใหม่ได้
+                  </p>
+                </div>
+              )}
+
+              {matchStatus === 'postponed' && (
+                <div className="col-span-1 sm:col-span-2 grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-sm font-semibold text-gray-700 mb-2">
+                      วันที่แข่งขัน
+                    </label>
+                    <input
+                      type="date"
+                      value={matchDate}
+                      onChange={(e) => setMatchDate(e.target.value)}
+                      disabled={saving || loadingMatchData}
+                      className="w-full px-3 sm:px-4 py-3 sm:py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-600 disabled:bg-gray-100 text-sm sm:text-base"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-semibold text-gray-700 mb-2">
+                      เวลาแข่งขัน
+                    </label>
+                    <input
+                      type="time"
+                      value={matchTime}
+                      onChange={(e) => setMatchTime(e.target.value)}
+                      disabled={saving || loadingMatchData}
+                      className="w-full px-3 sm:px-4 py-3 sm:py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-600 disabled:bg-gray-100 text-sm sm:text-base"
+                    />
+                  </div>
+                </div>
+              )}
 
               <div>
                 <label className="block text-sm font-semibold text-gray-700 mb-2">ผลการแข่งขัน</label>

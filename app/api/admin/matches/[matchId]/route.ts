@@ -41,7 +41,7 @@ export async function PUT(
 
     // Parse request body
     const body = await request.json();
-    const { home_score, away_score, status, winner_team_id, result_type } = body;
+    const { home_score, away_score, status, winner_team_id, result_type, match_date, match_time } = body;
 
     // Validate inputs
     const isByeResult = result_type && result_type !== 'normal';
@@ -128,16 +128,31 @@ export async function PUT(
       }
     }
 
+    // Build update payload
+    const updatePayload: any = {
+      home_score: finalHomeScore,
+      away_score: finalAwayScore,
+      status: finalStatus,
+      result_type: normalizedResultType,
+      ...winnerUpdate,
+      updated_at: new Date().toISOString(),
+    };
+
+    // Include date/time if provided
+    if (typeof match_date !== 'undefined') {
+      updatePayload.match_date = match_date || null;
+    }
+    if (typeof match_time !== 'undefined') {
+      let normalizedTime = match_time;
+      if (typeof match_time === 'string' && match_time.length === 5) {
+        normalizedTime = `${match_time}:00`;
+      }
+      updatePayload.match_time = normalizedTime || null;
+    }
+
     const { data: updatedMatch, error: updateError } = await supabaseAdmin
       .from('matches')
-      .update({
-        home_score: finalHomeScore,
-        away_score: finalAwayScore,
-        status: finalStatus,
-        result_type: normalizedResultType,
-        ...winnerUpdate,
-        updated_at: new Date().toISOString(),
-      })
+      .update(updatePayload)
       .eq('id', matchId)
       .select()
       .single();
