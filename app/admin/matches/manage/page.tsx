@@ -455,15 +455,36 @@ export default function MatchManagePage() {
 
       const token = localStorage.getItem('admin_token');
 
+      // Force bye score and status based on result type
+      let finalHomeScore = homeScoreNum;
+      let finalAwayScore = awayScoreNum;
+      let finalStatus = resultType === 'normal' ? matchStatus : 'finished';
+
+      if (resultType === 'home_win_by_bye') {
+        finalHomeScore = 2;
+        finalAwayScore = 0;
+        finalStatus = 'finished';
+      } else if (resultType === 'away_win_by_bye') {
+        finalHomeScore = 0;
+        finalAwayScore = 2;
+        finalStatus = 'finished';
+      }
+
       const payload = {
-        home_score: homeScoreNum,
-        away_score: awayScoreNum,
-        status: resultType === 'normal' ? matchStatus : 'finished',
-        result_type: resultType,
+        home_score: finalHomeScore,
+        away_score: finalAwayScore,
+        status: finalStatus,
+        result_type: resultType || 'normal',
       };
 
-      console.info('[MATCH_MANAGE] Saving match payload', {
+      // Guard: result_type must always be in payload
+      if (!payload.result_type || !['normal', 'home_win_by_bye', 'away_win_by_bye'].includes(payload.result_type)) {
+        throw new Error(`Invalid result_type in payload: ${payload.result_type}`);
+      }
+
+      console.info('[MATCH_MANAGE] Saving match payload v3', {
         matchId: selectedMatch.id,
+        selectedResultType: resultType,
         payload,
       });
 
@@ -517,9 +538,9 @@ export default function MatchManagePage() {
 
       // Update form state to match saved data
       setResultType((updatedMatch.result_type as any) || resultType);
-      setMatchStatus(updatedMatch.status || (resultType === 'normal' ? matchStatus : 'finished'));
-      setHomeScore(String(updatedMatch.home_score ?? homeScoreNum));
-      setAwayScore(String(updatedMatch.away_score ?? awayScoreNum));
+      setMatchStatus(updatedMatch.status || finalStatus);
+      setHomeScore(String(updatedMatch.home_score ?? finalHomeScore));
+      setAwayScore(String(updatedMatch.away_score ?? finalAwayScore));
 
       setSuccess('✓ บันทึกสกอร์เรียบร้อย');
     } catch (err) {
@@ -1189,6 +1210,14 @@ export default function MatchManagePage() {
                   <option value="home_win_by_bye">ทีมเหย้าชนะบาย / ทีมเยือนแพ้บาย</option>
                   <option value="away_win_by_bye">ทีมเยือนชนะบาย / ทีมเหย้าแพ้บาย</option>
                 </select>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  <span className="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded">
+                    state: <span className="font-mono">{resultType}</span>
+                  </span>
+                  <span className="text-xs bg-purple-100 text-purple-700 px-2 py-1 rounded">
+                    db: <span className="font-mono">{selectedMatch?.result_type || 'normal'}</span>
+                  </span>
+                </div>
               </div>
 
               <div>

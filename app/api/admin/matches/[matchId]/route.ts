@@ -67,8 +67,21 @@ export async function PUT(
       return badRequestResponse('Invalid status');
     }
 
+    const rawResultType = result_type;
+    const resultTypeMissing = rawResultType == null;
+
+    if (resultTypeMissing) {
+      console.warn('[MATCH_API] result_type missing from request body', {
+        matchId,
+        home_score,
+        away_score,
+        status,
+        body_keys: Object.keys(body),
+      });
+    }
+
     const allowedResultTypes = ['normal', 'home_win_by_bye', 'away_win_by_bye'];
-    if (result_type && !allowedResultTypes.includes(result_type)) {
+    if (rawResultType && !allowedResultTypes.includes(rawResultType)) {
       return badRequestResponse('Invalid result_type');
     }
 
@@ -95,18 +108,21 @@ export async function PUT(
       winnerUpdate = { winner_team_id: winner_team_id || null };
     }
 
+    // Normalize result_type
+    const normalizedResultType = rawResultType || 'normal';
+
     // Update match
-    // If bye result, force status to finished and set default scores if not provided
+    // If bye result, force status to finished
     let finalStatus = status || currentMatch.status;
     let finalHomeScore = home_score;
     let finalAwayScore = away_score;
 
-    if (result_type && result_type !== 'normal') {
+    if (normalizedResultType !== 'normal') {
       finalStatus = 'finished';
-      if (result_type === 'home_win_by_bye') {
+      if (normalizedResultType === 'home_win_by_bye') {
         finalHomeScore = home_score ?? 2;
         finalAwayScore = away_score ?? 0;
-      } else if (result_type === 'away_win_by_bye') {
+      } else if (normalizedResultType === 'away_win_by_bye') {
         finalHomeScore = home_score ?? 0;
         finalAwayScore = away_score ?? 2;
       }
@@ -118,7 +134,7 @@ export async function PUT(
         home_score: finalHomeScore,
         away_score: finalAwayScore,
         status: finalStatus,
-        result_type: result_type || 'normal',
+        result_type: normalizedResultType,
         ...winnerUpdate,
         updated_at: new Date().toISOString(),
       })
@@ -151,8 +167,9 @@ export async function PUT(
         message: 'Match updated successfully',
         match: updatedMatch,
         debug: {
-          received_result_type: result_type,
-          normalized_result_type: result_type || 'normal',
+          received_result_type: rawResultType ?? null,
+          result_type_missing: resultTypeMissing,
+          normalized_result_type: normalizedResultType,
           saved_result_type: updatedMatch.result_type,
         },
       },
