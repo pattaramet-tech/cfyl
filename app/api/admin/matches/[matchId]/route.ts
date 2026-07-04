@@ -150,6 +150,11 @@ export async function PUT(
         success: true,
         message: 'Match updated successfully',
         match: updatedMatch,
+        debug: {
+          received_result_type: result_type,
+          normalized_result_type: result_type || 'normal',
+          saved_result_type: updatedMatch.result_type,
+        },
       },
       { status: 200 }
     );

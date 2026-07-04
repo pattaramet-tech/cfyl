@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useRouter, usePathname } from 'next/navigation';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { getSupabaseBrowser } from '@/lib/supabase-browser';
 
 interface AdminNavProps {
@@ -79,6 +79,29 @@ export function AdminNav({ email, fullName }: AdminNavProps) {
   const router = useRouter();
   const pathname = usePathname();
   const [isLoggingOut, setIsLoggingOut] = useState(false);
+  const [versionInfo, setVersionInfo] = useState<{
+    version?: string;
+    shortSha?: string | null;
+    commitRef?: string | null;
+    vercelEnv?: string | null;
+  } | null>(null);
+
+  useEffect(() => {
+    let mounted = true;
+
+    fetch('/api/admin/version', { cache: 'no-store' })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (mounted && data) setVersionInfo(data);
+      })
+      .catch(() => {
+        if (mounted) setVersionInfo({ version: 'unknown' });
+      });
+
+    return () => {
+      mounted = false;
+    };
+  }, []);
 
   const handleLogout = async () => {
     setIsLoggingOut(true);
@@ -143,6 +166,23 @@ export function AdminNav({ email, fullName }: AdminNavProps) {
           <p className="text-[11px] text-gray-400">Logged in as</p>
           <p className="text-sm font-semibold text-white truncate">{fullName || email}</p>
           <p className="text-[11px] text-gray-500 truncate">{email}</p>
+          {versionInfo && (
+            <div className="mt-2 flex flex-wrap items-center gap-1">
+              <span className="inline-flex rounded bg-gray-700 px-1.5 py-0.5 text-[10px] font-mono text-gray-200">
+                v{versionInfo.shortSha || versionInfo.version || '...'}
+              </span>
+              {versionInfo.commitRef && (
+                <span className="inline-flex rounded bg-gray-700 px-1.5 py-0.5 text-[10px] text-gray-300">
+                  {versionInfo.commitRef}
+                </span>
+              )}
+              {versionInfo.vercelEnv && (
+                <span className="inline-flex rounded bg-gray-700 px-1.5 py-0.5 text-[10px] text-gray-300">
+                  {versionInfo.vercelEnv}
+                </span>
+              )}
+            </div>
+          )}
         </div>
 
         <button

@@ -454,18 +454,26 @@ export default function MatchManagePage() {
       }
 
       const token = localStorage.getItem('admin_token');
+
+      const payload = {
+        home_score: homeScoreNum,
+        away_score: awayScoreNum,
+        status: resultType === 'normal' ? matchStatus : 'finished',
+        result_type: resultType,
+      };
+
+      console.info('[MATCH_MANAGE] Saving match payload', {
+        matchId: selectedMatch.id,
+        payload,
+      });
+
       const res = await fetch(`/api/admin/matches/${selectedMatch.id}`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`,
         },
-        body: JSON.stringify({
-          home_score: homeScoreNum,
-          away_score: awayScoreNum,
-          status: resultType === 'normal' ? matchStatus : 'finished',
-          result_type: resultType,
-        }),
+        body: JSON.stringify(payload),
       });
 
       if (!res.ok) {
@@ -475,6 +483,21 @@ export default function MatchManagePage() {
 
       const data = await res.json();
       const updatedMatch = data.match || data;
+
+      const savedResultType = updatedMatch.result_type || 'normal';
+      console.info('[MATCH_MANAGE] API response debug', {
+        received: resultType,
+        normalized: data.debug?.normalized_result_type,
+        saved: savedResultType,
+      });
+
+      // Verify result_type was saved correctly
+      if (resultType !== 'normal' && savedResultType !== resultType) {
+        setError(
+          `บันทึกผลแล้ว แต่ result_type ไม่ตรงกัน: เลือก ${resultType}, DB เป็น ${savedResultType}. กรุณาตรวจ version/deploy`
+        );
+        return;
+      }
 
       // Update matches list with new data
       setMatches((prev) =>
