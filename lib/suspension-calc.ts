@@ -1,5 +1,20 @@
 import { createClient } from '@supabase/supabase-js';
 
+/**
+ * Suspension Calculation Module
+ *
+ * REGRESSION TEST SCENARIO (P1 Fix):
+ * When calculating suspension-serving matches, only scheduled matches should count.
+ * Postponed/cancelled/finished matches must be skipped.
+ *
+ * Test case:
+ * - Trigger: MD1 (finished, card triggered)
+ * - Ban: 2 matches
+ * - Future matches: MD2 (scheduled), MD3 (postponed), MD4 (cancelled), MD5 (scheduled)
+ * - Expected serving: MD2, MD5
+ * - Should skip: MD3 (postponed), MD4 (cancelled)
+ */
+
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
@@ -269,9 +284,19 @@ export async function getSeasonCards(
 }
 
 /**
+ * Check if a match is eligible to be counted as a suspension-serving match.
+ * Only scheduled matches can be used to serve suspensions.
+ * Postponed/cancelled matches are not eligible because they haven't been actually played yet.
+ */
+function isEligibleSuspensionServingMatch(match: any): boolean {
+  return match?.status === 'scheduled';
+}
+
+/**
  * Find the next N matches for a team after a trigger match.
  * Uses date-based ordering (match_date ASC → match_time ASC → matchday ASC).
  * Falls back to matchday number comparison when dates are absent.
+ * Only includes scheduled matches as eligible for suspension serving.
  */
 export async function findNextMatchesForSuspension(
   teamId: string,
@@ -325,8 +350,13 @@ export async function findNextMatchesForSuspension(
 
   console.log(`[SUSPENSION_CALC] Total team matches found (excl. trigger): ${(allMatches || []).length}`);
 
-  // Step 3: Filter matches that come after the trigger
+  // Step 3: Filter matches that come after the trigger and are eligible for suspension serving
   const candidates = (allMatches || []).filter((m: any) => {
+    // Only scheduled matches are eligible to serve as suspension matches
+    if (!isEligibleSuspensionServingMatch(m)) {
+      return false;
+    }
+
     const mMatchdayNum = parseMatchdayNumber(m.matchday);
     const mDate = (m.match_date as string | null) || null;
     const mTime = (m.match_time as string | null) || '23:59:59';
@@ -369,7 +399,7 @@ export async function findNextMatchesForSuspension(
   }));
 
   console.log(
-    `[SUSPENSION_CALC] Next matches found (${result.length}):`,
+    `[SUSPENSION_CALC] Next scheduled matches found (${result.length}):`,
     result.map((m) => `MD${m.matchday}(${m.match_date})`).join(', ') || 'none'
   );
 
