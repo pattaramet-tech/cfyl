@@ -1,7 +1,17 @@
 import { supabase } from '@/lib/supabase';
+import { createClient } from '@supabase/supabase-js';
 import { NextRequest, NextResponse } from 'next/server';
 
 export const dynamic = 'force-dynamic';
+
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+if (!supabaseUrl || !supabaseServiceKey) {
+  throw new Error('Missing Supabase environment variables');
+}
+
+const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey);
 
 function isSuspendedForMatch(suspension: any, matchId: string): boolean {
   if (suspension.suspended_from_match_id === matchId) return true;
@@ -112,8 +122,8 @@ export async function GET(
       .eq('match_id', matchId)
       .eq('status', 'active');
 
-    // Fetch suspensions for players in this match's teams
-    const { data: suspensions, error: suspensionsError } = await supabase
+    // Fetch suspensions for players in this match's teams (using service role to bypass RLS)
+    const { data: suspensions, error: suspensionsError } = await supabaseAdmin
       .from('suspensions')
       .select(
         `
