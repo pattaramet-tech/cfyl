@@ -14,8 +14,15 @@ if (!supabaseUrl || !supabaseServiceKey) {
 const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey);
 
 function isSuspendedForMatch(suspension: any, matchId: string): boolean {
+  // Check event-based serving_match_ids array (new format)
+  if (Array.isArray(suspension.serving_match_ids)) {
+    if (suspension.serving_match_ids.includes(matchId)) return true;
+  }
+
+  // Check legacy suspended_from_match_id (old format)
   if (suspension.suspended_from_match_id === matchId) return true;
 
+  // Check suspension_details.suspended_matches (enriched data)
   const suspendedMatches = suspension.suspension_details?.suspended_matches;
   if (Array.isArray(suspendedMatches)) {
     return suspendedMatches.some((m: any) => m.match_id === matchId);

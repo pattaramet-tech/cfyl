@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { verifyAdminAuth } from '@/lib/admin-middleware';
 import { logAdminAction } from '@/lib/audit-log';
-import { recalculatePlayerSuspension, getMatchDetails } from '@/lib/suspension-calc';
+import { recalculatePlayerSuspensionEventBased, getMatchDetails } from '@/lib/suspension-calc';
 import { createClient } from '@supabase/supabase-js';
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -183,7 +183,7 @@ export async function PUT(
           .single();
 
         if (match && oldPlayer) {
-          await recalculatePlayerSuspension(
+          await recalculatePlayerSuspensionEventBased(
             existingCard.player_id,
             match.season_id,
             match.age_group_id,
@@ -199,7 +199,7 @@ export async function PUT(
           .single();
 
         if (match && newPlayer) {
-          await recalculatePlayerSuspension(
+          await recalculatePlayerSuspensionEventBased(
             playerId,
             match.season_id,
             match.age_group_id,
@@ -215,7 +215,7 @@ export async function PUT(
           .single();
 
         if (match && player) {
-          await recalculatePlayerSuspension(
+          await recalculatePlayerSuspensionEventBased(
             existingCard.player_id,
             match.season_id,
             match.age_group_id,
@@ -322,7 +322,7 @@ export async function DELETE(
         .single();
 
       if (match && player) {
-        await recalculatePlayerSuspension(
+        await recalculatePlayerSuspensionEventBased(
           card.player_id,
           match.season_id,
           match.age_group_id,

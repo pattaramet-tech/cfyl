@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { verifyAdminAuth } from '@/lib/admin-middleware';
 import { logAdminAction } from '@/lib/audit-log';
-import { recalculatePlayerSuspension, getMatchDetails } from '@/lib/suspension-calc';
+import { recalculatePlayerSuspensionEventBased, getMatchDetails } from '@/lib/suspension-calc';
 import { createClient } from '@supabase/supabase-js';
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -214,11 +214,11 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Recalculate suspension for this player
+    // Recalculate suspension for this player (event-based)
     const timerSuspension = `[CARDS_POST] Suspension recalculation`;
     console.time(timerSuspension);
     try {
-      await recalculatePlayerSuspension(
+      await recalculatePlayerSuspensionEventBased(
         playerId,
         match.season_id,
         match.age_group_id,

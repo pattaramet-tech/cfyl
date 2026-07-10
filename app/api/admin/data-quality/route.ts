@@ -309,11 +309,13 @@ export async function GET(request: NextRequest) {
     // Check 6: Red/second_yellow card but no suspension
     (cards || []).forEach((card: any) => {
       if (card.card_type === 'red' || card.card_type === 'second_yellow') {
-        const suspension = (suspensions || []).find(
-          (s: any) => s.player_id === card.player_id && s.team_id === card.team_id
+        // Check if ANY suspension exists for this player with ban_matches > 0
+        // (event-based system can have multiple records per player)
+        const hasBan = (suspensions || []).some(
+          (s: any) => s.player_id === card.player_id && s.team_id === card.team_id && s.ban_matches > 0
         );
 
-        if (!suspension || suspension.ban_matches === 0) {
+        if (!hasBan) {
           issues.push({
             id: `check6_${issueCounter++}`,
             severity: 'error',

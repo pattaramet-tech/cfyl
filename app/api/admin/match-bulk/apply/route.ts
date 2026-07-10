@@ -1,7 +1,7 @@
 import { supabase } from '@/lib/supabase';
 import { NextRequest, NextResponse } from 'next/server';
 import { BulkImportRowResult, BulkImportApplyResponse } from '@/types/bulk-import';
-import { recalculatePlayerSuspension } from '@/lib/suspension-calc';
+import { recalculatePlayerSuspensionEventBased } from '@/lib/suspension-calc';
 import { generateImportBatchNo } from '@/lib/bulk-import-utils';
 
 export async function POST(request: NextRequest) {
@@ -204,7 +204,7 @@ export async function POST(request: NextRequest) {
 
       for (const player of playersData) {
         try {
-          await recalculatePlayerSuspension(player.id, seasonId, ageGroupId, player.team_id);
+          await recalculatePlayerSuspensionEventBased(player.id, seasonId, ageGroupId, player.team_id);
         } catch (err) {
           console.error(`[MATCH_BULK_APPLY] Failed to recalculate suspension for player ${player.id}:`, err);
         }

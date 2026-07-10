@@ -993,7 +993,7 @@ export async function recalculateSeasonSuspensions(
   let failed = 0;
   for (const { playerId, teamId } of players) {
     try {
-      await recalculatePlayerSuspension(playerId, seasonId, ageGroupId, teamId);
+      await recalculatePlayerSuspensionEventBased(playerId, seasonId, ageGroupId, teamId);
       success++;
     } catch (err) {
       console.error(`[SUSPENSION_CALC] Failed player=${playerId} team=${teamId}:`, err);

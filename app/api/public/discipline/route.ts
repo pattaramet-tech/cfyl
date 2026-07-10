@@ -86,22 +86,24 @@ export async function GET(request: NextRequest) {
       return a.full_name.localeCompare(b.full_name);
     });
 
-    // Add suspension info
+    // Add suspension info (get any active bans - ban_matches > 0 means player suspended)
     const { data: suspensions } = await supabase
       .from('suspensions')
-      .select('player_id, suspended_matches, status')
-      .eq('season_id', seasonId);
+      .select('player_id, ban_matches, age_group_id')
+      .eq('season_id', seasonId)
+      .gt('ban_matches', 0);
 
-    const suspensionMap = new Map<string, any>();
+    // Group suspensions by player (can have multiple records per player in event-based system)
+    const suspensionMap = new Map<string, number>();
     suspensions?.forEach(s => {
-      if (s.status === 'pending') {
-        suspensionMap.set(s.player_id, s);
-      }
+      const current = suspensionMap.get(s.player_id) || 0;
+      // Store highest ban count for this player
+      suspensionMap.set(s.player_id, Math.max(current, s.ban_matches || 0));
     });
 
     discipline = discipline.map(d => ({
       ...d,
-      matches_banned: suspensionMap.has(d.player_id) ? suspensionMap.get(d.player_id).suspended_matches : 0,
+      matches_banned: suspensionMap.get(d.player_id) || 0,
     }));
 
     return NextResponse.json(discipline);

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { verifyAdminAuth } from '@/lib/admin-middleware';
 import { logAdminAction } from '@/lib/audit-log';
-import { recalculatePlayerSuspension } from '@/lib/suspension-calc';
+import { recalculatePlayerSuspensionEventBased } from '@/lib/suspension-calc';
 import { createClient } from '@supabase/supabase-js';
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -160,7 +160,7 @@ export async function POST(request: NextRequest) {
     for (const playerId of playerIds) {
       const player = playerMap.get(playerId)!;
       try {
-        await recalculatePlayerSuspension(
+        await recalculatePlayerSuspensionEventBased(
           playerId,
           match.season_id,
           match.age_group_id,
