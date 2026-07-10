@@ -201,20 +201,12 @@ export function getSuspensionServingState(
 }
 
 export function classifyPlayerMatchDiscipline(
-  cardsForPlayerInMatch: Array<{ id: string; card_type: string }>
+  cardsData: CardCount
 ): DisciplineEventClassification {
-  const cardIds = cardsForPlayerInMatch.map((c) => c.id);
-
-  // Count cards by type
-  let yellowCount = 0;
-  let redCount = 0;
-  let secondYellowCount = 0;
-
-  for (const card of cardsForPlayerInMatch) {
-    if (card.card_type === 'yellow') yellowCount++;
-    if (card.card_type === 'red') redCount++;
-    if (card.card_type === 'second_yellow') secondYellowCount++;
-  }
+  const { yellow, red, second_yellow } = cardsData;
+  const yellowCount = yellow;
+  const redCount = red;
+  const secondYellowCount = second_yellow;
 
   // Classify event type (ejections take priority)
   let eventType: DisciplineEventType = 'none';
@@ -260,7 +252,7 @@ export function classifyPlayerMatchDiscipline(
     suspensionType,
     accumulatedPointsFromThisMatch,
     ejectionBanMatches,
-    sourceCardIds: cardIds,
+    sourceCardIds: [], // Card counts only, no individual IDs available
     notes,
   };
 }
@@ -739,6 +731,213 @@ export async function recalculatePlayerSuspension(
   } catch (error) {
     console.timeEnd(timerTotal);
     console.error('[SUSPENSION_CALC] Error:', error);
+    throw error;
+  }
+}
+
+/**
+ * REFACTORED: Event-based suspension calculation (NEW)
+ *
+ * Creates SEPARATE suspension records for:
+ * 1. Each ejection event (second_yellow, direct_red, yellow_red)
+ * 2. Each accumulated points threshold crossing (6, 12, 18, 24)
+ *
+ * Does NOT create duplicate records for same trigger_match_id + suspension_type
+ * Uses unique index: player_id + team_id + trigger_match_id + suspension_type + accumulated_threshold
+ */
+export async function recalculatePlayerSuspensionEventBased(
+  playerId: string,
+  seasonId: string,
+  ageGroupId: string,
+  teamId: string
+): Promise<any[]> {
+  const timerTotal = `[SUSPENSION_CALC] recalculatePlayerSuspensionEventBased`;
+  console.time(timerTotal);
+
+  try {
+    console.log(
+      `[SUSPENSION_CALC_V2] Recalculating (event-based) player=${playerId} team=${teamId} season=${seasonId} age_group=${ageGroupId}`
+    );
+
+    // Get all cards sorted by match_date → match_time → matchday
+    const seasonCards = await getSeasonCards(playerId, seasonId, ageGroupId);
+
+    // BUILD a map of card counts per match
+    // getSeasonCards already aggregates cards, so just use the CardCount data
+    const cardsByMatch = new Map<string, CardCount>();
+    for (const card of seasonCards) {
+      cardsByMatch.set(card.match_id, card.cards);
+    }
+
+    // Track all suspensions to upsert (separate by event)
+    const suspensionsToCreate: Array<any> = [];
+
+    // Process each match's cards - iterate in chronological order
+    let accumulatedPointsOnly = 0; // Tracks NORMAL yellow points only (no ejection points)
+
+    for (const card of seasonCards) {
+      const matchId = card.match_id;
+      const cardCount = cardsByMatch.get(matchId);
+      if (!cardCount) continue;
+
+      // Classify this match's discipline event using aggregated card counts
+      const eventClassification = classifyPlayerMatchDiscipline(cardCount);
+
+      if (eventClassification.eventType === 'none') {
+        continue; // No cards in this match
+      }
+
+      console.log(
+        `[SUSPENSION_CALC_V2] Match ${matchId}: ${eventClassification.eventType}, accumulatedPts=${eventClassification.accumulatedPointsFromThisMatch}`
+      );
+
+      // **CRITICAL**: Only accumulate points from normal yellow cards
+      // Ejection events contribute 0 points to accumulation
+      accumulatedPointsOnly += eventClassification.accumulatedPointsFromThisMatch;
+
+      // CASE 1: Ejection event (second_yellow, direct_red, yellow_red)
+      if (eventClassification.suspensionType && eventClassification.ejectionBanMatches > 0) {
+        const suspensionType = eventClassification.suspensionType as SuspensionType;
+
+        // Create ejection suspension
+        const suspendedMatches = await findNextMatchesForSuspension(
+          teamId,
+          seasonId,
+          ageGroupId,
+          card.match_id,
+          eventClassification.ejectionBanMatches
+        );
+
+        const suspensionDetails: SuspensionDetails = {
+          trigger_match_id: card.match_id,
+          trigger_matchday: card.matchday,
+          trigger_event: eventClassification.notes.join(' | '),
+          points_before: 0,
+          points_added: 0,
+          points_after: 0,
+          threshold_crossed: 0,
+          ban_matches_count: eventClassification.ejectionBanMatches,
+          suspended_matches: suspendedMatches,
+        };
+
+        const servingMatchIds = suspendedMatches.map((m) => m.match_id);
+        const suspensionReason =
+          suspendedMatches.length > 0
+            ? `${suspensionType} - แบน ${eventClassification.ejectionBanMatches} นัด (${suspendedMatches.map((m) => `MD${m.matchday}`).join(', ')})`
+            : `${suspensionType} - แบน ${eventClassification.ejectionBanMatches} นัด (ไม่พบโปรแกรมนัดถัดไป)`;
+
+        suspensionsToCreate.push({
+          season_id: seasonId,
+          age_group_id: ageGroupId,
+          player_id: playerId,
+          team_id: teamId,
+          suspension_type: suspensionType,
+          trigger_match_id: card.match_id,
+          accumulated_threshold: null,
+          source_card_ids: [card.match_id], // Track source match
+          serving_match_ids: servingMatchIds,
+          ban_matches: eventClassification.ejectionBanMatches,
+          suspended_from_match_id: servingMatchIds[0] || null,
+          total_points: 0,
+          point_sources: [],
+          suspension_reason: suspensionReason,
+          suspension_details: suspensionDetails,
+          updated_at: new Date().toISOString(),
+        });
+      }
+    }
+
+    // CASE 2: Accumulated points thresholds (only from normal yellows)
+    let previousPoints = 0;
+    for (const card of seasonCards) {
+      const cardCount = cardsByMatch.get(card.match_id);
+      if (!cardCount) continue;
+
+      const eventClassification = classifyPlayerMatchDiscipline(cardCount);
+
+      const pointsThisMatch = eventClassification.accumulatedPointsFromThisMatch;
+      const pointsBefore = previousPoints;
+      const pointsAfter = previousPoints + pointsThisMatch;
+
+      // Check if any threshold was crossed
+      const thresholdCrossed = getHighestThresholdCrossed(pointsBefore, pointsAfter);
+
+      if (thresholdCrossed > 0) {
+        const banMatches = calculateBanMatches(thresholdCrossed);
+
+        const suspendedMatches = await findNextMatchesForSuspension(
+          teamId,
+          seasonId,
+          ageGroupId,
+          card.match_id,
+          banMatches
+        );
+
+        const suspensionDetails: SuspensionDetails = {
+          trigger_match_id: card.match_id,
+          trigger_matchday: card.matchday,
+          trigger_event: `สะสมคะแนนครบเกณฑ์ ${thresholdCrossed} คะแนน`,
+          points_before: pointsBefore,
+          points_added: pointsThisMatch,
+          points_after: pointsAfter,
+          threshold_crossed: thresholdCrossed,
+          ban_matches_count: banMatches,
+          suspended_matches: suspendedMatches,
+        };
+
+        const servingMatchIds = suspendedMatches.map((m) => m.match_id);
+        const suspensionReason =
+          suspendedMatches.length > 0
+            ? `สะสมคะแนน ${thresholdCrossed} คะแนน - แบน ${banMatches} นัด (${suspendedMatches.map((m) => `MD${m.matchday}`).join(', ')})`
+            : `สะสมคะแนน ${thresholdCrossed} คะแนน - แบน ${banMatches} นัด (ไม่พบโปรแกรมนัดถัดไป)`;
+
+        suspensionsToCreate.push({
+          season_id: seasonId,
+          age_group_id: ageGroupId,
+          player_id: playerId,
+          team_id: teamId,
+          suspension_type: 'accumulated_points',
+          trigger_match_id: card.match_id,
+          accumulated_threshold: thresholdCrossed,
+          source_card_ids: [card.match_id], // Track source match
+          serving_match_ids: servingMatchIds,
+          ban_matches: banMatches,
+          suspended_from_match_id: servingMatchIds[0] || null,
+          total_points: pointsAfter,
+          point_sources: [],
+          suspension_reason: suspensionReason,
+          suspension_details: suspensionDetails,
+          updated_at: new Date().toISOString(),
+        });
+      }
+
+      previousPoints = pointsAfter;
+    }
+
+    // Upsert all suspensions (unique index handles duplicates)
+    if (suspensionsToCreate.length === 0) {
+      console.log(`[SUSPENSION_CALC_V2] No suspensions triggered for player=${playerId}`);
+      console.timeEnd(timerTotal);
+      return [];
+    }
+
+    const { error } = await supabaseAdmin
+      .from('suspensions')
+      .upsert(suspensionsToCreate, {
+        onConflict: 'player_id,team_id,trigger_match_id,suspension_type,accumulated_threshold',
+      });
+
+    if (error) {
+      console.error('[SUSPENSION_CALC_V2] Upsert error:', error);
+      throw error;
+    }
+
+    console.log(`[SUSPENSION_CALC_V2] Done: created ${suspensionsToCreate.length} suspension events`);
+    console.timeEnd(timerTotal);
+    return suspensionsToCreate;
+  } catch (error) {
+    console.timeEnd(timerTotal);
+    console.error('[SUSPENSION_CALC_V2] Error:', error);
     throw error;
   }
 }
