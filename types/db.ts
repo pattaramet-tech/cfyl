@@ -152,7 +152,7 @@ export interface Card {
   match_id: string;
   player_id: string;
   team_id: string;
-  card_type: 'Yellow' | 'Red';
+  card_type: 'Yellow' | 'Red' | 'second_yellow';
   unit: number;
   note: string | null;
   created_at: string;
@@ -162,14 +162,35 @@ export interface Card {
 export interface Suspension {
   id: string;
   season_id: string;
+  age_group_id: string;
   player_id: string;
   team_id: string;
-  source_match_id: string | null;
-  suspended_matches: number;
-  suspended_from_matchday: string | null;
-  discipline_points: number | null;
-  status: 'pending' | 'served' | 'cancelled';
-  note: string | null;
+
+  // Legacy fields (backward compatibility)
+  source_match_id?: string | null;
+  suspended_matches?: number;
+  suspended_from_matchday?: string | null;
+  discipline_points?: number | null;
+  status?: 'pending' | 'served' | 'cancelled';
+
+  // New event-based fields
+  suspension_type?: 'accumulated_points' | 'second_yellow' | 'direct_red' | 'yellow_red' | 'manual' | 'legacy' | null;
+  trigger_match_id?: string | null;
+  accumulated_threshold?: number | null; // 6, 12, 18, 24
+  source_card_ids?: string[] | null;
+  serving_match_ids?: string[] | null;
+  served_completed_at?: string | null;
+  legacy_migrated?: boolean;
+
+  // Core suspension info
+  total_points?: number;
+  ban_matches?: number;
+  suspended_from_match_id?: string | null;
+  suspension_reason?: string | null;
+  suspension_details?: any;
+  point_sources?: any[];
+
+  note?: string | null;
   created_at: string;
   updated_at: string;
 }

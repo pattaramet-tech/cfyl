@@ -115,6 +115,157 @@ export function isDirectRedEjection(cards: CardCount): boolean {
 }
 
 /**
+ * Classify player's discipline event in a match
+ * Returns suspension type, accumulated points, and ban matches for the event
+ *
+ * CRITICAL: Ejection events (second_yellow, direct_red, yellow_red) do NOT accumulate points
+ * Only normal yellow cards accumulate points
+ */
+export type SuspensionType =
+  | 'accumulated_points'
+  | 'second_yellow'
+  | 'direct_red'
+  | 'yellow_red'
+  | 'manual'
+  | 'legacy';
+
+export type DisciplineEventType =
+  | 'normal_yellow_accumulation'
+  | 'second_yellow_ejection'
+  | 'direct_red_ejection'
+  | 'yellow_red_ejection'
+  | 'none';
+
+export interface DisciplineEventClassification {
+  eventType: DisciplineEventType;
+  suspensionType: SuspensionType | null;
+  accumulatedPointsFromThisMatch: number;
+  ejectionBanMatches: number;
+  sourceCardIds: string[];
+  notes: string[];
+}
+
+/**
+ * Determine if a suspension is active or served
+ * Used to display correct status in admin/public pages
+ */
+export interface SuspensionServingState {
+  servedCount: number;
+  remainingCount: number;
+  isActive: boolean;
+  isServed: boolean;
+}
+
+export function getSuspensionServingState(
+  suspension: any,
+  matchesById: Map<string, any>
+): SuspensionServingState {
+  let servedCount = 0;
+  let remainingCount = 0;
+
+  // Use serving_match_ids if available (new format)
+  if (suspension.serving_match_ids && Array.isArray(suspension.serving_match_ids)) {
+    for (const matchId of suspension.serving_match_ids) {
+      const match = matchesById.get(matchId);
+      if (!match) {
+        remainingCount++; // Unknown status = count as remaining
+        continue;
+      }
+
+      if (match.status === 'finished') {
+        servedCount++;
+      } else if (match.status === 'scheduled') {
+        remainingCount++;
+      }
+      // postponed/cancelled are not counted toward either
+    }
+  } else if (suspension.suspended_from_match_id) {
+    // Fallback: legacy format using single suspended_from_match_id
+    const match = matchesById.get(suspension.suspended_from_match_id);
+    if (match) {
+      if (match.status === 'finished') {
+        servedCount = 1;
+        remainingCount = Math.max(0, (suspension.ban_matches || 1) - 1);
+      } else if (match.status === 'scheduled') {
+        remainingCount = suspension.ban_matches || 1;
+      }
+    }
+  }
+
+  return {
+    servedCount,
+    remainingCount,
+    isActive: remainingCount > 0,
+    isServed: remainingCount === 0 && servedCount > 0,
+  };
+}
+
+export function classifyPlayerMatchDiscipline(
+  cardsForPlayerInMatch: Array<{ id: string; card_type: string }>
+): DisciplineEventClassification {
+  const cardIds = cardsForPlayerInMatch.map((c) => c.id);
+
+  // Count cards by type
+  let yellowCount = 0;
+  let redCount = 0;
+  let secondYellowCount = 0;
+
+  for (const card of cardsForPlayerInMatch) {
+    if (card.card_type === 'yellow') yellowCount++;
+    if (card.card_type === 'red') redCount++;
+    if (card.card_type === 'second_yellow') secondYellowCount++;
+  }
+
+  // Classify event type (ejections take priority)
+  let eventType: DisciplineEventType = 'none';
+  let suspensionType: SuspensionType | null = null;
+  let ejectionBanMatches = 0;
+
+  if (redCount > 0 && (yellowCount > 0 || secondYellowCount > 0)) {
+    // Yellow + Red in same match = yellow_red ejection
+    eventType = 'yellow_red_ejection';
+    suspensionType = 'yellow_red';
+    ejectionBanMatches = 1;
+  } else if (redCount > 0) {
+    // Direct red ejection
+    eventType = 'direct_red_ejection';
+    suspensionType = 'direct_red';
+    ejectionBanMatches = 1;
+  } else if (secondYellowCount > 0 || yellowCount >= 2) {
+    // Second yellow or 2+ yellows = second_yellow ejection
+    eventType = 'second_yellow_ejection';
+    suspensionType = 'second_yellow';
+    ejectionBanMatches = 1;
+  } else if (yellowCount > 0) {
+    // Normal yellow accumulation (no ejection)
+    eventType = 'normal_yellow_accumulation';
+    suspensionType = 'accumulated_points';
+  }
+
+  // IMPORTANT: Ejection events do NOT accumulate points
+  // Only normal yellow cards contribute to point accumulation
+  const accumulatedPointsFromThisMatch =
+    eventType === 'normal_yellow_accumulation' ? yellowCount * 2 : 0;
+
+  const notes: string[] = [];
+  if (eventType !== 'none' && ejectionBanMatches > 0) {
+    notes.push(`Ejection event: ${eventType}, ban_matches=${ejectionBanMatches}`);
+  }
+  if (accumulatedPointsFromThisMatch > 0) {
+    notes.push(`Accumulated points: ${accumulatedPointsFromThisMatch} from ${yellowCount} yellow(s)`);
+  }
+
+  return {
+    eventType,
+    suspensionType,
+    accumulatedPointsFromThisMatch,
+    ejectionBanMatches,
+    sourceCardIds: cardIds,
+    notes,
+  };
+}
+
+/**
  * CFYL Suspension Thresholds:
  * - 6 pts = 1 match ban
  * - 12 pts = 2 match ban
@@ -132,6 +283,21 @@ function getThresholdCrossed(totalPoints: number): number {
   if (totalPoints >= 18) return 18;
   if (totalPoints >= 12) return 12;
   if (totalPoints >= 6) return 6;
+  return 0;
+}
+
+/**
+ * Find highest threshold crossed in a single point change
+ * Used to create only one accumulated_points suspension per match
+ * even if multiple thresholds are crossed
+ *
+ * Example: before=4, after=12 → return 12 (not 6)
+ */
+function getHighestThresholdCrossed(pointsBefore: number, pointsAfter: number): number {
+  if (pointsBefore < 24 && pointsAfter >= 24) return 24;
+  if (pointsBefore < 18 && pointsAfter >= 18) return 18;
+  if (pointsBefore < 12 && pointsAfter >= 12) return 12;
+  if (pointsBefore < 6 && pointsAfter >= 6) return 6;
   return 0;
 }
 
