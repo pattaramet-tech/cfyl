@@ -1,9 +1,16 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { SuspensionDetails, SuspendedMatchDetail } from '@/lib/suspension-shared';
 import { getCurrentDisciplinaryPoints, isEjectionSuspensionType } from '@/lib/suspension-shared';
 import { getSuspensionStatus, getBangkokToday, type SuspensionStatusKey } from '@/lib/suspension-status';
+import {
+  matchesSuspensionSearch,
+  compareSuspensionRecords,
+  compareSuspensionRecordsDefault,
+  type SuspensionSortColumn,
+  type SortDirection,
+} from '@/lib/suspension-table-utils';
 
 interface SuspensionRecord {
   id: string;
@@ -36,6 +43,45 @@ function formatDate(dateStr: string): string {
   return new Date(dateStr).toLocaleDateString('th-TH', {
     year: 'numeric', month: 'short', day: 'numeric',
   });
+}
+
+function SortableHeader({
+  label,
+  column,
+  align = 'left',
+  sortColumn,
+  sortDirection,
+  onSort,
+}: {
+  label: string;
+  column: SuspensionSortColumn;
+  align?: 'left' | 'center';
+  sortColumn: SuspensionSortColumn | null;
+  sortDirection: SortDirection;
+  onSort: (column: SuspensionSortColumn) => void;
+}) {
+  const isActive = sortColumn === column;
+  const ariaSort: 'ascending' | 'descending' | 'none' = isActive
+    ? sortDirection === 'asc'
+      ? 'ascending'
+      : 'descending'
+    : 'none';
+  return (
+    <th className={`px-3 py-3 ${align === 'center' ? 'text-center' : 'text-left'}`} aria-sort={ariaSort}>
+      <button
+        type="button"
+        onClick={() => onSort(column)}
+        className={`inline-flex items-center gap-1 font-semibold hover:text-amber-300 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-300 rounded ${
+          align === 'center' ? 'justify-center' : ''
+        }`}
+      >
+        {label}
+        <span className="text-[10px] w-2.5 inline-block opacity-80">
+          {isActive ? (sortDirection === 'asc' ? '▲' : '▼') : ''}
+        </span>
+      </button>
+    </th>
+  );
 }
 
 function SuspendedMatchRow({ match, index }: { match: SuspendedMatchDetail; index: number }) {
@@ -207,6 +253,9 @@ export default function AdminSuspensionsPage() {
 
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<SuspensionStatusKey | 'all'>('all');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [sortColumn, setSortColumn] = useState<SuspensionSortColumn | null>(null);
+  const [sortDirection, setSortDirection] = useState<SortDirection>('asc');
 
   // Discord alert modal
   const [discordOpen, setDiscordOpen] = useState(false);
@@ -329,8 +378,57 @@ export default function AdminSuspensionsPage() {
   // Legacy records marked _superseded must not appear in the main active list —
   // their suspended_from_match_id may be stale (points accumulated beyond the
   // already-served threshold do NOT create a new ban).
-  const activeSuspensions = suspensions.filter((s) => !s._superseded);
-  const legacyHistoryRecords = suspensions.filter((s) => s._superseded);
+  const activeSuspensions = useMemo(() => suspensions.filter((s) => !s._superseded), [suspensions]);
+  const legacyHistoryRecords = useMemo(() => suspensions.filter((s) => s._superseded), [suspensions]);
+
+  // Memoized pipeline: activeSuspensions → status-chip filter → search filter → stable sort.
+  // Never mutates the original arrays; reuses the same shared helpers (status, current
+  // points, supersession) the rest of the page and Public already rely on.
+  const statusFilteredSuspensions = useMemo(() => {
+    return statusFilter === 'all'
+      ? activeSuspensions
+      : statusFilter === 'active'
+      ? activeSuspensions.filter((s) => statusOf(s) === 'pending' || statusOf(s) === 'active')
+      : activeSuspensions.filter((s) => statusOf(s) === statusFilter);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeSuspensions, statusFilter, today]);
+
+  const searchedSuspensions = useMemo(() => {
+    const q = searchQuery.trim();
+    return q ? statusFilteredSuspensions.filter((s) => matchesSuspensionSearch(s, searchQuery, today)) : statusFilteredSuspensions;
+  }, [statusFilteredSuspensions, searchQuery, today]);
+
+  const finalSuspensions = useMemo(() => {
+    return [...searchedSuspensions].sort((a, b) =>
+      sortColumn
+        ? compareSuspensionRecords(a, b, sortColumn, sortDirection, today)
+        : compareSuspensionRecordsDefault(a, b, today)
+    );
+  }, [searchedSuspensions, sortColumn, sortDirection, today]);
+
+  // Expanded details are keyed by record.id (never player_id — one player can have
+  // multiple event records). If the expanded record is filtered out, close it.
+  useEffect(() => {
+    if (expandedId && !finalSuspensions.some((s) => s.id === expandedId)) {
+      setExpandedId(null);
+    }
+  }, [finalSuspensions, expandedId]);
+
+  const handleSort = (column: SuspensionSortColumn) => {
+    if (sortColumn === column) {
+      setSortDirection((d) => (d === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setSortColumn(column);
+      setSortDirection('asc');
+    }
+  };
+
+  const clearFilters = () => {
+    setSearchQuery('');
+    setStatusFilter('all');
+    setSortColumn(null);
+    setSortDirection('asc');
+  };
 
   const SENDABLE = ['pending', 'active', 'no_next_match'];
   const discordPreviewCount = activeSuspensions.filter((s) => {
@@ -351,12 +449,6 @@ export default function AdminSuspensionsPage() {
   const warningCount = counts.warning || 0;
   const noScheduleCount = counts.no_next_match || 0;
 
-  const filteredSuspensions =
-    statusFilter === 'all'
-      ? activeSuspensions
-      : statusFilter === 'active'
-      ? activeSuspensions.filter((s) => statusOf(s) === 'pending' || statusOf(s) === 'active')
-      : activeSuspensions.filter((s) => statusOf(s) === statusFilter);
 
   return (
     <div className="space-y-6">
@@ -542,6 +634,74 @@ export default function AdminSuspensionsPage() {
         </div>
       )}
 
+      {/* Search + sort */}
+      {activeSuspensions.length > 0 && (
+        <div className="space-y-2">
+          <div className="flex flex-col sm:flex-row gap-2 sm:gap-3">
+            <div className="relative flex-1">
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Escape') setSearchQuery('');
+                }}
+                placeholder="ค้นหาชื่อนักกีฬา ทีม รหัส หรือเบอร์เสื้อ..."
+                className="w-full px-3 py-2 pr-9 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-red-600"
+              />
+              {searchQuery && (
+                <button
+                  type="button"
+                  onClick={() => setSearchQuery('')}
+                  aria-label="ล้างคำค้นหา"
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 text-lg leading-none px-1"
+                >
+                  ×
+                </button>
+              )}
+            </div>
+
+            <select
+              value={sortColumn ? `${sortColumn}:${sortDirection}` : 'default'}
+              onChange={(e) => {
+                const val = e.target.value;
+                if (val === 'default') {
+                  setSortColumn(null);
+                  setSortDirection('asc');
+                  return;
+                }
+                const [col, dir] = val.split(':') as [SuspensionSortColumn, SortDirection];
+                setSortColumn(col);
+                setSortDirection(dir);
+              }}
+              className="w-full sm:w-auto px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-red-600"
+            >
+              <option value="default">เรียงตาม: สถานะ (แนะนำ)</option>
+              <option value="name:asc">ชื่อนักกีฬา ก→ฮ</option>
+              <option value="name:desc">ชื่อนักกีฬา ฮ→ก</option>
+              <option value="team:asc">ทีม ก→ฮ</option>
+              <option value="points:desc">คะแนน มาก→น้อย</option>
+              <option value="points:asc">คะแนน น้อย→มาก</option>
+              <option value="ban:desc">แบน (เหลือมากก่อน)</option>
+              <option value="suspended_match:asc">นัดที่ถูกแบน (ใกล้ก่อน)</option>
+              <option value="status:asc">สถานะ</option>
+            </select>
+
+            <button
+              type="button"
+              onClick={clearFilters}
+              className="px-4 py-2 rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-700 text-sm font-semibold border border-gray-300 whitespace-nowrap"
+            >
+              ล้างตัวกรอง
+            </button>
+          </div>
+
+          <p className="text-xs text-gray-500">
+            พบ {finalSuspensions.length} จาก {statusFilteredSuspensions.length} รายการ
+          </p>
+        </div>
+      )}
+
       {/* Table */}
       {isLoadingSuspensions ? (
         <div className="flex items-center justify-center py-12">
@@ -555,6 +715,31 @@ export default function AdminSuspensionsPage() {
       ) : activeSuspensions.length === 0 ? (
         <div className="bg-gray-50 border border-gray-200 rounded-lg p-8 text-center text-gray-500">
           ไม่พบข้อมูลใบเหลืองใบแดง
+        </div>
+      ) : finalSuspensions.length === 0 ? (
+        <div className="bg-gray-50 border border-gray-200 rounded-lg p-8 text-center text-gray-500 space-y-3">
+          <p>
+            {searchQuery.trim()
+              ? 'ไม่พบข้อมูลนักกีฬาที่ตรงกับคำค้นหา'
+              : 'ไม่พบข้อมูลในสถานะที่เลือก'}
+          </p>
+          {searchQuery.trim() ? (
+            <button
+              type="button"
+              onClick={() => setSearchQuery('')}
+              className="px-4 py-2 rounded-lg bg-gray-800 hover:bg-gray-700 text-white text-sm font-semibold"
+            >
+              ล้างคำค้นหา
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={clearFilters}
+              className="px-4 py-2 rounded-lg bg-gray-800 hover:bg-gray-700 text-white text-sm font-semibold"
+            >
+              ล้างตัวกรอง
+            </button>
+          )}
         </div>
       ) : (
         <div className="bg-white rounded-lg shadow overflow-hidden">
@@ -577,17 +762,63 @@ export default function AdminSuspensionsPage() {
               <thead>
                 <tr className="bg-gray-800 text-white text-xs">
                   <th className="px-3 py-3 text-left">#</th>
-                  <th className="px-3 py-3 text-left">ชื่อนักกีฬา</th>
-                  <th className="px-3 py-3 text-left">ทีม</th>
-                  <th className="px-3 py-3 text-center">เบอร์</th>
-                  <th className="px-3 py-3 text-center">คะแนน</th>
-                  <th className="px-3 py-3 text-center">แบน</th>
-                  <th className="px-3 py-3 text-left">นัดที่ถูกแบน</th>
-                  <th className="px-3 py-3 text-center">สถานะ</th>
+                  <SortableHeader
+                    label="ชื่อนักกีฬา"
+                    column="name"
+                    sortColumn={sortColumn}
+                    sortDirection={sortDirection}
+                    onSort={handleSort}
+                  />
+                  <SortableHeader
+                    label="ทีม"
+                    column="team"
+                    sortColumn={sortColumn}
+                    sortDirection={sortDirection}
+                    onSort={handleSort}
+                  />
+                  <SortableHeader
+                    label="เบอร์"
+                    column="shirt_no"
+                    align="center"
+                    sortColumn={sortColumn}
+                    sortDirection={sortDirection}
+                    onSort={handleSort}
+                  />
+                  <SortableHeader
+                    label="คะแนน"
+                    column="points"
+                    align="center"
+                    sortColumn={sortColumn}
+                    sortDirection={sortDirection}
+                    onSort={handleSort}
+                  />
+                  <SortableHeader
+                    label="แบน"
+                    column="ban"
+                    align="center"
+                    sortColumn={sortColumn}
+                    sortDirection={sortDirection}
+                    onSort={handleSort}
+                  />
+                  <SortableHeader
+                    label="นัดที่ถูกแบน"
+                    column="suspended_match"
+                    sortColumn={sortColumn}
+                    sortDirection={sortDirection}
+                    onSort={handleSort}
+                  />
+                  <SortableHeader
+                    label="สถานะ"
+                    column="status"
+                    align="center"
+                    sortColumn={sortColumn}
+                    sortDirection={sortDirection}
+                    onSort={handleSort}
+                  />
                 </tr>
               </thead>
               <tbody>
-                {filteredSuspensions.map((record, index) => {
+                {finalSuspensions.map((record, index) => {
                   const status = getSuspensionStatus(record, today);
                   const isExpanded = expandedId === record.id;
                   const suspendedMatches = record.suspension_details?.suspended_matches || [];
