@@ -1085,6 +1085,247 @@ export async function recalculateSeasonSuspensions(
   return { processed: players.length, success, failed };
 }
 
+// ─── Serving Match Refresh ────────────────────────────────────────────────────
+
+const SYSTEM_SUSPENSION_TYPES = [
+  'accumulated_points',
+  'second_yellow',
+  'direct_red',
+  'yellow_red',
+] as const;
+
+export interface RefreshServingResult {
+  refreshed: number;
+  skipped: number;
+  failed: number;
+}
+
+/**
+ * Pure helper: classify current serving match IDs into served / active / stale.
+ * Exported for unit testing.
+ */
+export function classifyServingMatchIds(
+  servingMatchIds: string[],
+  matchStatuses: Map<string, string>
+): { servedIds: string[]; activeIds: string[]; staleIds: string[] } {
+  const servedIds: string[] = [];
+  const activeIds: string[] = [];
+  const staleIds: string[] = [];
+  for (const id of servingMatchIds) {
+    const status = matchStatuses.get(id);
+    if (status === 'finished') servedIds.push(id);
+    else if (status === 'scheduled') activeIds.push(id);
+    else staleIds.push(id); // postponed, cancelled, or not in DB
+  }
+  return { servedIds, activeIds, staleIds };
+}
+
+/**
+ * Pure helper: are two string arrays identical (length + element-by-element)?
+ */
+export function servingArraysEqual(a: string[], b: string[]): boolean {
+  if (a.length !== b.length) return false;
+  return a.every((v, i) => v === b[i]);
+}
+
+/**
+ * Refresh serving_match_ids for all active system-generated suspension events in a scope.
+ *
+ * Handles:
+ *   - postponed/cancelled serving slots   → removed, next scheduled slot assigned
+ *   - finished serving slots              → preserved as served, not replaced
+ *   - match date/time changes             → re-sorted chronological serving order
+ *   - all slots served                    → served_completed_at stamped
+ *
+ * Never touches: legacy (suspension_type IS NULL), manual, or records without ban_matches.
+ * Idempotent: second run with no schedule changes produces zero DB writes.
+ */
+export async function refreshSuspensionServingMatches(params: {
+  seasonId: string;
+  ageGroupId: string;
+  teamId?: string;
+  changedMatchId?: string;
+}): Promise<RefreshServingResult> {
+  const { seasonId, ageGroupId, teamId, changedMatchId } = params;
+  console.log(
+    `[REFRESH_SERVING] season=${seasonId} ag=${ageGroupId} team=${teamId ?? 'all'} changedMatch=${changedMatchId ?? 'all'}`
+  );
+
+  // 1. Fetch system events that have active bans
+  let q = supabaseAdmin
+    .from('suspensions')
+    .select(
+      `id, player_id, team_id, trigger_match_id, suspension_type,
+       accumulated_threshold, source_card_ids, serving_match_ids,
+       ban_matches, suspended_from_match_id, suspension_details,
+       suspension_reason, served_completed_at`
+    )
+    .eq('season_id', seasonId)
+    .eq('age_group_id', ageGroupId)
+    .in('suspension_type', [...SYSTEM_SUSPENSION_TYPES])
+    .gt('ban_matches', 0);
+
+  if (teamId) q = q.eq('team_id', teamId);
+
+  const { data: events, error: eventsError } = await q;
+  if (eventsError) throw eventsError;
+  if (!events?.length) return { refreshed: 0, skipped: 0, failed: 0 };
+
+  // 2. Filter to events referencing the changed match (if specified)
+  let relevant = events as any[];
+  if (changedMatchId) {
+    relevant = events.filter(
+      (e: any) =>
+        e.trigger_match_id === changedMatchId ||
+        (e.serving_match_ids || []).includes(changedMatchId)
+    );
+  }
+  if (!relevant.length) return { refreshed: 0, skipped: 0, failed: 0 };
+  console.log(`[REFRESH_SERVING] Processing ${relevant.length} event(s)`);
+
+  // 3. Batch-fetch status for all currently-referenced serving matches
+  const allCurrentServingIds = [
+    ...new Set(relevant.flatMap((e: any) => e.serving_match_ids || [])),
+  ];
+  const matchMap = new Map<string, any>();
+
+  if (allCurrentServingIds.length > 0) {
+    const { data: matchRows } = await supabaseAdmin
+      .from('matches')
+      .select(
+        'id, status, match_date, match_time, matchday, match_code, home_team_id, away_team_id, home_team:home_team_id(name), away_team:away_team_id(name)'
+      )
+      .in('id', allCurrentServingIds);
+    for (const m of matchRows || []) matchMap.set(m.id, m);
+  }
+
+  let refreshed = 0, skipped = 0, failed = 0;
+
+  for (const event of relevant) {
+    try {
+      const currentServingIds: string[] = event.serving_match_ids || [];
+
+      // Split current serving matches into served (finished) and stale/invalid
+      const { servedIds } = classifyServingMatchIds(currentServingIds, matchMap);
+      const remainingNeeded = Math.max(0, event.ban_matches - servedIds.length);
+
+      // Find replacement scheduled matches for remaining slots
+      let newScheduledMatches: SuspendedMatchDetail[] = [];
+      if (remainingNeeded > 0 && event.trigger_match_id) {
+        newScheduledMatches = await findNextMatchesForSuspension(
+          event.team_id,
+          seasonId,
+          ageGroupId,
+          event.trigger_match_id,
+          remainingNeeded
+        );
+      }
+
+      const newScheduledIds = newScheduledMatches.map((m) => m.match_id);
+      const newServingIds = [...servedIds, ...newScheduledIds];
+      const newSuspendedFrom = newScheduledIds[0] ?? null;
+      // Stamp served_completed_at only when all slots are consumed
+      const allServed = remainingNeeded === 0 && servedIds.length >= event.ban_matches;
+      const newServedCompletedAt = allServed
+        ? (event.served_completed_at ?? new Date().toISOString())
+        : null;
+
+      // Idempotency: skip if nothing changed
+      if (
+        servingArraysEqual(currentServingIds, newServingIds) &&
+        event.suspended_from_match_id === newSuspendedFrom &&
+        (event.served_completed_at ?? null) === newServedCompletedAt
+      ) {
+        skipped++;
+        continue;
+      }
+
+      // Fetch details for newly-assigned match IDs not yet in map
+      const needFetch = newScheduledIds.filter((id) => !matchMap.has(id));
+      if (needFetch.length > 0) {
+        const { data: extra } = await supabaseAdmin
+          .from('matches')
+          .select(
+            'id, status, match_date, match_time, matchday, match_code, home_team_id, away_team_id, home_team:home_team_id(name), away_team:away_team_id(name)'
+          )
+          .in('id', needFetch);
+        for (const m of extra || []) matchMap.set(m.id, m);
+      }
+
+      // Rebuild suspension_details.suspended_matches from new serving list
+      const suspendedMatches: SuspendedMatchDetail[] = newServingIds
+        .filter((id) => matchMap.has(id))
+        .map((id) => {
+          const m = matchMap.get(id)!;
+          return {
+            match_id: id,
+            matchday: parseMatchdayNumber(m.matchday),
+            match_date: m.match_date,
+            match_time: m.match_time,
+            match_code: m.match_code,
+            opponent_name:
+              m.home_team_id === event.team_id
+                ? (m.away_team as any)?.name ?? 'ไม่ทราบทีม'
+                : (m.home_team as any)?.name ?? 'ไม่ทราบทีม',
+            opponent_id:
+              m.home_team_id === event.team_id ? m.away_team_id : m.home_team_id,
+            is_home: m.home_team_id === event.team_id,
+            status: m.status,
+          };
+        });
+
+      const suspensionReason =
+        newScheduledMatches.length > 0
+          ? `${event.suspension_type} - แบน ${event.ban_matches} นัด (${newScheduledMatches.map((m) => `MD${m.matchday}`).join(', ')})`
+          : newServedCompletedAt
+          ? `${event.suspension_type} - พ้นโทษแบน ${event.ban_matches} นัด แล้ว`
+          : `${event.suspension_type} - แบน ${event.ban_matches} นัด (ไม่พบโปรแกรมนัดถัดไป)`;
+
+      const existingDetails = (event.suspension_details as SuspensionDetails | null) ?? ({} as SuspensionDetails);
+      const newDetails: SuspensionDetails = {
+        ...existingDetails,
+        suspended_matches: suspendedMatches,
+        ban_matches_count: event.ban_matches,
+      };
+
+      const patch: Record<string, any> = {
+        serving_match_ids: newServingIds,
+        suspended_from_match_id: newSuspendedFrom,
+        suspension_details: newDetails,
+        suspension_reason: suspensionReason,
+        updated_at: new Date().toISOString(),
+      };
+      if (newServedCompletedAt !== null) {
+        patch.served_completed_at = newServedCompletedAt;
+      } else if (event.served_completed_at) {
+        // Clear previously-set completion timestamp (suspension reactivated)
+        patch.served_completed_at = null;
+      }
+
+      const { error: updateError } = await supabaseAdmin
+        .from('suspensions')
+        .update(patch)
+        .eq('id', event.id);
+
+      if (updateError) {
+        console.error('[REFRESH_SERVING] Update error for event', event.id, updateError);
+        failed++;
+      } else {
+        refreshed++;
+        console.log(
+          `[REFRESH_SERVING] Refreshed ${event.id}: ${JSON.stringify(currentServingIds)} → ${JSON.stringify(newServingIds)}`
+        );
+      }
+    } catch (err: any) {
+      console.error('[REFRESH_SERVING] Error on event', event.id, err?.message ?? err);
+      failed++;
+    }
+  }
+
+  console.log(`[REFRESH_SERVING] Done: refreshed=${refreshed} skipped=${skipped} failed=${failed}`);
+  return { refreshed, skipped, failed };
+}
+
 /**
  * Get match details including season/age_group context
  */

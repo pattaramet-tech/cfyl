@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { verifyAdminAuth, badRequestResponse, internalErrorResponse } from '@/lib/admin-middleware';
 import { logAdminAction } from '@/lib/audit-log';
+import { refreshSuspensionServingMatches } from '@/lib/suspension-calc';
 import { createClient } from '@supabase/supabase-js';
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -176,11 +177,51 @@ export async function PUT(
       newData: { home_score, away_score, status: status || currentMatch.status },
     });
 
+    // Refresh suspension serving matches when status or schedule changes.
+    // A status change (finished/postponed/cancelled/scheduled) or date/time shift
+    // can invalidate existing serving_match_ids for players from either team.
+    // Failure is non-fatal: match update already succeeded.
+    let servingRefreshWarning: string | undefined;
+    const statusChanged = status && status !== currentMatch.status;
+    const dateChanged =
+      typeof match_date !== 'undefined' || typeof match_time !== 'undefined';
+
+    if ((statusChanged || dateChanged) && currentMatch.season_id && currentMatch.age_group_id) {
+      try {
+        // Refresh events for home team
+        const homeResult = await refreshSuspensionServingMatches({
+          seasonId: currentMatch.season_id,
+          ageGroupId: currentMatch.age_group_id,
+          teamId: currentMatch.home_team_id,
+          changedMatchId: matchId,
+        });
+        // Refresh events for away team
+        const awayResult = await refreshSuspensionServingMatches({
+          seasonId: currentMatch.season_id,
+          ageGroupId: currentMatch.age_group_id,
+          teamId: currentMatch.away_team_id,
+          changedMatchId: matchId,
+        });
+        const totalRefreshed = homeResult.refreshed + awayResult.refreshed;
+        const totalFailed = homeResult.failed + awayResult.failed;
+        if (totalFailed > 0) {
+          servingRefreshWarning = `Serving refresh had ${totalFailed} failure(s)`;
+          console.warn('[MATCH_PUT] Serving refresh partial failure:', { homeResult, awayResult });
+        } else {
+          console.log(`[MATCH_PUT] Serving refresh done: ${totalRefreshed} event(s) refreshed`);
+        }
+      } catch (refreshErr) {
+        servingRefreshWarning = `Serving refresh failed: ${refreshErr instanceof Error ? refreshErr.message : String(refreshErr)}`;
+        console.error('[MATCH_PUT] Serving refresh error:', refreshErr);
+      }
+    }
+
     return NextResponse.json(
       {
         success: true,
         message: 'Match updated successfully',
         match: updatedMatch,
+        ...(servingRefreshWarning ? { serving_refresh_warning: servingRefreshWarning } : {}),
         debug: {
           received_result_type: rawResultType ?? null,
           result_type_missing: resultTypeMissing,

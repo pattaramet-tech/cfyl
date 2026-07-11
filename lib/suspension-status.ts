@@ -11,8 +11,8 @@
  */
 
 export type SuspensionStatusKey =
-  | 'normal'        // 0 points
-  | 'warning'       // has points but not yet banned (สะสมคะแนน / เฝ้าระวัง)
+  | 'normal'        // no ban and 0 accumulated points
+  | 'warning'       // has accumulated points but not yet banned (สะสมคะแนน / เฝ้าระวัง)
   | 'pending'       // banned, all banned matches still upcoming (ติดโทษแบน)
   | 'active'        // ban in effect today / in progress (ติดโทษแบนวันนี้ / กำลังรับโทษ)
   | 'served'        // all banned matches finished/past (พ้นโทษแบนแล้ว)
@@ -59,10 +59,12 @@ export function getSuspensionStatus(
 ): SuspensionStatusInfo {
   const { total_points, ban_matches } = record;
 
-  if (total_points === 0) {
-    return info('normal', '🟢', 'ปกติ', 'bg-green-100 text-green-800');
-  }
+  // Evaluate ban state first so ejection events (total_points=0, ban_matches=1)
+  // are not mis-classified as 'normal'.
   if (ban_matches === 0) {
+    if (total_points === 0) {
+      return info('normal', '🟢', 'ปกติ', 'bg-green-100 text-green-800');
+    }
     return info('warning', '🟡', 'สะสมคะแนน / เฝ้าระวัง', 'bg-yellow-100 text-yellow-800');
   }
 

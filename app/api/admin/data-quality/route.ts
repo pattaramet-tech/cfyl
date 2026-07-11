@@ -348,6 +348,240 @@ export async function GET(request: NextRequest) {
       }
     });
 
+    // ── Event-based Suspension Quality (17 rules) ──────────────────────────
+    // Fetch full event records for event-based checks
+    const SYSTEM_TYPES_DQ = ['accumulated_points', 'second_yellow', 'direct_red', 'yellow_red'];
+    const { data: eventSuspensions } = await supabaseAdmin
+      .from('suspensions')
+      .select(`
+        id, player_id, team_id, suspension_type, trigger_match_id,
+        accumulated_threshold, source_card_ids, serving_match_ids,
+        ban_matches, served_completed_at
+      `)
+      .eq('season_id', seasonId)
+      .eq('age_group_id', ageGroupId)
+      .in('suspension_type', SYSTEM_TYPES_DQ);
+
+    const systemEvents = eventSuspensions || [];
+
+    // Batch-fetch all referenced matches and cards
+    const dqServingIds = [...new Set(systemEvents.flatMap((r: any) => r.serving_match_ids || []))];
+    const dqTriggerIds = [...new Set(systemEvents.map((r: any) => r.trigger_match_id).filter(Boolean) as string[])];
+    const dqSourceCardIds = [...new Set(systemEvents.flatMap((r: any) => r.source_card_ids || []))];
+    const dqAllMatchIds = [...new Set([...dqServingIds, ...dqTriggerIds])];
+
+    const dqMatchMap = new Map<string, any>();
+    if (dqAllMatchIds.length > 0) {
+      const { data: dqMatchRows } = await supabaseAdmin
+        .from('matches')
+        .select('id, status, season_id, age_group_id, home_team_id, away_team_id, match_date')
+        .in('id', dqAllMatchIds);
+      for (const m of dqMatchRows || []) dqMatchMap.set(m.id, m);
+    }
+
+    const dqCardMap = new Map<string, any>();
+    if (dqSourceCardIds.length > 0) {
+      const { data: dqCardRows } = await supabaseAdmin
+        .from('cards')
+        .select('id, player_id, match_id, card_type')
+        .in('id', dqSourceCardIds);
+      for (const c of dqCardRows || []) dqCardMap.set(c.id, c);
+    }
+
+    // EVENT_DUPLICATE_KEY
+    const dqKeyCount = new Map<string, number>();
+    systemEvents.forEach((r: any) => {
+      const k = `${r.player_id}::${r.team_id}::${r.trigger_match_id}::${r.suspension_type}::${r.accumulated_threshold ?? 0}`;
+      dqKeyCount.set(k, (dqKeyCount.get(k) ?? 0) + 1);
+    });
+    systemEvents.forEach((r: any) => {
+      const k = `${r.player_id}::${r.team_id}::${r.trigger_match_id}::${r.suspension_type}::${r.accumulated_threshold ?? 0}`;
+      if ((dqKeyCount.get(k) ?? 0) > 1) {
+        issues.push({
+          id: `dq_dup_${issueCounter++}`, severity: 'error', category: 'Suspension Event',
+          title: 'EVENT_DUPLICATE_KEY: พบ Event ซ้ำกัน',
+          description: `Duplicate key for suspension id=${r.id} (${r.suspension_type})`,
+          entity_type: 'suspension', entity_id: r.id, team_id: r.team_id,
+          action_url: '/admin/suspensions',
+        });
+      }
+    });
+
+    // Per-event source_card and trigger checks
+    systemEvents.forEach((r: any) => {
+      const triggerMatch = r.trigger_match_id ? dqMatchMap.get(r.trigger_match_id) : null;
+      const triggerDate: string | null = triggerMatch?.match_date ?? null;
+
+      // SOURCE_CARD_NOT_FOUND / WRONG_PLAYER / WRONG_MATCH
+      (r.source_card_ids || []).forEach((cId: string) => {
+        const card = dqCardMap.get(cId);
+        if (!card) {
+          issues.push({
+            id: `dq_scnf_${issueCounter++}`, severity: 'error', category: 'Suspension Event',
+            title: 'SOURCE_CARD_NOT_FOUND: ไม่พบใบที่อ้างอิงใน source_card_ids',
+            description: `suspension id=${r.id}: card ${cId} not in public.cards`,
+            entity_type: 'suspension', entity_id: r.id, team_id: r.team_id,
+            action_url: '/admin/suspensions',
+          });
+        } else {
+          if (card.player_id !== r.player_id) {
+            issues.push({
+              id: `dq_scwp_${issueCounter++}`, severity: 'error', category: 'Suspension Event',
+              title: 'SOURCE_CARD_WRONG_PLAYER: Card ของผู้เล่นผิดคน',
+              description: `suspension id=${r.id}: card ${cId} belongs to ${card.player_id}`,
+              entity_type: 'suspension', entity_id: r.id, team_id: r.team_id, action_url: '/admin/suspensions',
+            });
+          }
+          if (r.trigger_match_id && card.match_id !== r.trigger_match_id) {
+            issues.push({
+              id: `dq_scwm_${issueCounter++}`, severity: 'warning', category: 'Suspension Event',
+              title: 'SOURCE_CARD_WRONG_MATCH: Card ไม่ได้อยู่ใน trigger match',
+              description: `suspension id=${r.id}: card ${cId} is from match ${card.match_id}`,
+              entity_type: 'suspension', entity_id: r.id, team_id: r.team_id, action_url: '/admin/suspensions',
+            });
+          }
+        }
+      });
+
+      // TRIGGER_MATCH_NOT_FOUND
+      if (!r.trigger_match_id) {
+        issues.push({
+          id: `dq_tmnf_${issueCounter++}`, severity: 'error', category: 'Suspension Event',
+          title: 'TRIGGER_MATCH_NOT_FOUND: ไม่มี trigger_match_id',
+          description: `suspension id=${r.id} (${r.suspension_type}) has no trigger_match_id`,
+          entity_type: 'suspension', entity_id: r.id, team_id: r.team_id, action_url: '/admin/suspensions',
+        });
+      } else if (!triggerMatch) {
+        issues.push({
+          id: `dq_tmnf2_${issueCounter++}`, severity: 'error', category: 'Suspension Event',
+          title: 'TRIGGER_MATCH_NOT_FOUND: trigger_match_id ไม่พบในตาราง matches',
+          description: `suspension id=${r.id}: trigger_match_id=${r.trigger_match_id} not found`,
+          entity_type: 'suspension', entity_id: r.id, team_id: r.team_id, action_url: '/admin/suspensions',
+        });
+      } else {
+        // TRIGGER_MATCH_HAS_NO_SOURCE_CARD
+        const hasCard = (r.source_card_ids || []).some(
+          (cId: string) => dqCardMap.get(cId)?.match_id === r.trigger_match_id
+        );
+        if (!hasCard) {
+          issues.push({
+            id: `dq_tmnsc_${issueCounter++}`, severity: 'error', category: 'Suspension Event',
+            title: 'TRIGGER_MATCH_HAS_NO_SOURCE_CARD: ไม่มี Card จาก trigger match',
+            description: `suspension id=${r.id}: no source_card links trigger match ${r.trigger_match_id}`,
+            entity_type: 'suspension', entity_id: r.id, team_id: r.team_id, action_url: '/admin/suspensions',
+          });
+        }
+      }
+
+      // serving_match_ids checks
+      (r.serving_match_ids || []).forEach((sId: string) => {
+        const sm = dqMatchMap.get(sId);
+        if (!sm) {
+          issues.push({
+            id: `dq_smnf_${issueCounter++}`, severity: 'error', category: 'Suspension Event',
+            title: 'SERVING_MATCH_NOT_FOUND: ไม่พบ serving match',
+            description: `suspension id=${r.id}: serving match ${sId} not in matches table`,
+            entity_type: 'suspension', entity_id: r.id, team_id: r.team_id, action_url: '/admin/suspensions',
+          });
+        } else {
+          if (sm.status === 'postponed') {
+            issues.push({
+              id: `dq_smp_${issueCounter++}`, severity: 'warning', category: 'Suspension Event',
+              title: 'SERVING_MATCH_POSTPONED: Serving match ถูกเลื่อน',
+              description: `suspension id=${r.id}: serving match ${sId} is postponed`,
+              entity_type: 'suspension', entity_id: r.id, team_id: r.team_id,
+              match_id: sId, action_url: '/admin/suspensions',
+            });
+          }
+          if (sm.status === 'cancelled') {
+            issues.push({
+              id: `dq_smc_${issueCounter++}`, severity: 'warning', category: 'Suspension Event',
+              title: 'SERVING_MATCH_CANCELLED: Serving match ถูกยกเลิก',
+              description: `suspension id=${r.id}: serving match ${sId} is cancelled`,
+              entity_type: 'suspension', entity_id: r.id, team_id: r.team_id,
+              match_id: sId, action_url: '/admin/suspensions',
+            });
+          }
+          if (triggerDate && sm.match_date && sm.match_date <= triggerDate) {
+            issues.push({
+              id: `dq_smbt_${issueCounter++}`, severity: 'error', category: 'Suspension Event',
+              title: 'SERVING_MATCH_BEFORE_TRIGGER: Serving match ก่อน trigger',
+              description: `suspension id=${r.id}: serving ${sId} (${sm.match_date}) ≤ trigger (${triggerDate})`,
+              entity_type: 'suspension', entity_id: r.id, team_id: r.team_id,
+              match_id: sId, action_url: '/admin/suspensions',
+            });
+          }
+          if (sm.home_team_id !== r.team_id && sm.away_team_id !== r.team_id) {
+            issues.push({
+              id: `dq_smwt_${issueCounter++}`, severity: 'error', category: 'Suspension Event',
+              title: 'SERVING_MATCH_WRONG_TEAM: ทีมไม่ได้แข่งใน serving match นี้',
+              description: `suspension id=${r.id}: team ${r.team_id} not in serving match ${sId}`,
+              entity_type: 'suspension', entity_id: r.id, team_id: r.team_id,
+              match_id: sId, action_url: '/admin/suspensions',
+            });
+          }
+          if (sm.season_id !== seasonId || sm.age_group_id !== ageGroupId) {
+            issues.push({
+              id: `dq_smws_${issueCounter++}`, severity: 'error', category: 'Suspension Event',
+              title: 'SERVING_MATCH_WRONG_SEASON: Serving match ต่าง Season/AgeGroup',
+              description: `suspension id=${r.id}: serving match ${sId} has season/ag mismatch`,
+              entity_type: 'suspension', entity_id: r.id, team_id: r.team_id,
+              match_id: sId, action_url: '/admin/suspensions',
+            });
+          }
+        }
+      });
+
+      // BAN_SLOT_COUNT_MISMATCH
+      if ((r.serving_match_ids || []).length > r.ban_matches) {
+        issues.push({
+          id: `dq_bsc_${issueCounter++}`, severity: 'error', category: 'Suspension Event',
+          title: 'BAN_SLOT_COUNT_MISMATCH: จำนวน serving slots เกิน ban_matches',
+          description: `suspension id=${r.id}: ${r.serving_match_ids?.length} serving slots but ban_matches=${r.ban_matches}`,
+          entity_type: 'suspension', entity_id: r.id, team_id: r.team_id, action_url: '/admin/suspensions',
+        });
+      }
+
+      // SERVED_COMPLETED_AT_INCONSISTENT
+      if (r.ban_matches > 0) {
+        const finishedCount = (r.serving_match_ids || []).filter(
+          (id: string) => dqMatchMap.get(id)?.status === 'finished'
+        ).length;
+        const isComplete = !!r.served_completed_at;
+        if (isComplete && finishedCount < r.ban_matches) {
+          issues.push({
+            id: `dq_sca1_${issueCounter++}`, severity: 'warning', category: 'Suspension Event',
+            title: 'SERVED_COMPLETED_AT_INCONSISTENT: แบนยังไม่ครบแต่ served_completed_at ถูกตั้งไว้',
+            description: `suspension id=${r.id}: ${finishedCount}/${r.ban_matches} slots finished but completed_at is set`,
+            entity_type: 'suspension', entity_id: r.id, team_id: r.team_id, action_url: '/admin/suspensions',
+          });
+        }
+        if (!isComplete && finishedCount >= r.ban_matches && r.ban_matches > 0) {
+          issues.push({
+            id: `dq_sca2_${issueCounter++}`, severity: 'warning', category: 'Suspension Event',
+            title: 'SERVED_COMPLETED_AT_INCONSISTENT: แบนครบแล้วแต่ served_completed_at ยังเป็น null',
+            description: `suspension id=${r.id}: all ${r.ban_matches} slot(s) finished but completed_at is null`,
+            entity_type: 'suspension', entity_id: r.id, team_id: r.team_id, action_url: '/admin/suspensions',
+          });
+        }
+      }
+
+      // ACTIVE_BAN_WITHOUT_REMAINING_SCHEDULED_MATCH
+      if (r.ban_matches > 0 && !r.served_completed_at) {
+        const scheduledCount = (r.serving_match_ids || []).filter(
+          (id: string) => dqMatchMap.get(id)?.status === 'scheduled'
+        ).length;
+        if (scheduledCount === 0) {
+          issues.push({
+            id: `dq_abwrs_${issueCounter++}`, severity: 'warning', category: 'Suspension Event',
+            title: 'ACTIVE_BAN_WITHOUT_REMAINING_SCHEDULED_MATCH: แบนค้างอยู่ ไม่พบนัดถัดไป',
+            description: `suspension id=${r.id}: ban_matches=${r.ban_matches} active but no scheduled serving match`,
+            entity_type: 'suspension', entity_id: r.id, team_id: r.team_id, action_url: '/admin/suspensions',
+          });
+        }
+      }
+    });
+
     // Check 8: Staff discipline without reason
     (staffDiscipline || []).forEach((sd: any) => {
       if (sd.status === 'active' && (!sd.reason || sd.reason.trim() === '')) {
