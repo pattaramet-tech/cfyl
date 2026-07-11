@@ -13,6 +13,9 @@ import {
   isDirectRedEjection,
   isEligibleSuspensionServingMatch,
   computeStaleEventIds,
+  buildNormalYellowPointHistory,
+  getCurrentAccumulatedPoints,
+  markSupersededLegacyRecords,
 } from '../suspension-calc';
 
 // ---------------------------------------------------------------------------
@@ -322,5 +325,115 @@ describe('isEligibleSuspensionServingMatch — finished OR scheduled', () => {
 
   it('undefined match is NOT eligible', () => {
     expect(isEligibleSuspensionServingMatch(undefined)).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Scenario A: point history restored (event-based point_sources bug fix)
+// ---------------------------------------------------------------------------
+describe('buildNormalYellowPointHistory — restores full chronological point history', () => {
+  it('MD3/MD4/MD5/MD8 normal yellows → 4 rows, cumulative 0→2→4→6→8', () => {
+    const seasonCards = [
+      { match_id: 'md3', matchday: 3, cards: { yellow: 1, red: 0, second_yellow: 0 }, reason: '1Y' },
+      { match_id: 'md4', matchday: 4, cards: { yellow: 1, red: 0, second_yellow: 0 }, reason: '1Y' },
+      { match_id: 'md5', matchday: 5, cards: { yellow: 1, red: 0, second_yellow: 0 }, reason: '1Y' },
+      { match_id: 'md8', matchday: 8, cards: { yellow: 1, red: 0, second_yellow: 0 }, reason: '1Y' },
+    ];
+    const history = buildNormalYellowPointHistory(seasonCards);
+    expect(history).toHaveLength(4);
+    expect(history.map((h) => [h.matchday, h.points_before, h.points_after])).toEqual([
+      [3, 0, 2],
+      [4, 2, 4],
+      [5, 4, 6],
+      [8, 6, 8],
+    ]);
+  });
+
+  it('ejection matches (second_yellow/direct_red/yellow_red) are excluded — contribute 0 points', () => {
+    const seasonCards = [
+      { match_id: 'md1', matchday: 1, cards: { yellow: 1, red: 0, second_yellow: 0 }, reason: '1Y' },
+      { match_id: 'md2', matchday: 2, cards: { yellow: 0, red: 1, second_yellow: 0 }, reason: '1R' }, // direct red
+      { match_id: 'md3', matchday: 3, cards: { yellow: 1, red: 0, second_yellow: 0 }, reason: '1Y' },
+    ];
+    const history = buildNormalYellowPointHistory(seasonCards);
+    expect(history).toHaveLength(2);
+    expect(history.map((h) => h.matchday)).toEqual([1, 3]);
+    expect(history[1].points_after).toBe(4);
+  });
+
+  it('no yellow history → empty array (never omitted, just empty)', () => {
+    const seasonCards = [
+      { match_id: 'md1', matchday: 1, cards: { yellow: 0, red: 1, second_yellow: 0 }, reason: '1R' },
+    ];
+    expect(buildNormalYellowPointHistory(seasonCards)).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Current points must reflect the LATEST point history, not the frozen
+// trigger-time snapshot stored on the record (Part 5 example: threshold event
+// total_points=6, latest point_sources points_after=8 → current = 8).
+// ---------------------------------------------------------------------------
+describe('getCurrentAccumulatedPoints — live total, not frozen trigger snapshot', () => {
+  it('uses last point_sources.points_after when history exists', () => {
+    const record = {
+      total_points: 6, // frozen at MD5 threshold-crossing time
+      point_sources: [
+        { points_before: 0, points_after: 2 },
+        { points_before: 2, points_after: 4 },
+        { points_before: 4, points_after: 6 },
+        { points_before: 6, points_after: 8 }, // MD8 — after the ban was triggered
+      ],
+    };
+    expect(getCurrentAccumulatedPoints(record)).toBe(8);
+  });
+
+  it('falls back to total_points when point_sources is empty (e.g. ejection record)', () => {
+    expect(getCurrentAccumulatedPoints({ total_points: 0, point_sources: [] })).toBe(0);
+  });
+
+  it('falls back to total_points when point_sources is missing', () => {
+    expect(getCurrentAccumulatedPoints({ total_points: 6 })).toBe(6);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Scenario C: legacy duplicate — event record wins, legacy is superseded
+// ---------------------------------------------------------------------------
+describe('markSupersededLegacyRecords — event-based wins over legacy', () => {
+  it('marks legacy (suspension_type null) as superseded when an event record exists for same player+team', () => {
+    const records = [
+      { player_id: 'p1', team_id: 't1', suspension_type: null, id: 'legacy-1' },
+      { player_id: 'p1', team_id: 't1', suspension_type: 'accumulated_points', id: 'event-1' },
+    ];
+    const result = markSupersededLegacyRecords(records);
+    const legacy = result.find((r) => r.id === 'legacy-1')!;
+    const event = result.find((r) => r.id === 'event-1')!;
+    expect(legacy._superseded).toBe(true);
+    expect(event._superseded).toBe(false);
+  });
+
+  it('does not supersede a legacy record when no event record exists for that player+team', () => {
+    const records = [{ player_id: 'p2', team_id: 't1', suspension_type: null, id: 'legacy-2' }];
+    const result = markSupersededLegacyRecords(records);
+    expect(result[0]._superseded).toBe(false);
+  });
+
+  it('treats suspension_type "legacy" the same as null', () => {
+    const records = [
+      { player_id: 'p3', team_id: 't1', suspension_type: 'legacy', id: 'legacy-3' },
+      { player_id: 'p3', team_id: 't1', suspension_type: 'direct_red', id: 'event-3' },
+    ];
+    const result = markSupersededLegacyRecords(records);
+    expect(result.find((r) => r.id === 'legacy-3')!._superseded).toBe(true);
+  });
+
+  it('never marks event-based records (of any system type) as superseded by each other', () => {
+    const records = [
+      { player_id: 'p4', team_id: 't1', suspension_type: 'accumulated_points', id: 'ev-a' },
+      { player_id: 'p4', team_id: 't1', suspension_type: 'second_yellow', id: 'ev-b' },
+    ];
+    const result = markSupersededLegacyRecords(records);
+    expect(result.every((r) => r._superseded === false)).toBe(true);
   });
 });

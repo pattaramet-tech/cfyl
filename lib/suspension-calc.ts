@@ -258,6 +258,81 @@ export function classifyPlayerMatchDiscipline(
 }
 
 /**
+ * Build the complete chronological normal-yellow-accumulation point history for a player.
+ * Ejection matches (second_yellow/direct_red/yellow_red) contribute 0 points and are excluded —
+ * only normal yellow cards accumulate points toward the ban thresholds.
+ *
+ * This is the single source of truth for point_sources: every suspension record created in a
+ * given recalculation run (ejection or accumulated_points) stores this SAME full array, so the
+ * point history is never lost and always reflects the player's current total, not a frozen
+ * snapshot from the match that originally triggered a ban.
+ */
+export function buildNormalYellowPointHistory(
+  seasonCards: Array<{ match_id: string; matchday: number; cards: CardCount; reason: string }>
+): PointSource[] {
+  const pointSources: PointSource[] = [];
+  let cumulative = 0;
+  for (const card of seasonCards) {
+    const classification = classifyPlayerMatchDiscipline(card.cards);
+    if (classification.eventType !== 'normal_yellow_accumulation') continue;
+
+    const pointsBefore = cumulative;
+    cumulative += classification.accumulatedPointsFromThisMatch;
+    pointSources.push({
+      match_id: card.match_id,
+      matchday: card.matchday,
+      points: classification.accumulatedPointsFromThisMatch,
+      reason: card.reason,
+      points_before: pointsBefore,
+      points_after: cumulative,
+    });
+  }
+  return pointSources;
+}
+
+/**
+ * A suspension record's `total_points` is a frozen snapshot taken when that specific
+ * threshold/ejection was first triggered. The player's CURRENT accumulated total keeps
+ * moving as more normal yellows arrive, and is only reflected in the latest entry of
+ * `point_sources` (see buildNormalYellowPointHistory). Admin and Public must both display
+ * this current value, not the frozen trigger-time snapshot.
+ */
+export function getCurrentAccumulatedPoints(record: {
+  total_points: number;
+  point_sources?: Array<{ points_after: number }> | null;
+}): number {
+  const sources = record.point_sources;
+  if (sources && sources.length > 0) {
+    return sources[sources.length - 1].points_after;
+  }
+  return record.total_points;
+}
+
+/**
+ * Mark legacy (suspension_type null/'legacy') records as superseded when the same
+ * player+team already has an event-based record. Event-based records are authoritative;
+ * a superseded legacy record's suspended_from_match_id may be stale and must never be
+ * treated as an active ban. Shared by Admin and Public so both apply identical rules.
+ */
+export function markSupersededLegacyRecords<
+  T extends { player_id: string; team_id: string; suspension_type?: string | null }
+>(records: T[]): Array<T & { _superseded: boolean }> {
+  const SYSTEM_TYPES = ['accumulated_points', 'second_yellow', 'direct_red', 'yellow_red'];
+  const playersWithEventRecords = new Set<string>();
+  for (const r of records) {
+    if (SYSTEM_TYPES.includes(r.suspension_type ?? '')) {
+      playersWithEventRecords.add(`${r.player_id}::${r.team_id}`);
+    }
+  }
+  return records.map((r) => ({
+    ...r,
+    _superseded:
+      (r.suspension_type == null || r.suspension_type === 'legacy') &&
+      playersWithEventRecords.has(`${r.player_id}::${r.team_id}`),
+  }));
+}
+
+/**
  * CFYL Suspension Thresholds:
  * - 6 pts = 1 match ban
  * - 12 pts = 2 match ban
@@ -816,6 +891,11 @@ export async function recalculatePlayerSuspensionEventBased(
     // Track all suspensions to upsert (separate by event)
     const suspensionsToCreate: Array<any> = [];
 
+    // Complete chronological normal-yellow point history — the single source of truth
+    // reused by every record (ejection or accumulated_points) created below, so the
+    // "ประวัติคะแนนสะสม" history is never lost and always reflects the current total.
+    const pointHistory = buildNormalYellowPointHistory(seasonCards);
+
     // Process each match's cards - iterate in chronological order
     let accumulatedPointsOnly = 0; // Tracks NORMAL yellow points only (no ejection points)
 
@@ -895,7 +975,7 @@ export async function recalculatePlayerSuspensionEventBased(
           ban_matches: eventClassification.ejectionBanMatches,
           suspended_from_match_id: ejection_suspended_from,
           total_points: 0,
-          point_sources: [],
+          point_sources: pointHistory,
           suspension_reason: suspensionReason,
           suspension_details: suspensionDetails,
           updated_at: new Date().toISOString(),
@@ -972,7 +1052,7 @@ export async function recalculatePlayerSuspensionEventBased(
           ban_matches: banMatches,
           suspended_from_match_id: accum_suspended_from,
           total_points: pointsAfter,
-          point_sources: [],
+          point_sources: pointHistory,
           suspension_reason: suspensionReason,
           suspension_details: suspensionDetails,
           updated_at: new Date().toISOString(),

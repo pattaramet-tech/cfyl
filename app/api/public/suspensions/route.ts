@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
+import { markSupersededLegacyRecords } from '@/lib/suspension-calc';
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
@@ -75,9 +76,15 @@ export async function GET(request: NextRequest) {
 
     console.log('[SUSPENSIONS_GET] Fetched', suspensions?.length || 0, 'suspensions');
 
+    // Legacy records superseded by an authoritative event-based record must never reach
+    // Public — their suspended_from_match_id may be stale (e.g. a served MD6 ban whose
+    // old legacy row still points at MD9). Same rule Admin applies; Public simply drops
+    // superseded rows instead of showing them in a collapsed debug section.
+    const active = markSupersededLegacyRecords(suspensions || []).filter((s) => !s._superseded);
+
     // Enrich suspensions with card details for display
     const enriched = await Promise.all(
-      (suspensions || []).map(async (suspension) => {
+      active.map(async (suspension) => {
         // Only fetch card details if player has cards to display
         if (!suspension.player_id || !suspension.season_id) {
           return suspension;

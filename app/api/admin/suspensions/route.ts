@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { verifyAdminAuth } from '@/lib/admin-middleware';
 import { createClient } from '@supabase/supabase-js';
+import { markSupersededLegacyRecords } from '@/lib/suspension-calc';
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -83,20 +84,7 @@ export async function GET(request: NextRequest) {
     // already has event-based records. The event-based record IS the source of truth;
     // the legacy record's suspended_from_match_id may be stale and must not be shown
     // as an active ban alongside (or instead of) the correct event-based record.
-    const SYSTEM_TYPES = ['accumulated_points', 'second_yellow', 'direct_red', 'yellow_red'];
-    const playersWithEventRecords = new Set<string>();
-    for (const r of records) {
-      if (SYSTEM_TYPES.includes((r as any).suspension_type ?? '')) {
-        playersWithEventRecords.add(`${(r as any).player_id}::${(r as any).team_id}`);
-      }
-    }
-
-    const enriched = records.map((r: any) => ({
-      ...r,
-      _superseded:
-        (r.suspension_type == null || r.suspension_type === 'legacy') &&
-        playersWithEventRecords.has(`${r.player_id}::${r.team_id}`),
-    }));
+    const enriched = markSupersededLegacyRecords(records as any[]);
 
     console.log(
       '[ADMIN_SUSPENSIONS_GET] Fetched',

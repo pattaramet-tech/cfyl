@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import type { SuspensionDetails, SuspendedMatchDetail } from '@/lib/suspension-calc';
+import { getCurrentAccumulatedPoints } from '@/lib/suspension-calc';
 import { getSuspensionStatus, getBangkokToday, type SuspensionStatusKey } from '@/lib/suspension-status';
 
 interface SuspensionRecord {
@@ -131,30 +132,34 @@ function SuspensionDetailPanel({ record }: { record: SuspensionRecord }) {
       {/* Point Sources */}
       <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
         <h4 className="font-semibold text-gray-700 mb-3">📊 ประวัติคะแนนสะสม</h4>
-        <div className="overflow-x-auto">
-          <table className="w-full text-xs text-left">
-            <thead>
-              <tr className="text-gray-500 border-b border-gray-200">
-                <th className="pb-2 pr-4">MD</th>
-                <th className="pb-2 pr-4">เหตุการณ์</th>
-                <th className="pb-2 pr-4 text-center">คะแนนที่เพิ่ม</th>
-                <th className="pb-2 pr-4 text-center">คะแนนก่อน</th>
-                <th className="pb-2 text-center">คะแนนหลัง</th>
-              </tr>
-            </thead>
-            <tbody>
-              {record.point_sources.map((src, i) => (
-                <tr key={i} className="border-b border-gray-100 hover:bg-gray-100">
-                  <td className="py-1.5 pr-4 font-semibold text-gray-700">MD{src.matchday}</td>
-                  <td className="py-1.5 pr-4 text-gray-600">{src.reason}</td>
-                  <td className="py-1.5 pr-4 text-center font-bold text-orange-600">+{src.points}</td>
-                  <td className="py-1.5 pr-4 text-center text-gray-500">{src.points_before}</td>
-                  <td className="py-1.5 text-center font-semibold text-gray-800">{src.points_after}</td>
+        {record.point_sources.length === 0 ? (
+          <p className="text-sm text-gray-500">ไม่มีประวัติคะแนนสะสมจากใบเหลือง</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs text-left">
+              <thead>
+                <tr className="text-gray-500 border-b border-gray-200">
+                  <th className="pb-2 pr-4">MD</th>
+                  <th className="pb-2 pr-4">เหตุการณ์</th>
+                  <th className="pb-2 pr-4 text-center">คะแนนที่เพิ่ม</th>
+                  <th className="pb-2 pr-4 text-center">คะแนนก่อน</th>
+                  <th className="pb-2 text-center">คะแนนหลัง</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+              </thead>
+              <tbody>
+                {record.point_sources.map((src, i) => (
+                  <tr key={i} className="border-b border-gray-100 hover:bg-gray-100">
+                    <td className="py-1.5 pr-4 font-semibold text-gray-700">MD{src.matchday}</td>
+                    <td className="py-1.5 pr-4 text-gray-600">{src.reason}</td>
+                    <td className="py-1.5 pr-4 text-center font-bold text-orange-600">+{src.points}</td>
+                    <td className="py-1.5 pr-4 text-center text-gray-500">{src.points_before}</td>
+                    <td className="py-1.5 text-center font-semibold text-gray-800">{src.points_after}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -561,6 +566,7 @@ export default function AdminSuspensionsPage() {
                   const status = getSuspensionStatus(record, today);
                   const isExpanded = expandedId === record.id;
                   const suspendedMatches = record.suspension_details?.suspended_matches || [];
+                  const currentPoints = getCurrentAccumulatedPoints(record);
 
                   return (
                     <>
@@ -580,11 +586,11 @@ export default function AdminSuspensionsPage() {
                         <td className="px-3 py-3 text-center text-gray-500">{record.player?.shirt_no ?? '—'}</td>
                         <td className="px-3 py-3 text-center">
                           <span className={`inline-block px-2 py-0.5 rounded-full font-bold text-xs text-white ${
-                            record.total_points >= 12 ? 'bg-red-600' :
-                            record.total_points >= 6 ? 'bg-orange-500' :
-                            record.total_points > 0 ? 'bg-yellow-500' : 'bg-gray-300'
+                            currentPoints >= 12 ? 'bg-red-600' :
+                            currentPoints >= 6 ? 'bg-orange-500' :
+                            currentPoints > 0 ? 'bg-yellow-500' : 'bg-gray-300'
                           }`}>
-                            {record.total_points} pts
+                            {currentPoints} pts
                           </span>
                         </td>
                         <td className="px-3 py-3 text-center">

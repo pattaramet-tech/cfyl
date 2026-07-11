@@ -5,7 +5,7 @@ import { DisciplineTable } from '@/components/DisciplineTable';
 import { PublicSeasonNav } from '@/components/PublicSeasonNav';
 import { usePublicNav } from '@/lib/use-public-nav';
 import { buildDisciplinePath } from '@/lib/public-slugs';
-import type { SuspensionDetails } from '@/lib/suspension-calc';
+import type { PointSource, SuspensionDetails } from '@/lib/suspension-calc';
 import type { Suspension } from '@/components/DisciplineTable';
 
 interface DisciplineViewProps {
@@ -14,12 +14,13 @@ interface DisciplineViewProps {
 }
 
 interface ApiSuspensionRecord {
+  id: string;
   player_id: string;
   player?: { full_name?: string; shirt_no?: number };
   team?: { name?: string };
   total_points: number;
   ban_matches: number;
-  point_sources?: unknown[];
+  point_sources?: PointSource[];
   suspension_reason?: string | null;
   suspension_details?: SuspensionDetails | null;
   card_details?: Array<{
@@ -55,6 +56,7 @@ export function DisciplineView({ seasonId, ageGroupId }: DisciplineViewProps) {
         if (!active) return;
         setRecords(
           (data || []).map((s) => ({
+            id: s.id,
             player_id: s.player_id,
             full_name: s.player?.full_name || 'Unknown',
             team_name: s.team?.name || 'Unknown Team',

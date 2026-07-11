@@ -1,5 +1,6 @@
 import { createClient } from '@supabase/supabase-js';
 import { NextRequest, NextResponse } from 'next/server';
+import { markSupersededLegacyRecords, getSuspensionServingState } from '@/lib/suspension-calc';
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -190,6 +191,9 @@ export async function GET(
       team_id,
       total_points,
       ban_matches,
+      suspension_type,
+      serving_match_ids,
+      served_completed_at,
       suspended_from_match_id,
       suspension_reason,
       suspension_details,
@@ -228,16 +232,34 @@ export async function GET(
       if (!s?.id) return;
       suspensionMap.set(s.id, s);
     });
-
     const suspensions = Array.from(suspensionMap.values());
 
-    // Filter active suspensions (based on ban_matches or total_points)
-    const activeSuspensions = (suspensions || []).filter((s: any) => {
-      const banMatches = Number(s.ban_matches || 0);
-      const totalPoints = Number(s.total_points || 0);
+    // Legacy records superseded by an authoritative event-based record must never be
+    // shown as banned — their suspended_from_match_id may be stale.
+    const nonSuperseded = markSupersededLegacyRecords(suspensions).filter(
+      (s) => !s._superseded && Number(s.ban_matches || 0) > 0
+    );
 
-      return banMatches > 0 || totalPoints >= 6;
-    });
+    // Determine TRUE active status per record: remainingCount > 0, not ban_matches > 0
+    // or total_points >= 6 (those describe history/threshold, not current serving state).
+    const referencedMatchIds = new Set<string>();
+    for (const s of nonSuperseded) {
+      for (const id of s.serving_match_ids || []) referencedMatchIds.add(id);
+      if (s.suspended_from_match_id) referencedMatchIds.add(s.suspended_from_match_id);
+    }
+
+    const matchesById = new Map<string, any>();
+    if (referencedMatchIds.size > 0) {
+      const { data: referencedMatches } = await supabaseAdmin
+        .from('matches')
+        .select('id, status')
+        .in('id', Array.from(referencedMatchIds));
+      for (const m of referencedMatches || []) matchesById.set(m.id, m);
+    }
+
+    const activeSuspensions = nonSuperseded.filter(
+      (s) => getSuspensionServingState(s, matchesById).remainingCount > 0
+    );
 
     // Normalize suspensions response with player names and all details
     const suspensionsWithPlayer = activeSuspensions.map((s: any) => ({

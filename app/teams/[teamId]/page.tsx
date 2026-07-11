@@ -561,7 +561,7 @@ export default function TeamProfilePage() {
         ) : (
           <div className="space-y-2">
             {suspensions.map((susp) => (
-                <div key={susp.player_id} className="cfyl-card p-3 sm:p-4">
+                <div key={susp.id} className="cfyl-card p-3 sm:p-4">
                   <div className="flex items-center justify-between gap-3">
                     <div className="flex items-center gap-3 flex-1 min-w-0">
                       <div className="text-xl shrink-0">🚨</div>
