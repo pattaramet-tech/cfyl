@@ -69,20 +69,41 @@ async function getActiveSeason(
   const { data: seasons } = await supabase
     .from('seasons')
     .select('id')
-    .order('created_at', { ascending: false })
-    .limit(1);
+    .order('created_at', { ascending: false });
 
   if (!seasons?.length) return null;
 
   const { data: ageGroups } = await supabase
     .from('age_groups')
-    .select('id')
-    .eq('season_id', seasons[0].id)
-    .limit(1);
+    .select('id, season_id')
+    .in('season_id', seasons.map((s: any) => s.id))
+    .order('sort_order');
 
-  if (!ageGroups?.length) return null;
+  // Find the first season+age_group combination that has matches with cards
+  for (const s of seasons) {
+    for (const ag of (ageGroups || []).filter((a: any) => a.season_id === s.id)) {
+      const { data: matches } = await supabase
+        .from('matches')
+        .select('id')
+        .eq('season_id', s.id)
+        .eq('age_group_id', ag.id)
+        .limit(1);
 
-  return { seasonId: seasons[0].id, ageGroupId: ageGroups[0].id };
+      if (!matches?.length) continue;
+
+      const { data: cards } = await supabase
+        .from('cards')
+        .select('id')
+        .in('match_id', matches.map((m: any) => m.id))
+        .limit(1);
+
+      if (cards?.length) {
+        return { seasonId: s.id, ageGroupId: ag.id };
+      }
+    }
+  }
+
+  return null;
 }
 
 async function getMatchIdsForSeason(
@@ -325,6 +346,27 @@ function verifyCommonFields(
 // ---------------------------------------------------------------------------
 // Main test runner
 // ---------------------------------------------------------------------------
+async function checkBlockingConstraint() {
+  // The old unique constraint on (season_id, age_group_id, player_id, team_id) blocks
+  // event-based insertion. Detect it early so the error is actionable.
+  const { data: constraints } = await supabase
+    .from('pg_constraint' as any)
+    .select('conname')
+    .eq('conrelid', 'public.suspensions' as any);
+
+  // pg_constraint isn't accessible via PostgREST — use a known workaround:
+  // try inserting a test event for a non-existent player to trigger the constraint error
+  // vs the FK error. Instead, just check by attempting a select on information_schema.
+  const { data: cols } = await supabase
+    .from('information_schema.table_constraints' as any)
+    .select('constraint_name')
+    .eq('table_name', 'suspensions' as any)
+    .eq('constraint_name', 'suspensions_season_id_age_group_id_player_id_team_id_key' as any);
+
+  // If we can't query it, fall through — the error will surface on first insert
+  return (cols || []).length > 0;
+}
+
 async function main() {
   console.log('\n══════════════════════════════════════════════════════════');
   console.log('  Phase 5.2C — Production Suspension Scenario Tests');
