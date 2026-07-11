@@ -1126,6 +1126,72 @@ export async function recalculateSeasonSuspensions(
   return { processed: players.length, success, failed };
 }
 
+// ─── Public Match Suspension Check ────────────────────────────────────────────
+
+const EVENT_SUSPENSION_TYPES = [
+  'accumulated_points',
+  'second_yellow',
+  'direct_red',
+  'yellow_red',
+] as const;
+
+/**
+ * Determine whether a suspension record makes a player "actively suspended"
+ * for a specific match, when that match has the given status.
+ *
+ * Decision rules:
+ *
+ * Event-based records (suspension_type IN system types):
+ *   1. If served_completed_at is set → fully served, never active.
+ *   2. serving_match_ids is the SOLE source of truth.
+ *   3. A serving slot is "active" only when the match is still SCHEDULED.
+ *      A FINISHED slot means the player already served their ban for that match;
+ *      it must not re-appear as "currently suspended".
+ *   4. suspended_from_match_id and suspension_details are NOT consulted.
+ *
+ * Legacy / null / manual records:
+ *   Use the original fallback order: suspended_from_match_id, then
+ *   suspension_details.suspended_matches.
+ *
+ * @param suspension          A suspension DB row with all event fields populated.
+ * @param matchId             The match ID being checked.
+ * @param currentMatchStatus  Status of that match ('scheduled'|'finished'|etc.).
+ */
+export function isSuspendedForMatch(
+  suspension: any,
+  matchId: string,
+  currentMatchStatus: string
+): boolean {
+  const type: string | null = suspension.suspension_type ?? null;
+  const isEventBased =
+    type !== null &&
+    (EVENT_SUSPENSION_TYPES as readonly string[]).includes(type);
+
+  if (isEventBased) {
+    // Fully served → never active
+    if (suspension.served_completed_at != null) return false;
+
+    // serving_match_ids is the only source of truth for event-based records
+    const servingIds: string[] = Array.isArray(suspension.serving_match_ids)
+      ? suspension.serving_match_ids
+      : [];
+    if (!servingIds.includes(matchId)) return false;
+
+    // Active only for SCHEDULED matches.
+    // A FINISHED match in serving_match_ids is a served slot, not an active ban.
+    return currentMatchStatus === 'scheduled';
+  }
+
+  // Legacy (suspension_type IS NULL or 'legacy') or manual:
+  // use the original fallback order.
+  if (suspension.suspended_from_match_id === matchId) return true;
+  const suspendedMatches = suspension.suspension_details?.suspended_matches;
+  if (Array.isArray(suspendedMatches)) {
+    return suspendedMatches.some((m: any) => m.match_id === matchId);
+  }
+  return false;
+}
+
 // ─── Serving Match Refresh ────────────────────────────────────────────────────
 
 const SYSTEM_SUSPENSION_TYPES = [

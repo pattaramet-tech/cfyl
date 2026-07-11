@@ -1,6 +1,7 @@
 import { supabase } from '@/lib/supabase';
 import { createClient } from '@supabase/supabase-js';
 import { NextRequest, NextResponse } from 'next/server';
+import { isSuspendedForMatch } from '@/lib/suspension-calc';
 
 export const dynamic = 'force-dynamic';
 
@@ -13,22 +14,49 @@ if (!supabaseUrl || !supabaseServiceKey) {
 
 const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey);
 
-function isSuspendedForMatch(suspension: any, matchId: string): boolean {
-  // Check event-based serving_match_ids array (new format)
-  if (Array.isArray(suspension.serving_match_ids)) {
-    if (suspension.serving_match_ids.includes(matchId)) return true;
+const SYSTEM_SUSPENSION_TYPES = [
+  'accumulated_points',
+  'second_yellow',
+  'direct_red',
+  'yellow_red',
+] as const;
+
+/**
+ * Deduplicate suspension records by player_id + team_id.
+ * When a player has both legacy (null type) and event-based records,
+ * only use event-based records to determine active suspension.
+ * Prevents a stale legacy record from overriding a correctly-served event record.
+ */
+function filterActiveSuspendedPlayers(
+  suspensions: any[],
+  matchId: string,
+  matchStatus: string
+): any[] {
+  // Group by player_id + team_id
+  const byPlayer = new Map<string, any[]>();
+  for (const s of suspensions) {
+    const key = `${s.player_id}::${s.team_id}`;
+    if (!byPlayer.has(key)) byPlayer.set(key, []);
+    byPlayer.get(key)!.push(s);
   }
 
-  // Check legacy suspended_from_match_id (old format)
-  if (suspension.suspended_from_match_id === matchId) return true;
+  const result: any[] = [];
 
-  // Check suspension_details.suspended_matches (enriched data)
-  const suspendedMatches = suspension.suspension_details?.suspended_matches;
-  if (Array.isArray(suspendedMatches)) {
-    return suspendedMatches.some((m: any) => m.match_id === matchId);
+  for (const records of byPlayer.values()) {
+    // Prefer event-based records; if any exist, ignore legacy for this player
+    const eventBased = records.filter((r) =>
+      (SYSTEM_SUSPENSION_TYPES as readonly string[]).includes(r.suspension_type ?? '')
+    );
+    const toCheck = eventBased.length > 0 ? eventBased : records;
+
+    // Use the first record that makes the player actively suspended for this match
+    const active = toCheck.find((r) =>
+      isSuspendedForMatch(r, matchId, matchStatus)
+    );
+    if (active) result.push(active);
   }
 
-  return false;
+  return result;
 }
 
 export async function GET(
@@ -179,9 +207,13 @@ export async function GET(
       age_group,
     };
 
-    // Filter suspended players for this match
-    const suspendedPlayers = (suspensions || []).filter((s) =>
-      isSuspendedForMatch(s, match.id)
+    // Filter and deduplicate suspended players for this match.
+    // Uses event-based records as source of truth; ignores legacy fallback when
+    // an event-based record exists for the same player+team combination.
+    const suspendedPlayers = filterActiveSuspendedPlayers(
+      suspensions || [],
+      match.id,
+      match.status ?? 'scheduled'
     );
 
     return NextResponse.json({
