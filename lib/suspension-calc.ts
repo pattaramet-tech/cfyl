@@ -293,6 +293,28 @@ function getHighestThresholdCrossed(pointsBefore: number, pointsAfter: number): 
   return 0;
 }
 
+/**
+ * Pure: given a list of existing system-generated events and a set of desired event keys,
+ * return the IDs of events that are no longer needed (stale).
+ * Never receives legacy or manual records — the caller's DB query filters those out.
+ */
+export function computeStaleEventIds(
+  existingSystemEvents: Array<{
+    id: string;
+    trigger_match_id: string | null;
+    suspension_type: string | null;
+    accumulated_threshold: number | null;
+  }>,
+  desiredKeys: Set<string>
+): string[] {
+  return existingSystemEvents
+    .filter((e) => {
+      const key = `${e.trigger_match_id}::${e.suspension_type}::${e.accumulated_threshold ?? 0}`;
+      return !desiredKeys.has(key);
+    })
+    .map((e) => e.id);
+}
+
 function getTriggerEventText(reason: string, points: number): string {
   if (reason.includes('R') && reason.includes('Y')) return `ใบเหลือง + ใบแดง (${points} คะแนน)`;
   if (reason.includes('R')) return `ใบแดงโดยตรง (${points} คะแนน)`;
@@ -317,6 +339,8 @@ export async function getSeasonCards(
   match_time: string | null;
   points: number;
   cards: CardCount;
+  card_ids: string[];
+  yellow_card_ids: string[];
   reason: string;
   is_second_yellow_ejection: boolean;
   is_direct_red: boolean;
@@ -341,7 +365,7 @@ export async function getSeasonCards(
     // Query 2: get all cards for this player in those matches (including match_date/time for sorting)
     const { data: allCards, error } = await supabaseAdmin
       .from('cards')
-      .select(`match_id, card_type, match:match_id(matchday, match_date, match_time)`)
+      .select(`id, match_id, card_type, match:match_id(matchday, match_date, match_time)`)
       .eq('player_id', playerId)
       .in('match_id', matchRows.map((m) => m.id));
 
@@ -352,7 +376,7 @@ export async function getSeasonCards(
 
     // Group cards by match_id
     const matchCardMap: Record<string, {
-      cards: Array<{ card_type: string }>;
+      cards: Array<{ id: string; card_type: string }>;
       matchday: number;
       match_date: string | null;
       match_time: string | null;
@@ -368,7 +392,7 @@ export async function getSeasonCards(
           match_time: card.match?.match_time || null,
         };
       }
-      matchCardMap[matchId].cards.push(card);
+      matchCardMap[matchId].cards.push({ id: card.id, card_type: card.card_type });
     });
 
     // Calculate points per match
@@ -379,6 +403,8 @@ export async function getSeasonCards(
       match_time: string | null;
       points: number;
       cards: CardCount;
+      card_ids: string[];
+      yellow_card_ids: string[];
       reason: string;
       is_second_yellow_ejection: boolean;
       is_direct_red: boolean;
@@ -412,6 +438,8 @@ export async function getSeasonCards(
           match_time: matchData.match_time,
           points,
           cards: count,
+          card_ids: matchData.cards.map((c) => c.id),
+          yellow_card_ids: matchData.cards.filter((c) => c.card_type === 'yellow').map((c) => c.id),
           reason,
           is_second_yellow_ejection: isSecondYellow,
           is_direct_red: isDirectRed,
@@ -446,7 +474,7 @@ export async function getSeasonCards(
  * Only scheduled matches can be used to serve suspensions.
  * Postponed/cancelled matches are not eligible because they haven't been actually played yet.
  */
-function isEligibleSuspensionServingMatch(match: any): boolean {
+export function isEligibleSuspensionServingMatch(match: any): boolean {
   return match?.status === 'scheduled';
 }
 
@@ -834,7 +862,7 @@ export async function recalculatePlayerSuspensionEventBased(
           suspension_type: suspensionType,
           trigger_match_id: card.match_id,
           accumulated_threshold: null,
-          source_card_ids: [card.match_id], // Track source match
+          source_card_ids: card.card_ids,
           serving_match_ids: servingMatchIds,
           ban_matches: eventClassification.ejectionBanMatches,
           suspended_from_match_id: servingMatchIds[0] || null,
@@ -899,7 +927,7 @@ export async function recalculatePlayerSuspensionEventBased(
           suspension_type: 'accumulated_points',
           trigger_match_id: card.match_id,
           accumulated_threshold: thresholdCrossed,
-          source_card_ids: [card.match_id], // Track source match
+          source_card_ids: card.yellow_card_ids,
           serving_match_ids: servingMatchIds,
           ban_matches: banMatches,
           suspended_from_match_id: servingMatchIds[0] || null,
@@ -914,27 +942,79 @@ export async function recalculatePlayerSuspensionEventBased(
       previousPoints = pointsAfter;
     }
 
-    // Upsert all suspensions (unique index handles duplicates)
-    if (suspensionsToCreate.length === 0) {
-      console.log(`[SUSPENSION_CALC_V2] No suspensions triggered for player=${playerId}`);
-      console.timeEnd(timerTotal);
-      return [];
-    }
-
-    const { error } = await supabaseAdmin
+    // Fetch existing system-generated events (excludes legacy and manual via suspension_type filter)
+    const { data: existingSystemEvents } = await supabaseAdmin
       .from('suspensions')
-      .upsert(suspensionsToCreate, {
-        onConflict: 'player_id,team_id,trigger_match_id,suspension_type,accumulated_threshold',
-      });
+      .select('id, trigger_match_id, suspension_type, accumulated_threshold')
+      .eq('player_id', playerId)
+      .eq('team_id', teamId)
+      .eq('season_id', seasonId)
+      .eq('age_group_id', ageGroupId)
+      .in('suspension_type', ['accumulated_points', 'second_yellow', 'direct_red', 'yellow_red']);
 
-    if (error) {
-      console.error('[SUSPENSION_CALC_V2] Upsert error:', error);
-      throw error;
+    const desiredKeys = new Set(
+      suspensionsToCreate.map(
+        (s) => `${s.trigger_match_id}::${s.suspension_type}::${s.accumulated_threshold ?? 0}`
+      )
+    );
+    const staleIds = computeStaleEventIds(existingSystemEvents || [], desiredKeys);
+
+    // Upsert each desired event — explicit query-then-insert/update avoids expression index conflict
+    const results: any[] = [];
+
+    for (const s of suspensionsToCreate) {
+      let findQuery = supabaseAdmin
+        .from('suspensions')
+        .select('id')
+        .eq('player_id', s.player_id)
+        .eq('team_id', s.team_id)
+        .eq('season_id', s.season_id)
+        .eq('age_group_id', s.age_group_id)
+        .eq('trigger_match_id', s.trigger_match_id)
+        .eq('suspension_type', s.suspension_type);
+
+      if (s.accumulated_threshold == null) {
+        findQuery = findQuery.is('accumulated_threshold', null);
+      } else {
+        findQuery = findQuery.eq('accumulated_threshold', s.accumulated_threshold);
+      }
+
+      const { data: existing } = await findQuery.maybeSingle();
+
+      if (existing?.id) {
+        const { error: updateError } = await supabaseAdmin
+          .from('suspensions')
+          .update(s)
+          .eq('id', existing.id);
+        if (updateError) throw updateError;
+        results.push({ ...s, id: existing.id });
+      } else {
+        const { data: inserted, error: insertError } = await supabaseAdmin
+          .from('suspensions')
+          .insert(s)
+          .select()
+          .single();
+        if (insertError) throw insertError;
+        results.push(inserted);
+      }
     }
 
-    console.log(`[SUSPENSION_CALC_V2] Done: created ${suspensionsToCreate.length} suspension events`);
+    // Delete stale events after upsert to minimise gap in suspension coverage
+    if (staleIds.length > 0) {
+      const { error: deleteError } = await supabaseAdmin
+        .from('suspensions')
+        .delete()
+        .in('id', staleIds);
+      if (deleteError) {
+        console.error('[SUSPENSION_CALC_V2] Failed to delete stale events:', deleteError);
+      } else {
+        console.log(`[SUSPENSION_CALC_V2] Deleted ${staleIds.length} stale event(s)`);
+      }
+    }
+
+    console.log(`[SUSPENSION_CALC_V2] Done: ${results.length} upserted, ${staleIds.length} stale removed`);
     console.timeEnd(timerTotal);
-    return suspensionsToCreate;
+    return results;
   } catch (error) {
     console.timeEnd(timerTotal);
     console.error('[SUSPENSION_CALC_V2] Error:', error);

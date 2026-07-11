@@ -7,6 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
+    "test": "vitest run",
     "assign:teams": "ts-node scripts/assign-teams-to-divisions.ts",
     "import:staffs": "ts-node scripts/import-staffs-from-xlsx.ts"
   },
@@ -28,6 +29,7 @@
     "eslint-config-next": "16.2.9",
     "tailwindcss": "^4",
     "ts-node": "^10.9.2",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vitest": "^4.1.10"
   }
 }
