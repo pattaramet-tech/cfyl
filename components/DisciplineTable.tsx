@@ -1,5 +1,5 @@
-import type { PointSource, SuspensionDetails, SuspendedMatchDetail } from '@/lib/suspension-calc';
-import { getCurrentAccumulatedPoints } from '@/lib/suspension-calc';
+import type { PointSource, SuspensionDetails, SuspendedMatchDetail } from '@/lib/suspension-shared';
+import { getCurrentAccumulatedPoints } from '@/lib/suspension-shared';
 import { getSuspensionStatus, getBangkokToday } from '@/lib/suspension-status';
 
 interface CardDetail {

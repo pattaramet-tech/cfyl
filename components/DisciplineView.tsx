@@ -5,7 +5,7 @@ import { DisciplineTable } from '@/components/DisciplineTable';
 import { PublicSeasonNav } from '@/components/PublicSeasonNav';
 import { usePublicNav } from '@/lib/use-public-nav';
 import { buildDisciplinePath } from '@/lib/public-slugs';
-import type { PointSource, SuspensionDetails } from '@/lib/suspension-calc';
+import type { PointSource, SuspensionDetails } from '@/lib/suspension-shared';
 import type { Suspension } from '@/components/DisciplineTable';
 
 interface DisciplineViewProps {

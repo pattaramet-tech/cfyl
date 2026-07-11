@@ -1,8 +1,8 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import type { SuspensionDetails, SuspendedMatchDetail } from '@/lib/suspension-calc';
-import { getCurrentAccumulatedPoints } from '@/lib/suspension-calc';
+import type { SuspensionDetails, SuspendedMatchDetail } from '@/lib/suspension-shared';
+import { getCurrentAccumulatedPoints } from '@/lib/suspension-shared';
 import { getSuspensionStatus, getBangkokToday, type SuspensionStatusKey } from '@/lib/suspension-status';
 
 interface SuspensionRecord {
