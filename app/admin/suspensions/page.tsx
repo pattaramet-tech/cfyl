@@ -97,20 +97,30 @@ function SuspensionDetailPanel({ record }: { record: SuspensionRecord }) {
       </div>
 
       {/* Suspended Matches */}
-      <div className="bg-red-50 border border-red-200 rounded-lg p-4">
-        <h4 className="font-semibold text-red-800 mb-3">
-          🚫 นัดที่ถูกระงับการแข่งขัน ({d.suspended_matches.length > 0 ? d.suspended_matches.length : 'ยังไม่พบโปรแกรม'})
-        </h4>
-        {d.suspended_matches.length > 0 ? (
-          <div>
-            {d.suspended_matches.map((m, i) => (
-              <SuspendedMatchRow key={m.match_id} match={m} index={i} />
-            ))}
+      {(() => {
+        const servedSlots = d.suspended_matches.filter((m) => m.status === 'finished').length;
+        const remainingSlots = d.suspended_matches.filter((m) => m.status === 'scheduled').length;
+        const allServed = d.suspended_matches.length > 0 && servedSlots >= d.ban_matches_count;
+        return (
+          <div className={`border rounded-lg p-4 ${allServed ? 'bg-slate-50 border-slate-200' : 'bg-red-50 border-red-200'}`}>
+            <h4 className={`font-semibold mb-2 ${allServed ? 'text-slate-600' : 'text-red-800'}`}>
+              {allServed ? '✅ นัดใช้โทษ' : '🚫 นัดที่ถูกระงับการแข่งขัน'}{' '}
+              <span className="text-xs font-normal">
+                (ใช้โทษแล้ว {servedSlots}/{d.ban_matches_count} นัด{remainingSlots > 0 ? ` · เหลือ ${remainingSlots} นัด` : ''})
+              </span>
+            </h4>
+            {d.suspended_matches.length > 0 ? (
+              <div>
+                {d.suspended_matches.map((m, i) => (
+                  <SuspendedMatchRow key={m.match_id} match={m} index={i} />
+                ))}
+              </div>
+            ) : (
+              <p className="text-sm text-gray-500">ไม่พบโปรแกรมแข่งขันนัดถัดไปของทีม</p>
+            )}
           </div>
-        ) : (
-          <p className="text-sm text-gray-500">ไม่พบโปรแกรมแข่งขันนัดถัดไปของทีม</p>
-        )}
-      </div>
+        );
+      })()}
 
       {/* Point Sources */}
       <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">

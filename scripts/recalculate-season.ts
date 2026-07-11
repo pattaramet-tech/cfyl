@@ -143,7 +143,7 @@ async function validate(
     ok(`${agCode}: No system events — nothing to validate`);
   }
 
-  // 4. serving_match_ids — all must be scheduled
+  // 4. serving_match_ids — must be scheduled (remaining) OR finished (served); never postponed/cancelled
   const allServingIds = systemRows.flatMap(r => r.serving_match_ids || []);
   if (allServingIds.length > 0) {
     const uniqueServingIds = [...new Set(allServingIds)];
@@ -152,20 +152,22 @@ async function validate(
       .select('id, status')
       .in('id', uniqueServingIds);
     const matchMap = new Map((matchCheck || []).map((m: any) => [m.id, m.status]));
-    const nonScheduled = uniqueServingIds.filter(id => {
+    const invalid = uniqueServingIds.filter(id => {
       const status = matchMap.get(id);
-      return !status || status !== 'scheduled';
+      return !status || (status !== 'scheduled' && status !== 'finished');
     });
-    if (nonScheduled.length > 0) {
-      fail(`${agCode}: ${nonScheduled.length} serving_match_ids are non-scheduled or missing`);
-      for (const id of nonScheduled.slice(0, 5)) {
+    if (invalid.length > 0) {
+      fail(`${agCode}: ${invalid.length} serving_match_ids are postponed/cancelled/missing`);
+      for (const id of invalid.slice(0, 5)) {
         console.log(`     ${id} → status: ${matchMap.get(id) ?? 'NOT FOUND'}`);
       }
     } else {
-      ok(`${agCode}: All ${uniqueServingIds.length} serving_match_ids are scheduled matches`);
+      const scheduledCount = uniqueServingIds.filter(id => matchMap.get(id) === 'scheduled').length;
+      const finishedCount = uniqueServingIds.filter(id => matchMap.get(id) === 'finished').length;
+      ok(`${agCode}: serving_match_ids valid — ${scheduledCount} scheduled (remaining), ${finishedCount} finished (served)`);
     }
   } else {
-    ok(`${agCode}: No serving_match_ids to validate (no future fixtures or no active bans)`);
+    ok(`${agCode}: No serving_match_ids to validate (no active bans)`);
   }
 
   // 5. Stale system events — trigger_match_id has no cards for the player

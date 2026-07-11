@@ -214,6 +214,8 @@ export async function GET(request: NextRequest) {
           });
           continue;
         }
+        // finished = valid served slot; scheduled = valid remaining slot
+        // postponed/cancelled = stale, needs refresh
         if (sm.status === 'postponed') {
           issues.push({
             suspension_id: r.id, player_id: r.player_id, team_id: r.team_id,

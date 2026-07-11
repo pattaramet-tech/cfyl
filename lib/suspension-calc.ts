@@ -471,25 +471,34 @@ export async function getSeasonCards(
 
 /**
  * Check if a match is eligible to be counted as a suspension-serving match.
- * Only scheduled matches can be used to serve suspensions.
- * Postponed/cancelled matches are not eligible because they haven't been actually played yet.
+ * Finished matches count as served slots; scheduled matches count as remaining slots.
+ * Postponed/cancelled matches are skipped — they do not consume a ban slot.
+ *
+ * Key invariant: a finished chronological match must never be skipped merely because
+ * recalculation runs after the match has already been played.
  */
 export function isEligibleSuspensionServingMatch(match: any): boolean {
-  return match?.status === 'scheduled';
+  return match?.status === 'scheduled' || match?.status === 'finished';
 }
 
 /**
- * Find the next N matches for a team after a trigger match.
+ * Find the next N chronological serving slots for a team after a trigger match.
  * Uses date-based ordering (match_date ASC → match_time ASC → matchday ASC).
  * Falls back to matchday number comparison when dates are absent.
- * Only includes scheduled matches as eligible for suspension serving.
+ *
+ * Eligible slots: scheduled (remaining) OR finished (already served).
+ * Skipped: postponed, cancelled.
+ *
+ * @param excludeMatchIds  Match IDs already accounted for as served — excluded from results
+ *                         to prevent double-counting when refreshing existing suspensions.
  */
 export async function findNextMatchesForSuspension(
   teamId: string,
   seasonId: string,
   ageGroupId: string,
   triggerMatchId: string,
-  count: number
+  count: number,
+  excludeMatchIds: string[] = []
 ): Promise<SuspendedMatchDetail[]> {
   console.log(
     `[SUSPENSION_CALC] findNextMatchesForSuspension: teamId=${teamId} triggerMatchId=${triggerMatchId} count=${count}`
@@ -536,10 +545,17 @@ export async function findNextMatchesForSuspension(
 
   console.log(`[SUSPENSION_CALC] Total team matches found (excl. trigger): ${(allMatches || []).length}`);
 
+  // Build exclusion set from already-served IDs
+  const excludeSet = new Set(excludeMatchIds);
+
   // Step 3: Filter matches that come after the trigger and are eligible for suspension serving
   const candidates = (allMatches || []).filter((m: any) => {
-    // Only scheduled matches are eligible to serve as suspension matches
+    // Finished or scheduled — skip postponed/cancelled
     if (!isEligibleSuspensionServingMatch(m)) {
+      return false;
+    }
+    // Skip already-accounted-for served matches
+    if (excludeSet.has(m.id)) {
       return false;
     }
 
@@ -585,8 +601,8 @@ export async function findNextMatchesForSuspension(
   }));
 
   console.log(
-    `[SUSPENSION_CALC] Next scheduled matches found (${result.length}):`,
-    result.map((m) => `MD${m.matchday}(${m.match_date})`).join(', ') || 'none'
+    `[SUSPENSION_CALC] Next serving slots found (${result.length}):`,
+    result.map((m) => `MD${m.matchday}(${m.match_date},${m.status})`).join(', ') || 'none'
   );
 
   return result;
@@ -849,9 +865,21 @@ export async function recalculatePlayerSuspensionEventBased(
         };
 
         const servingMatchIds = suspendedMatches.map((m) => m.match_id);
+        // First remaining SCHEDULED match (null when fully served)
+        const ejection_suspended_from = suspendedMatches.find((m) => m.status === 'scheduled')?.match_id ?? null;
+        const ejection_served_slots = suspendedMatches.filter((m) => m.status === 'finished').length;
+        const ejection_served_completed_at =
+          ejection_served_slots >= eventClassification.ejectionBanMatches &&
+          eventClassification.ejectionBanMatches > 0
+            ? new Date().toISOString()
+            : null;
+        // Reason shows only remaining scheduled serving matches
+        const ejection_scheduled = suspendedMatches.filter((m) => m.status === 'scheduled');
         const suspensionReason =
-          suspendedMatches.length > 0
-            ? `${suspensionType} - แบน ${eventClassification.ejectionBanMatches} นัด (${suspendedMatches.map((m) => `MD${m.matchday}`).join(', ')})`
+          ejection_scheduled.length > 0
+            ? `${suspensionType} - แบน ${eventClassification.ejectionBanMatches} นัด (${ejection_scheduled.map((m) => `MD${m.matchday}`).join(', ')})`
+            : ejection_served_completed_at
+            ? `${suspensionType} - พ้นโทษแบน ${eventClassification.ejectionBanMatches} นัด แล้ว`
             : `${suspensionType} - แบน ${eventClassification.ejectionBanMatches} นัด (ไม่พบโปรแกรมนัดถัดไป)`;
 
         suspensionsToCreate.push({
@@ -865,12 +893,13 @@ export async function recalculatePlayerSuspensionEventBased(
           source_card_ids: card.card_ids,
           serving_match_ids: servingMatchIds,
           ban_matches: eventClassification.ejectionBanMatches,
-          suspended_from_match_id: servingMatchIds[0] || null,
+          suspended_from_match_id: ejection_suspended_from,
           total_points: 0,
           point_sources: [],
           suspension_reason: suspensionReason,
           suspension_details: suspensionDetails,
           updated_at: new Date().toISOString(),
+          ...(ejection_served_completed_at ? { served_completed_at: ejection_served_completed_at } : {}),
         });
       }
     }
@@ -914,9 +943,20 @@ export async function recalculatePlayerSuspensionEventBased(
         };
 
         const servingMatchIds = suspendedMatches.map((m) => m.match_id);
+        // First remaining SCHEDULED match (null when fully served)
+        const accum_suspended_from = suspendedMatches.find((m) => m.status === 'scheduled')?.match_id ?? null;
+        const accum_served_slots = suspendedMatches.filter((m) => m.status === 'finished').length;
+        const accum_served_completed_at =
+          accum_served_slots >= banMatches && banMatches > 0
+            ? new Date().toISOString()
+            : null;
+        // Reason shows only remaining scheduled serving matches
+        const accum_scheduled = suspendedMatches.filter((m) => m.status === 'scheduled');
         const suspensionReason =
-          suspendedMatches.length > 0
-            ? `สะสมคะแนน ${thresholdCrossed} คะแนน - แบน ${banMatches} นัด (${suspendedMatches.map((m) => `MD${m.matchday}`).join(', ')})`
+          accum_scheduled.length > 0
+            ? `สะสมคะแนน ${thresholdCrossed} คะแนน - แบน ${banMatches} นัด (${accum_scheduled.map((m) => `MD${m.matchday}`).join(', ')})`
+            : accum_served_completed_at
+            ? `สะสมคะแนน ${thresholdCrossed} คะแนน - พ้นโทษแบน ${banMatches} นัด แล้ว`
             : `สะสมคะแนน ${thresholdCrossed} คะแนน - แบน ${banMatches} นัด (ไม่พบโปรแกรมนัดถัดไป)`;
 
         suspensionsToCreate.push({
@@ -930,12 +970,13 @@ export async function recalculatePlayerSuspensionEventBased(
           source_card_ids: card.yellow_card_ids,
           serving_match_ids: servingMatchIds,
           ban_matches: banMatches,
-          suspended_from_match_id: servingMatchIds[0] || null,
+          suspended_from_match_id: accum_suspended_from,
           total_points: pointsAfter,
           point_sources: [],
           suspension_reason: suspensionReason,
           suspension_details: suspensionDetails,
           updated_at: new Date().toISOString(),
+          ...(accum_served_completed_at ? { served_completed_at: accum_served_completed_at } : {}),
         });
       }
 
@@ -1209,21 +1250,24 @@ export async function refreshSuspensionServingMatches(params: {
       const { servedIds } = classifyServingMatchIds(currentServingIds, matchMap);
       const remainingNeeded = Math.max(0, event.ban_matches - servedIds.length);
 
-      // Find replacement scheduled matches for remaining slots
-      let newScheduledMatches: SuspendedMatchDetail[] = [];
+      // Find replacement serving slots for remaining slots.
+      // Exclude already-served IDs to prevent double-counting.
+      let newServingMatches: SuspendedMatchDetail[] = [];
       if (remainingNeeded > 0 && event.trigger_match_id) {
-        newScheduledMatches = await findNextMatchesForSuspension(
+        newServingMatches = await findNextMatchesForSuspension(
           event.team_id,
           seasonId,
           ageGroupId,
           event.trigger_match_id,
-          remainingNeeded
+          remainingNeeded,
+          servedIds  // exclude already-served match IDs
         );
       }
 
-      const newScheduledIds = newScheduledMatches.map((m) => m.match_id);
-      const newServingIds = [...servedIds, ...newScheduledIds];
-      const newSuspendedFrom = newScheduledIds[0] ?? null;
+      const newServingMatchIds = newServingMatches.map((m) => m.match_id);
+      const newServingIds = [...servedIds, ...newServingMatchIds];
+      // suspended_from_match_id = first SCHEDULED (not yet served) slot
+      const newSuspendedFrom = newServingMatches.find((m) => m.status === 'scheduled')?.match_id ?? null;
       // Stamp served_completed_at only when all slots are consumed
       const allServed = remainingNeeded === 0 && servedIds.length >= event.ban_matches;
       const newServedCompletedAt = allServed
@@ -1241,7 +1285,7 @@ export async function refreshSuspensionServingMatches(params: {
       }
 
       // Fetch details for newly-assigned match IDs not yet in map
-      const needFetch = newScheduledIds.filter((id) => !matchMap.has(id));
+      const needFetch = newServingMatchIds.filter((id) => !matchMap.has(id));
       if (needFetch.length > 0) {
         const { data: extra } = await supabaseAdmin
           .from('matches')
@@ -1274,9 +1318,11 @@ export async function refreshSuspensionServingMatches(params: {
           };
         });
 
+      // Reason shows only the remaining SCHEDULED serving slots
+      const refreshScheduled = newServingMatches.filter((m) => m.status === 'scheduled');
       const suspensionReason =
-        newScheduledMatches.length > 0
-          ? `${event.suspension_type} - แบน ${event.ban_matches} นัด (${newScheduledMatches.map((m) => `MD${m.matchday}`).join(', ')})`
+        refreshScheduled.length > 0
+          ? `${event.suspension_type} - แบน ${event.ban_matches} นัด (${refreshScheduled.map((m) => `MD${m.matchday}`).join(', ')})`
           : newServedCompletedAt
           ? `${event.suspension_type} - พ้นโทษแบน ${event.ban_matches} นัด แล้ว`
           : `${event.suspension_type} - แบน ${event.ban_matches} นัด (ไม่พบโปรแกรมนัดถัดไป)`;

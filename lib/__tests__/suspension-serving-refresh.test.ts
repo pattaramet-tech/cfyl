@@ -9,6 +9,7 @@ import {
   classifyServingMatchIds,
   servingArraysEqual,
   getSuspensionServingState,
+  isEligibleSuspensionServingMatch,
 } from '../suspension-calc';
 import { getSuspensionStatus } from '../suspension-status';
 
@@ -266,5 +267,105 @@ describe('Scenario 12: existing test suite compatibility', () => {
 
   it('servingArraysEqual does not break on empty input', () => {
     expect(() => servingArraysEqual([], [])).not.toThrow();
+  });
+});
+
+// ── Chronological serving slot fix ────────────────────────────────────────
+
+describe('FIX: finished match must remain the serving slot (not drift to later scheduled)', () => {
+  it('isEligibleSuspensionServingMatch: finished is now eligible', () => {
+    expect(isEligibleSuspensionServingMatch({ status: 'finished' })).toBe(true);
+    expect(isEligibleSuspensionServingMatch({ status: 'scheduled' })).toBe(true);
+    expect(isEligibleSuspensionServingMatch({ status: 'postponed' })).toBe(false);
+    expect(isEligibleSuspensionServingMatch({ status: 'cancelled' })).toBe(false);
+  });
+
+  it('threshold reached, next match MD8 already finished before recalculation', () => {
+    // MD8 is the chronologically next match; it finished before recalc ran.
+    // After fix, MD8 should be in serving_match_ids as a served slot.
+    const matchesById = new Map([['md8', { status: 'finished' }]]);
+    const result = getSuspensionServingState(
+      { serving_match_ids: ['md8'], ban_matches: 1, suspended_from_match_id: null },
+      matchesById
+    );
+    expect(result.servedCount).toBe(1);
+    expect(result.isServed).toBe(true);
+    expect(result.isActive).toBe(false);
+  });
+
+  it('finished next match remains served slot — not replaced by md9', () => {
+    // serving_match_ids = [md8_finished] is correct.
+    // md9 must NOT appear in serving list for a 1-ban suspension.
+    const matchesById = new Map([
+      ['md8', { status: 'finished' }],
+      ['md9', { status: 'scheduled' }],
+    ]);
+    // Only md8 should be in serving list for a 1-ban suspension
+    const result = getSuspensionServingState(
+      { serving_match_ids: ['md8'], ban_matches: 1, suspended_from_match_id: null },
+      matchesById
+    );
+    expect(result.servedCount).toBe(1);
+    expect(result.remainingCount).toBe(0);
+    expect(result.isServed).toBe(true);
+  });
+
+  it('classifyServingMatchIds: finished = served, scheduled = active, both eligible', () => {
+    const statuses = new Map([
+      ['md8', 'finished'],
+      ['md9', 'scheduled'],
+    ]);
+    const { servedIds, activeIds, staleIds } = classifyServingMatchIds(['md8', 'md9'], statuses);
+    expect(servedIds).toContain('md8');
+    expect(activeIds).toContain('md9');
+    expect(staleIds).toHaveLength(0);
+  });
+
+  it('chronological ordering: date/time used, not matchday number', () => {
+    // MD8 by number but earlier date than MD5 — this case is handled in findNextMatchesForSuspension
+    // via date comparison. Here we verify classifyServingMatchIds is order-agnostic.
+    const statuses = new Map([
+      ['match-earlier-date', 'finished'],
+      ['match-later-date', 'scheduled'],
+    ]);
+    const { servedIds, activeIds } = classifyServingMatchIds(
+      ['match-earlier-date', 'match-later-date'],
+      statuses
+    );
+    expect(servedIds).toContain('match-earlier-date');
+    expect(activeIds).toContain('match-later-date');
+  });
+
+  it('postponed/cancelled between trigger and next valid match are skipped', () => {
+    const statuses = new Map([
+      ['md6-postponed', 'postponed'],
+      ['md7-cancelled', 'cancelled'],
+      ['md8-finished', 'finished'],
+    ]);
+    const { servedIds, staleIds } = classifyServingMatchIds(
+      ['md6-postponed', 'md7-cancelled', 'md8-finished'],
+      statuses
+    );
+    expect(staleIds).toContain('md6-postponed');
+    expect(staleIds).toContain('md7-cancelled');
+    expect(servedIds).toContain('md8-finished');
+  });
+
+  it('idempotent recalculation: serving=[md8_finished] stays stable on re-run', () => {
+    // servingArraysEqual(['md8'], ['md8']) → true → skip DB write
+    expect(servingArraysEqual(['md8'], ['md8'])).toBe(true);
+    // Different content → not equal → triggers update
+    expect(servingArraysEqual(['md9'], ['md8'])).toBe(false);
+  });
+
+  it('getSuspensionStatus: accumulated_points with finished serving match → served', () => {
+    const status = getSuspensionStatus({
+      total_points: 6,
+      ban_matches: 1,
+      suspension_details: {
+        suspended_matches: [{ match_date: '2026-06-27', status: 'finished' }],
+      },
+    }, '2026-07-11');
+    expect(status.key).toBe('served');
   });
 });

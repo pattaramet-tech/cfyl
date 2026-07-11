@@ -297,15 +297,15 @@ describe('legacy/manual records remain untouched', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Scenario 11: serving matches use scheduled status only
+// Scenario 11: serving matches — finished OR scheduled, not postponed/cancelled
 // ---------------------------------------------------------------------------
-describe('isEligibleSuspensionServingMatch — scheduled only', () => {
-  it('scheduled matches are eligible', () => {
+describe('isEligibleSuspensionServingMatch — finished OR scheduled', () => {
+  it('scheduled matches are eligible (remaining slot)', () => {
     expect(isEligibleSuspensionServingMatch({ status: 'scheduled' })).toBe(true);
   });
 
-  it('finished matches are NOT eligible', () => {
-    expect(isEligibleSuspensionServingMatch({ status: 'finished' })).toBe(false);
+  it('finished matches ARE eligible (served slot — must not be skipped on late recalc)', () => {
+    expect(isEligibleSuspensionServingMatch({ status: 'finished' })).toBe(true);
   });
 
   it('postponed matches are NOT eligible', () => {

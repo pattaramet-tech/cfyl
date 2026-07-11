@@ -124,6 +124,8 @@ async function main() {
     (r.serving_match_ids || []).forEach((sId: string) => {
       const sm = matchMap.get(sId);
       if (!sm) { issues.push({ code: 'SERVING_MATCH_NOT_FOUND', severity: 'error', id: r.id, detail: sId }); return; }
+      // finished = served slot (valid), scheduled = remaining slot (valid)
+      // postponed/cancelled = invalid (refresh needed)
       if (sm.status === 'postponed') issues.push({ code: 'SERVING_MATCH_POSTPONED', severity: 'warning', id: r.id, detail: sId });
       if (sm.status === 'cancelled') issues.push({ code: 'SERVING_MATCH_CANCELLED', severity: 'warning', id: r.id, detail: sId });
       if (triggerDate && sm.match_date && sm.match_date <= triggerDate)
