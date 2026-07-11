@@ -77,8 +77,35 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    console.log('[ADMIN_SUSPENSIONS_GET] Fetched', suspensions?.length || 0, 'records');
-    return NextResponse.json(suspensions || [], { status: 200 });
+    const records = suspensions || [];
+
+    // Mark legacy (null/legacy) records as superseded when the same player+team
+    // already has event-based records. The event-based record IS the source of truth;
+    // the legacy record's suspended_from_match_id may be stale and must not be shown
+    // as an active ban alongside (or instead of) the correct event-based record.
+    const SYSTEM_TYPES = ['accumulated_points', 'second_yellow', 'direct_red', 'yellow_red'];
+    const playersWithEventRecords = new Set<string>();
+    for (const r of records) {
+      if (SYSTEM_TYPES.includes((r as any).suspension_type ?? '')) {
+        playersWithEventRecords.add(`${(r as any).player_id}::${(r as any).team_id}`);
+      }
+    }
+
+    const enriched = records.map((r: any) => ({
+      ...r,
+      _superseded:
+        (r.suspension_type == null || r.suspension_type === 'legacy') &&
+        playersWithEventRecords.has(`${r.player_id}::${r.team_id}`),
+    }));
+
+    console.log(
+      '[ADMIN_SUSPENSIONS_GET] Fetched',
+      enriched.length,
+      'records,',
+      enriched.filter((r: any) => r._superseded).length,
+      'legacy superseded by event records'
+    );
+    return NextResponse.json(enriched, { status: 200 });
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
     console.error('[ADMIN_SUSPENSIONS_GET] Error:', msg);

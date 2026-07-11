@@ -10,6 +10,10 @@ interface SuspensionRecord {
   team_id: string;
   total_points: number;
   ban_matches: number;
+  suspension_type: string | null;
+  serving_match_ids: string[] | null;
+  served_completed_at: string | null;
+  suspended_from_match_id: string | null;
   suspension_reason: string | null;
   suspension_details: SuspensionDetails | null;
   point_sources: Array<{
@@ -23,6 +27,8 @@ interface SuspensionRecord {
   updated_at: string;
   player: { id: string; full_name: string; shirt_no: number | null; player_code: string };
   team: { id: string; name: string; short_name: string };
+  /** True when this legacy record is superseded by an event-based record for the same player+team */
+  _superseded?: boolean;
 }
 
 function formatDate(dateStr: string): string {
@@ -288,14 +294,22 @@ export default function AdminSuspensionsPage() {
 
   const today = getBangkokToday();
   const statusOf = (s: SuspensionRecord) => getSuspensionStatus(s, today).key;
+
+  // Separate active event-based records from superseded legacy records.
+  // Legacy records marked _superseded must not appear in the main active list —
+  // their suspended_from_match_id may be stale (points accumulated beyond the
+  // already-served threshold do NOT create a new ban).
+  const activeSuspensions = suspensions.filter((s) => !s._superseded);
+  const legacyHistoryRecords = suspensions.filter((s) => s._superseded);
+
   const SENDABLE = ['pending', 'active', 'no_next_match'];
-  const discordPreviewCount = suspensions.filter((s) => {
+  const discordPreviewCount = activeSuspensions.filter((s) => {
     const k = statusOf(s);
     if (!SENDABLE.includes(k)) return false;
     return discordStatus === 'all' ? true : k === discordStatus;
   }).length;
 
-  const counts = suspensions.reduce(
+  const counts = activeSuspensions.reduce(
     (acc, s) => {
       acc[statusOf(s)] = (acc[statusOf(s)] || 0) + 1;
       return acc;
@@ -309,10 +323,10 @@ export default function AdminSuspensionsPage() {
 
   const filteredSuspensions =
     statusFilter === 'all'
-      ? suspensions
+      ? activeSuspensions
       : statusFilter === 'active'
-      ? suspensions.filter((s) => statusOf(s) === 'pending' || statusOf(s) === 'active')
-      : suspensions.filter((s) => statusOf(s) === statusFilter);
+      ? activeSuspensions.filter((s) => statusOf(s) === 'pending' || statusOf(s) === 'active')
+      : activeSuspensions.filter((s) => statusOf(s) === statusFilter);
 
   return (
     <div className="space-y-6">
@@ -447,7 +461,7 @@ export default function AdminSuspensionsPage() {
       </div>
 
       {/* Summary Cards */}
-      {suspensions.length > 0 && (
+      {activeSuspensions.length > 0 && (
         <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 sm:gap-4">
           <div className="bg-red-50 border border-red-200 rounded-lg p-3 sm:p-4 text-center">
             <p className="text-2xl font-bold text-red-700">{activeCount}</p>
@@ -473,10 +487,10 @@ export default function AdminSuspensionsPage() {
       )}
 
       {/* Status filter */}
-      {suspensions.length > 0 && (
+      {activeSuspensions.length > 0 && (
         <div className="flex flex-wrap gap-2">
           {([
-            ['all', `ทั้งหมด (${suspensions.length})`],
+            ['all', `ทั้งหมด (${activeSuspensions.length})`],
             ['active', `🔴 ติดโทษแบน (${activeCount})`],
             ['served', `✅ พ้นโทษแล้ว (${servedCount})`],
             ['warning', `🟡 สะสมคะแนน (${warningCount})`],
@@ -508,7 +522,7 @@ export default function AdminSuspensionsPage() {
         <div className="bg-blue-50 border border-blue-200 rounded-lg p-6 text-center text-blue-700">
           เลือก Season และ Age Group เพื่อดูข้อมูล
         </div>
-      ) : suspensions.length === 0 ? (
+      ) : activeSuspensions.length === 0 ? (
         <div className="bg-gray-50 border border-gray-200 rounded-lg p-8 text-center text-gray-500">
           ไม่พบข้อมูลใบเหลืองใบแดง
         </div>
@@ -610,6 +624,48 @@ export default function AdminSuspensionsPage() {
             </table>
           </div>
         </div>
+      )}
+
+      {/* Legacy history — superseded records */}
+      {legacyHistoryRecords.length > 0 && (
+        <details className="group">
+          <summary className="cursor-pointer list-none">
+            <div className="flex items-center gap-2 px-4 py-2 bg-gray-100 border border-gray-200 rounded-lg text-xs text-gray-500 hover:bg-gray-200 transition">
+              <span className="font-semibold">📂 Legacy history ({legacyHistoryRecords.length} รายการ)</span>
+              <span>— ข้อมูลเก่าก่อน event-based migration ถูกแทนที่โดย event record แล้ว ไม่ใช่สถานะแบนปัจจุบัน</span>
+            </div>
+          </summary>
+          <div className="mt-2 overflow-x-auto border border-gray-200 rounded-lg">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="bg-gray-100 text-gray-500">
+                  <th className="px-3 py-2 text-left">ชื่อนักกีฬา</th>
+                  <th className="px-3 py-2 text-left">ทีม</th>
+                  <th className="px-3 py-2 text-center">คะแนน (legacy)</th>
+                  <th className="px-3 py-2 text-left">suspended_from</th>
+                  <th className="px-3 py-2 text-left">หมายเหตุ</th>
+                </tr>
+              </thead>
+              <tbody>
+                {legacyHistoryRecords.map((record) => (
+                  <tr key={record.id} className="border-t border-gray-100 bg-white text-gray-400">
+                    <td className="px-3 py-2">{record.player?.full_name ?? '—'}</td>
+                    <td className="px-3 py-2">{record.team?.name ?? '—'}</td>
+                    <td className="px-3 py-2 text-center">{record.total_points} pts</td>
+                    <td className="px-3 py-2 font-mono text-gray-300">
+                      {record.suspended_from_match_id
+                        ? record.suspended_from_match_id.slice(0, 8) + '…'
+                        : '—'}
+                    </td>
+                    <td className="px-3 py-2 italic text-gray-400">
+                      ถูกแทนที่โดย event record — ไม่ใช่สถานะแบนปัจจุบัน
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </details>
       )}
     </div>
   );

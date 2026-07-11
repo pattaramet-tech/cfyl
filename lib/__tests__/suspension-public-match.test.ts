@@ -4,7 +4,8 @@ vi.mock('@supabase/supabase-js', () => ({
   createClient: vi.fn(() => null),
 }));
 
-import { isSuspendedForMatch } from '../suspension-calc';
+import { isSuspendedForMatch, calculateBanMatches } from '../suspension-calc';
+import { getSuspensionStatus } from '../suspension-status';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -174,6 +175,76 @@ describe('duplicate legacy/event: event-based takes precedence', () => {
     // Legacy: incorrectly says suspended for md9
     expect(isSuspendedForMatch(legacyRecord, 'md9', 'scheduled')).toBe(true);
     // filterActiveSuspendedPlayers prefers eventRecord → player not shown
+  });
+});
+
+// ── Regression: bye-match served + stale legacy pointing to MD9 ──────────────
+
+describe('Regression: threshold 6 at MD5, MD6 bye (finished), MD8 → 8pts, MD9 must not be active', () => {
+  const eventRecord = {
+    suspension_type: 'accumulated_points',
+    serving_match_ids: ['md6'],       // correctly assigned to md6
+    served_completed_at: '2026-06-28T12:00:00Z',  // fully served after md6 by bye
+    suspended_from_match_id: null,
+    suspension_details: {
+      suspended_matches: [{ match_id: 'md6', status: 'finished' }],
+    },
+    ban_matches: 1,
+  };
+
+  const legacyRecord = {
+    suspension_type: null,            // legacy/old format
+    serving_match_ids: null,
+    served_completed_at: null,
+    suspended_from_match_id: 'md9',   // stale — computed by old recalc after md6/7/8 finished
+    suspension_details: {
+      suspended_matches: [{ match_id: 'md9', status: 'scheduled' }],
+    },
+    ban_matches: 1,
+    total_points: 8,
+  };
+
+  it('event record: MD6 finished by bye → already served, not active', () => {
+    expect(isSuspendedForMatch(eventRecord, 'md6', 'finished')).toBe(false);
+  });
+
+  it('event record: served_completed_at set → not active for any match', () => {
+    expect(isSuspendedForMatch(eventRecord, 'md6', 'scheduled')).toBe(false);
+    expect(isSuspendedForMatch(eventRecord, 'md9', 'scheduled')).toBe(false);
+  });
+
+  it('event record: MD9 not in serving_match_ids → not active', () => {
+    expect(isSuspendedForMatch(eventRecord, 'md9', 'scheduled')).toBe(false);
+  });
+
+  it('legacy record: MD9 in suspended_from_match_id → would be true but is superseded', () => {
+    // The legacy record wrongly indicates md9 — but the deduplication logic
+    // (filterActiveSuspendedPlayers) ignores legacy records when event records exist.
+    expect(isSuspendedForMatch(legacyRecord, 'md9', 'scheduled')).toBe(true);
+    // This confirms that WITHOUT deduplication the bug would occur.
+    // The fix is in filterActiveSuspendedPlayers (route) + _superseded flag (API).
+  });
+
+  it('8 points does not create a new ban — no second threshold event', () => {
+    // Threshold 6 → 1-match ban (served at MD6)
+    // Points increase to 8 (MD8 yellow) but 8 < 12 → no new ban
+    // Threshold 12 would create the next ban
+    expect(calculateBanMatches(8)).toBe(1);   // same ban count as at 6 (no new threshold)
+    expect(calculateBanMatches(12)).toBe(2);  // next threshold at 12 → 2 matches
+  });
+
+  it('getSuspensionStatus: event record with finished serving match → served', () => {
+    const status = getSuspensionStatus(
+      {
+        total_points: 0,  // ejection events use 0; for accumulated use actual value
+        ban_matches: 1,
+        suspension_details: {
+          suspended_matches: [{ match_date: '2026-06-28', status: 'finished' }],
+        },
+      },
+      '2026-07-11'
+    );
+    expect(status.key).toBe('served');
   });
 });
 
