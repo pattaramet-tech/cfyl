@@ -528,8 +528,24 @@ async function main() {
   } else if (!idempPlayer) {
     skip('Stale Cleanup', 'No test player available');
   } else {
-    // Insert a phantom event for a trigger_match_id that doesn't correspond to any real card
-    const PHANTOM_MATCH_ID = '00000000-0000-0000-0000-000000000001';
+    // Find a real match in this season that the test player has NO cards in
+    // (FK constraint requires trigger_match_id to be a real match)
+    const playerCardMatchIds = new Set(
+      allCards.filter((c) => c.player_id === idempPlayer.playerId).map((c) => c.match_id)
+    );
+    const { data: seasonMatches } = await supabase
+      .from('matches')
+      .select('id')
+      .eq('season_id', seasonId)
+      .eq('age_group_id', ageGroupId);
+
+    const phantomMatchId = (seasonMatches || []).find(
+      (m: any) => !playerCardMatchIds.has(m.id)
+    )?.id;
+
+    if (!phantomMatchId) {
+      skip('Stale Cleanup', 'Could not find a match with no cards for this player');
+    } else {
     const { data: phantom, error: insertErr } = await supabase
       .from('suspensions')
       .insert({
@@ -538,7 +554,7 @@ async function main() {
         season_id: seasonId,
         age_group_id: ageGroupId,
         suspension_type: 'direct_red',
-        trigger_match_id: PHANTOM_MATCH_ID,
+        trigger_match_id: phantomMatchId,
         accumulated_threshold: null,
         source_card_ids: [],
         serving_match_ids: [],
@@ -553,9 +569,10 @@ async function main() {
     if (insertErr || !phantom) {
       fail('Stale Cleanup', `Failed to insert phantom event: ${insertErr?.message}`, insertErr);
     } else {
-      console.log(`  Inserted phantom event id=${phantom.id} (trigger=${PHANTOM_MATCH_ID})`);
+      console.log(`  Inserted phantom event id=${phantom.id} (trigger=${phantomMatchId})`);
 
       // Run recalculation — stale cleanup should delete the phantom event
+      // (player has no card in phantomMatchId, so this direct_red event is stale)
       await recalculatePlayerSuspensionEventBased(idempPlayer.playerId, seasonId, ageGroupId, idempPlayer.teamId);
 
       // Verify phantom is gone
@@ -566,12 +583,13 @@ async function main() {
 
       if ((checkPhantom || []).length > 0) {
         fail('Stale Cleanup', `Phantom event id=${phantom.id} was NOT deleted by stale cleanup`);
-        // Clean up manually
+        // Clean up manually so we don't leave test data in production
         await supabase.from('suspensions').delete().eq('id', phantom.id);
       } else {
-        pass('Stale Cleanup', `Phantom direct_red event (trigger=${PHANTOM_MATCH_ID}) was deleted by stale cleanup`);
+        pass('Stale Cleanup', `Phantom direct_red event (trigger=${phantomMatchId}) was deleted by stale cleanup`);
       }
     }
+    } // closes if (!phantomMatchId) else
   }
 
   // -------------------------------------------------------------------------
