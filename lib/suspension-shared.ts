@@ -286,21 +286,79 @@ export function buildNormalYellowPointHistory(
 }
 
 /**
- * A suspension record's `total_points` is a frozen snapshot taken when that specific
- * threshold/ejection was first triggered. The player's CURRENT accumulated total keeps
- * moving as more normal yellows arrive, and is only reflected in the latest entry of
- * `point_sources` (see buildNormalYellowPointHistory). Admin and Public must both display
- * this current value, not the frozen trigger-time snapshot.
+ * Build the complete chronological CFYL DISCIPLINARY point history for a player —
+ * every carded match, using official CFYL point values, regardless of event type:
+ *   normal yellow = 2, second yellow / two yellows = 4, direct red = 6, yellow+red = 8
+ *
+ * This is DISTINCT from buildNormalYellowPointHistory(), which excludes ejections and
+ * exists solely to drive the accumulated-points BAN THRESHOLD (6/12/18/24). A direct red
+ * must visibly score 6 CFYL points, but must NOT contribute those 6 points toward the
+ * yellow-accumulation threshold — otherwise the player is punished twice for one card
+ * (once by the ejection's own ban, again by an accumulated-points ban it should never
+ * trigger). Never feed this history into getHighestThresholdCrossed()/threshold logic;
+ * it exists purely for the visible score and the point-history table.
  */
-export function getCurrentAccumulatedPoints(record: {
-  total_points: number;
+export function buildDisciplinaryPointHistory(
+  seasonCards: Array<{ match_id: string; matchday: number; cards: CardCount; reason: string }>
+): PointSource[] {
+  const pointSources: PointSource[] = [];
+  let cumulative = 0;
+  for (const card of seasonCards) {
+    const points = calculateMatchPoints(card.cards);
+    if (points === 0) continue;
+
+    const pointsBefore = cumulative;
+    cumulative += points;
+    pointSources.push({
+      match_id: card.match_id,
+      matchday: card.matchday,
+      points,
+      reason: card.reason,
+      points_before: pointsBefore,
+      points_after: cumulative,
+    });
+  }
+  return pointSources;
+}
+
+/**
+ * A suspension record's `total_points` is a frozen snapshot taken when that specific
+ * threshold/ejection was first triggered. The player's CURRENT visible CFYL disciplinary
+ * score keeps moving as more cards arrive, and is only reflected in the latest entry of
+ * `point_sources` (see buildDisciplinaryPointHistory). Admin and Public must both display
+ * this current value — for every suspension_type, including ejections — not the frozen
+ * trigger-time snapshot.
+ */
+export function getCurrentDisciplinaryPoints(record: {
+  total_points?: number | null;
   point_sources?: Array<{ points_after: number }> | null;
 }): number {
   const sources = record.point_sources;
   if (sources && sources.length > 0) {
     return sources[sources.length - 1].points_after;
   }
-  return record.total_points;
+  return record.total_points ?? 0;
+}
+
+const EJECTION_SUSPENSION_TYPES = ['second_yellow', 'direct_red', 'yellow_red'] as const;
+
+/** True for ejection-based suspension_type values (never for accumulated_points/legacy/manual). */
+export function isEjectionSuspensionType(type: string | null | undefined): boolean {
+  return !!type && (EJECTION_SUSPENSION_TYPES as readonly string[]).includes(type);
+}
+
+/** Thai display label for an ejection event, keyed by suspension_type. */
+export function getEjectionEventLabel(suspensionType: string): string {
+  switch (suspensionType) {
+    case 'direct_red':
+      return 'ใบแดงโดยตรง';
+    case 'second_yellow':
+      return 'ใบเหลืองที่สอง';
+    case 'yellow_red':
+      return 'ใบเหลือง + ใบแดง';
+    default:
+      return suspensionType;
+  }
 }
 
 /**

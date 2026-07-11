@@ -1,5 +1,5 @@
 import type { PointSource, SuspensionDetails, SuspendedMatchDetail } from '@/lib/suspension-shared';
-import { getCurrentAccumulatedPoints } from '@/lib/suspension-shared';
+import { getCurrentDisciplinaryPoints } from '@/lib/suspension-shared';
 import { getSuspensionStatus, getBangkokToday } from '@/lib/suspension-status';
 
 interface CardDetail {
@@ -77,7 +77,7 @@ function getCardMatchdayNumber(card: CardDetail): number {
 function PointHistorySection({ pointSources }: { pointSources: PointSource[] }) {
   if (pointSources.length === 0) {
     return (
-      <p className="text-xs text-slate-400 italic">ไม่มีประวัติคะแนนสะสมจากใบเหลือง</p>
+      <p className="text-xs text-slate-400 italic">ไม่มีประวัติคะแนนโทษ</p>
     );
   }
   return (
@@ -145,7 +145,7 @@ export function DisciplineTable({ records }: DisciplineTableProps) {
           const status = getSuspensionStatus(record, today);
           const suspendedMatches = record.suspension_details?.suspended_matches || [];
           const cardDetails = record.card_details || [];
-          const currentPoints = getCurrentAccumulatedPoints(record);
+          const currentPoints = getCurrentDisciplinaryPoints(record);
           return (
             <div key={record.id} className="cfyl-card p-4">
               <div className="flex items-start justify-between gap-3">
@@ -208,7 +208,7 @@ export function DisciplineTable({ records }: DisciplineTableProps) {
 
               {record.ban_matches > 0 && (
                 <div className="mt-3 pt-3 border-t border-slate-100">
-                  <p className="text-xs font-semibold text-slate-600 mb-1">ประวัติคะแนนสะสม:</p>
+                  <p className="text-xs font-semibold text-slate-600 mb-1">ประวัติคะแนนโทษ CFYL:</p>
                   <PointHistorySection pointSources={record.point_sources || []} />
                 </div>
               )}
@@ -238,7 +238,7 @@ export function DisciplineTable({ records }: DisciplineTableProps) {
               const cardDetails = record.card_details || [];
               const isEvenRow = index % 2 === 0;
               const hasCardDetails = record.ban_matches > 0 && cardDetails.length > 0;
-              const currentPoints = getCurrentAccumulatedPoints(record);
+              const currentPoints = getCurrentDisciplinaryPoints(record);
               return (
                 <tr
                   key={record.id}
@@ -300,7 +300,7 @@ export function DisciplineTable({ records }: DisciplineTableProps) {
                       )}
                       {record.ban_matches > 0 && (
                         <div className="mt-2 pt-2 border-t border-slate-100">
-                          <p className="text-xs font-semibold text-slate-600 mb-1">ประวัติคะแนนสะสม:</p>
+                          <p className="text-xs font-semibold text-slate-600 mb-1">ประวัติคะแนนโทษ CFYL:</p>
                           <PointHistorySection pointSources={record.point_sources || []} />
                         </div>
                       )}

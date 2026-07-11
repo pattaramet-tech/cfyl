@@ -14,7 +14,11 @@ import {
   isEligibleSuspensionServingMatch,
   computeStaleEventIds,
   buildNormalYellowPointHistory,
-  getCurrentAccumulatedPoints,
+  buildDisciplinaryPointHistory,
+  getCurrentDisciplinaryPoints,
+  getHighestThresholdCrossed,
+  getEjectionEventLabel,
+  isEjectionSuspensionType,
   markSupersededLegacyRecords,
 } from '../suspension-calc';
 
@@ -374,7 +378,7 @@ describe('buildNormalYellowPointHistory — restores full chronological point hi
 // trigger-time snapshot stored on the record (Part 5 example: threshold event
 // total_points=6, latest point_sources points_after=8 → current = 8).
 // ---------------------------------------------------------------------------
-describe('getCurrentAccumulatedPoints — live total, not frozen trigger snapshot', () => {
+describe('getCurrentDisciplinaryPoints — live total, not frozen trigger snapshot', () => {
   it('uses last point_sources.points_after when history exists', () => {
     const record = {
       total_points: 6, // frozen at MD5 threshold-crossing time
@@ -385,15 +389,15 @@ describe('getCurrentAccumulatedPoints — live total, not frozen trigger snapsho
         { points_before: 6, points_after: 8 }, // MD8 — after the ban was triggered
       ],
     };
-    expect(getCurrentAccumulatedPoints(record)).toBe(8);
+    expect(getCurrentDisciplinaryPoints(record)).toBe(8);
   });
 
-  it('falls back to total_points when point_sources is empty (e.g. ejection record)', () => {
-    expect(getCurrentAccumulatedPoints({ total_points: 0, point_sources: [] })).toBe(0);
+  it('falls back to total_points when point_sources is empty (e.g. a record with no history yet)', () => {
+    expect(getCurrentDisciplinaryPoints({ total_points: 0, point_sources: [] })).toBe(0);
   });
 
   it('falls back to total_points when point_sources is missing', () => {
-    expect(getCurrentAccumulatedPoints({ total_points: 6 })).toBe(6);
+    expect(getCurrentDisciplinaryPoints({ total_points: 6 })).toBe(6);
   });
 });
 
@@ -435,5 +439,119 @@ describe('markSupersededLegacyRecords — event-based wins over legacy', () => {
     ];
     const result = markSupersededLegacyRecords(records);
     expect(result.every((r) => r._superseded === false)).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Direct red must show 6 CFYL points without double-counting toward the
+// yellow-accumulation ban threshold. Ejections display their own CFYL point
+// value (2/4/6/8) via buildDisciplinaryPointHistory(), but must never appear
+// in buildNormalYellowPointHistory() (the yellow-only threshold source).
+// ---------------------------------------------------------------------------
+describe('buildDisciplinaryPointHistory — visible CFYL score includes ejections', () => {
+  it('direct red only: visible = 6, no yellow-threshold contribution', () => {
+    const seasonCards = [
+      { match_id: 'm1', matchday: 2, cards: { yellow: 0, red: 1, second_yellow: 0 }, reason: '1R' },
+    ];
+    const disciplinary = buildDisciplinaryPointHistory(seasonCards);
+    expect(disciplinary).toEqual([
+      { match_id: 'm1', matchday: 2, points: 6, reason: '1R', points_before: 0, points_after: 6 },
+    ]);
+    expect(getCurrentDisciplinaryPoints({ total_points: 6, point_sources: disciplinary })).toBe(6);
+
+    // Threshold isolation: this same match contributes 0 to the yellow-only history
+    const yellowOnly = buildNormalYellowPointHistory(seasonCards);
+    expect(yellowOnly).toEqual([]);
+    expect(classifyPlayerMatchDiscipline({ yellow: 0, red: 1, second_yellow: 0 }).suspensionType).toBe(
+      'direct_red'
+    );
+  });
+
+  it('second yellow only: visible = 4, no yellow-threshold contribution', () => {
+    const seasonCards = [
+      { match_id: 'm1', matchday: 1, cards: { yellow: 0, red: 0, second_yellow: 1 }, reason: '2Y' },
+    ];
+    const disciplinary = buildDisciplinaryPointHistory(seasonCards);
+    expect(disciplinary[0].points).toBe(4);
+    expect(buildNormalYellowPointHistory(seasonCards)).toEqual([]);
+  });
+
+  it('yellow + red: visible = 8, no yellow-threshold contribution', () => {
+    const seasonCards = [
+      { match_id: 'm1', matchday: 1, cards: { yellow: 1, red: 1, second_yellow: 0 }, reason: '1Y + 1R' },
+    ];
+    const disciplinary = buildDisciplinaryPointHistory(seasonCards);
+    expect(disciplinary[0].points).toBe(8);
+    expect(buildNormalYellowPointHistory(seasonCards)).toEqual([]);
+  });
+
+  it('three normal yellows: visible = 6, yellow-threshold reaches 6 → one accumulated_points event', () => {
+    const seasonCards = [
+      { match_id: 'm1', matchday: 1, cards: { yellow: 1, red: 0, second_yellow: 0 }, reason: '1Y' },
+      { match_id: 'm2', matchday: 2, cards: { yellow: 1, red: 0, second_yellow: 0 }, reason: '1Y' },
+      { match_id: 'm3', matchday: 3, cards: { yellow: 1, red: 0, second_yellow: 0 }, reason: '1Y' },
+    ];
+    const disciplinary = buildDisciplinaryPointHistory(seasonCards);
+    expect(disciplinary[disciplinary.length - 1].points_after).toBe(6);
+
+    const yellowOnly = buildNormalYellowPointHistory(seasonCards);
+    expect(yellowOnly[yellowOnly.length - 1].points_after).toBe(6);
+    const lastSrc = yellowOnly[yellowOnly.length - 1];
+    expect(getHighestThresholdCrossed(lastSrc.points_before, lastSrc.points_after)).toBe(6);
+    expect(calculateBanMatches(6)).toBe(1);
+  });
+
+  it('two yellows then direct red: visible = 10, yellow-threshold only reaches 4 (no ban), red bans separately', () => {
+    const seasonCards = [
+      { match_id: 'm1', matchday: 1, cards: { yellow: 1, red: 0, second_yellow: 0 }, reason: '1Y' },
+      { match_id: 'm2', matchday: 2, cards: { yellow: 1, red: 0, second_yellow: 0 }, reason: '1Y' },
+      { match_id: 'm3', matchday: 3, cards: { yellow: 0, red: 1, second_yellow: 0 }, reason: '1R' },
+    ];
+    const disciplinary = buildDisciplinaryPointHistory(seasonCards);
+    expect(disciplinary[disciplinary.length - 1].points_after).toBe(10);
+
+    const yellowOnly = buildNormalYellowPointHistory(seasonCards);
+    expect(yellowOnly[yellowOnly.length - 1].points_after).toBe(4);
+    for (let i = 1; i < yellowOnly.length; i++) {
+      expect(getHighestThresholdCrossed(yellowOnly[i].points_before, yellowOnly[i].points_after)).toBe(0);
+    }
+    expect(classifyPlayerMatchDiscipline({ yellow: 0, red: 1, second_yellow: 0 }).ejectionBanMatches).toBe(1);
+  });
+
+  it('direct red then later three normal yellows: visible = 12, yellow-threshold reaches 6 independently', () => {
+    const seasonCards = [
+      { match_id: 'm1', matchday: 1, cards: { yellow: 0, red: 1, second_yellow: 0 }, reason: '1R' },
+      { match_id: 'm2', matchday: 2, cards: { yellow: 1, red: 0, second_yellow: 0 }, reason: '1Y' },
+      { match_id: 'm3', matchday: 3, cards: { yellow: 1, red: 0, second_yellow: 0 }, reason: '1Y' },
+      { match_id: 'm4', matchday: 4, cards: { yellow: 1, red: 0, second_yellow: 0 }, reason: '1Y' },
+    ];
+    const disciplinary = buildDisciplinaryPointHistory(seasonCards);
+    expect(disciplinary[disciplinary.length - 1].points_after).toBe(12);
+
+    // Yellow-only threshold history excludes the direct red entirely and reaches 6 on its own
+    const yellowOnly = buildNormalYellowPointHistory(seasonCards);
+    expect(yellowOnly.map((s) => s.match_id)).toEqual(['m2', 'm3', 'm4']);
+    const lastSrc = yellowOnly[yellowOnly.length - 1];
+    expect(lastSrc.points_after).toBe(6);
+    expect(getHighestThresholdCrossed(lastSrc.points_before, lastSrc.points_after)).toBe(6);
+  });
+});
+
+describe('getEjectionEventLabel / isEjectionSuspensionType', () => {
+  it('returns the correct Thai label per suspension_type', () => {
+    expect(getEjectionEventLabel('direct_red')).toBe('ใบแดงโดยตรง');
+    expect(getEjectionEventLabel('second_yellow')).toBe('ใบเหลืองที่สอง');
+    expect(getEjectionEventLabel('yellow_red')).toBe('ใบเหลือง + ใบแดง');
+  });
+
+  it('classifies ejection types but not accumulated_points/legacy/manual', () => {
+    expect(isEjectionSuspensionType('direct_red')).toBe(true);
+    expect(isEjectionSuspensionType('second_yellow')).toBe(true);
+    expect(isEjectionSuspensionType('yellow_red')).toBe(true);
+    expect(isEjectionSuspensionType('accumulated_points')).toBe(false);
+    expect(isEjectionSuspensionType('legacy')).toBe(false);
+    expect(isEjectionSuspensionType('manual')).toBe(false);
+    expect(isEjectionSuspensionType(null)).toBe(false);
+    expect(isEjectionSuspensionType(undefined)).toBe(false);
   });
 });

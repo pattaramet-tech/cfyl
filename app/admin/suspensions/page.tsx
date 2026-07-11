@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import type { SuspensionDetails, SuspendedMatchDetail } from '@/lib/suspension-shared';
-import { getCurrentAccumulatedPoints } from '@/lib/suspension-shared';
+import { getCurrentDisciplinaryPoints, isEjectionSuspensionType } from '@/lib/suspension-shared';
 import { getSuspensionStatus, getBangkokToday, type SuspensionStatusKey } from '@/lib/suspension-status';
 
 interface SuspensionRecord {
@@ -70,37 +70,62 @@ function SuspensionDetailPanel({ record }: { record: SuspensionRecord }) {
     );
   }
 
+  const isEjection = isEjectionSuspensionType(record.suspension_type);
+
   return (
     <div className="space-y-4">
       {/* Trigger Info */}
       <div className="bg-orange-50 border border-orange-200 rounded-lg p-4">
-        <h4 className="font-semibold text-orange-800 mb-3">⚡ เหตุการณ์ที่ทำให้ถึงเกณฑ์แบน</h4>
-        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-sm">
-          <div>
-            <p className="text-gray-500 text-xs">นัดที่เกิดเหตุ</p>
-            <p className="font-bold text-gray-800">MD{d.trigger_matchday}</p>
+        <h4 className="font-semibold text-orange-800 mb-3">
+          {isEjection ? '⚡ เหตุการณ์ใบแดง/ใบเหลืองที่ทำให้ถูกไล่ออก' : '⚡ เหตุการณ์ที่ทำให้ถึงเกณฑ์แบน'}
+        </h4>
+        {isEjection ? (
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-sm">
+            <div>
+              <p className="text-gray-500 text-xs">นัดที่เกิดเหตุ</p>
+              <p className="font-bold text-gray-800">MD{d.trigger_matchday}</p>
+            </div>
+            <div>
+              <p className="text-gray-500 text-xs">เหตุการณ์</p>
+              <p className="font-semibold text-orange-700">{d.trigger_event}</p>
+            </div>
+            <div>
+              <p className="text-gray-500 text-xs">คะแนนโทษ CFYL</p>
+              <p className="font-bold text-red-700">+{d.points_added} คะแนน</p>
+            </div>
+            <div>
+              <p className="text-gray-500 text-xs">บทลงโทษ</p>
+              <p className="font-semibold text-orange-700">แบน {d.ban_matches_count} นัด</p>
+            </div>
           </div>
-          <div>
-            <p className="text-gray-500 text-xs">เหตุการณ์</p>
-            <p className="font-semibold text-orange-700">{d.trigger_event}</p>
+        ) : (
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-sm">
+            <div>
+              <p className="text-gray-500 text-xs">นัดที่เกิดเหตุ</p>
+              <p className="font-bold text-gray-800">MD{d.trigger_matchday}</p>
+            </div>
+            <div>
+              <p className="text-gray-500 text-xs">เหตุการณ์</p>
+              <p className="font-semibold text-orange-700">{d.trigger_event}</p>
+            </div>
+            <div>
+              <p className="text-gray-500 text-xs">ครบเกณฑ์</p>
+              <p className="font-bold text-red-700">{d.threshold_crossed} คะแนน → แบน {d.ban_matches_count} นัด</p>
+            </div>
+            <div>
+              <p className="text-gray-500 text-xs">คะแนนก่อนนัดนั้น</p>
+              <p className="font-semibold text-gray-700">{d.points_before} คะแนน</p>
+            </div>
+            <div>
+              <p className="text-gray-500 text-xs">คะแนนที่เพิ่ม</p>
+              <p className="font-semibold text-orange-700">+{d.points_added} คะแนน</p>
+            </div>
+            <div>
+              <p className="text-gray-500 text-xs">คะแนนสะสมหลังนัดนั้น</p>
+              <p className="font-bold text-red-700">{d.points_after} คะแนน</p>
+            </div>
           </div>
-          <div>
-            <p className="text-gray-500 text-xs">ครบเกณฑ์</p>
-            <p className="font-bold text-red-700">{d.threshold_crossed} คะแนน → แบน {d.ban_matches_count} นัด</p>
-          </div>
-          <div>
-            <p className="text-gray-500 text-xs">คะแนนก่อนนัดนั้น</p>
-            <p className="font-semibold text-gray-700">{d.points_before} คะแนน</p>
-          </div>
-          <div>
-            <p className="text-gray-500 text-xs">คะแนนที่เพิ่ม</p>
-            <p className="font-semibold text-orange-700">+{d.points_added} คะแนน</p>
-          </div>
-          <div>
-            <p className="text-gray-500 text-xs">คะแนนสะสมหลังนัดนั้น</p>
-            <p className="font-bold text-red-700">{d.points_after} คะแนน</p>
-          </div>
-        </div>
+        )}
       </div>
 
       {/* Suspended Matches */}
@@ -131,9 +156,9 @@ function SuspensionDetailPanel({ record }: { record: SuspensionRecord }) {
 
       {/* Point Sources */}
       <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
-        <h4 className="font-semibold text-gray-700 mb-3">📊 ประวัติคะแนนสะสม</h4>
+        <h4 className="font-semibold text-gray-700 mb-3">📊 ประวัติคะแนนโทษ CFYL</h4>
         {record.point_sources.length === 0 ? (
-          <p className="text-sm text-gray-500">ไม่มีประวัติคะแนนสะสมจากใบเหลือง</p>
+          <p className="text-sm text-gray-500">ไม่มีประวัติคะแนนโทษ</p>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-xs text-left">
@@ -566,7 +591,7 @@ export default function AdminSuspensionsPage() {
                   const status = getSuspensionStatus(record, today);
                   const isExpanded = expandedId === record.id;
                   const suspendedMatches = record.suspension_details?.suspended_matches || [];
-                  const currentPoints = getCurrentAccumulatedPoints(record);
+                  const currentPoints = getCurrentDisciplinaryPoints(record);
 
                   return (
                     <>

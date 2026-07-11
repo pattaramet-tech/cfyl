@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import { TeamLogo } from '@/components/TeamLogo';
+import { getCurrentDisciplinaryPoints } from '@/lib/suspension-shared';
 
 interface TeamProfile {
   team: {
@@ -66,6 +67,7 @@ interface TeamProfile {
     player_name?: string | null;
     shirt_no?: number | null;
     total_points?: number | null;
+    point_sources?: Array<{ points_after: number }> | null;
     ban_matches?: number | null;
     status?: string | null;
     suspension_reason?: string | null;
@@ -570,7 +572,7 @@ export default function TeamProfilePage() {
                           {susp.player_name || playersById.get(susp.player_id)?.full_name || 'ไม่ทราบชื่อ'}
                         </div>
                         <div className="text-xs text-gray-500">
-                          #{susp.shirt_no ?? playersById.get(susp.player_id)?.shirt_no ?? '-'} • คะแนนสะสม: {susp.total_points || 0}
+                          #{susp.shirt_no ?? playersById.get(susp.player_id)?.shirt_no ?? '-'} • คะแนนสะสม: {getCurrentDisciplinaryPoints({ total_points: susp.total_points, point_sources: susp.point_sources })}
                         </div>
                         {susp.suspension_reason && (
                           <div className="text-xs text-red-600 mt-1.5 leading-tight">

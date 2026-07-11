@@ -52,7 +52,7 @@ describe('suspension-shared — client-safe module contract', () => {
     try {
       const mod = await import('../suspension-shared');
       expect(mod.calculateBanMatches(6)).toBe(1);
-      expect(mod.getCurrentAccumulatedPoints({ total_points: 6, point_sources: [] })).toBe(6);
+      expect(mod.getCurrentDisciplinaryPoints({ total_points: 6, point_sources: [] })).toBe(6);
     } finally {
       if (savedUrl !== undefined) process.env.NEXT_PUBLIC_SUPABASE_URL = savedUrl;
       if (savedAnon !== undefined) process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY = savedAnon;

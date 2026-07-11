@@ -6,7 +6,8 @@ import {
   isSecondYellowEjection,
   isDirectRedEjection,
   classifyPlayerMatchDiscipline,
-  buildNormalYellowPointHistory,
+  buildDisciplinaryPointHistory,
+  getEjectionEventLabel,
   calculateBanMatches,
   getThresholdCrossed,
   getHighestThresholdCrossed,
@@ -532,10 +533,14 @@ export async function recalculatePlayerSuspensionEventBased(
     // Track all suspensions to upsert (separate by event)
     const suspensionsToCreate: Array<any> = [];
 
-    // Complete chronological normal-yellow point history — the single source of truth
-    // reused by every record (ejection or accumulated_points) created below, so the
-    // "ประวัติคะแนนสะสม" history is never lost and always reflects the current total.
-    const pointHistory = buildNormalYellowPointHistory(seasonCards);
+    // Complete chronological CFYL DISCIPLINARY point history (every carded match, official
+    // CFYL point values: yellow=2, 2nd yellow=4, red=6, yellow+red=8) — the single source of
+    // truth reused by every record (ejection or accumulated_points) created below, so the
+    // "ประวัติคะแนนโทษ CFYL" history is never lost and always reflects the current visible
+    // score. This is DISTINCT from the yellow-only accumulation used for threshold detection
+    // below — ejections must display their CFYL points but must never count toward a
+    // yellow-accumulation ban (that would punish the same card twice).
+    const disciplinaryHistory = buildDisciplinaryPointHistory(seasonCards);
 
     // Process each match's cards - iterate in chronological order
     let accumulatedPointsOnly = 0; // Tracks NORMAL yellow points only (no ejection points)
@@ -564,6 +569,12 @@ export async function recalculatePlayerSuspensionEventBased(
       if (eventClassification.suspensionType && eventClassification.ejectionBanMatches > 0) {
         const suspensionType = eventClassification.suspensionType as SuspensionType;
 
+        // CFYL disciplinary points for THIS card event (direct_red=6, second_yellow=4,
+        // yellow_red=8) — the visible score for this record. Never fed into threshold
+        // detection: ejections must display their points without double-counting toward
+        // an accumulated-points ban (see CASE 2, which only uses normal yellow cards).
+        const cfylPoints = calculateMatchPoints(cardCount);
+
         // Create ejection suspension
         const suspendedMatches = await findNextMatchesForSuspension(
           teamId,
@@ -576,10 +587,10 @@ export async function recalculatePlayerSuspensionEventBased(
         const suspensionDetails: SuspensionDetails = {
           trigger_match_id: card.match_id,
           trigger_matchday: card.matchday,
-          trigger_event: eventClassification.notes.join(' | '),
+          trigger_event: getEjectionEventLabel(suspensionType),
           points_before: 0,
-          points_added: 0,
-          points_after: 0,
+          points_added: cfylPoints,
+          points_after: cfylPoints,
           threshold_crossed: 0,
           ban_matches_count: eventClassification.ejectionBanMatches,
           suspended_matches: suspendedMatches,
@@ -615,8 +626,8 @@ export async function recalculatePlayerSuspensionEventBased(
           serving_match_ids: servingMatchIds,
           ban_matches: eventClassification.ejectionBanMatches,
           suspended_from_match_id: ejection_suspended_from,
-          total_points: 0,
-          point_sources: pointHistory,
+          total_points: cfylPoints,
+          point_sources: disciplinaryHistory,
           suspension_reason: suspensionReason,
           suspension_details: suspensionDetails,
           updated_at: new Date().toISOString(),
@@ -693,7 +704,7 @@ export async function recalculatePlayerSuspensionEventBased(
           ban_matches: banMatches,
           suspended_from_match_id: accum_suspended_from,
           total_points: pointsAfter,
-          point_sources: pointHistory,
+          point_sources: disciplinaryHistory,
           suspension_reason: suspensionReason,
           suspension_details: suspensionDetails,
           updated_at: new Date().toISOString(),
