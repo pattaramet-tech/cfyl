@@ -3,10 +3,27 @@
 **สถานะ**: แผนที่การย้ายข้อมูล (Mapping) เท่านั้น — **ห้ามรัน Migration จริงในรอบ Preparation นี้**
 **ปรับปรุงตาม v1.1**: เพิ่มหมวด 6 (Venue/RBAC/Result-Workflow Seed Data) — entity กลุ่มนี้ไม่มี Old Source ใน V1 เลย (ดู Gap Analysis ใน `TOURNAMENT_V2_CURRENT_STATE_AUDIT.md` หมวด 13) จึงเป็นการสร้างใหม่ทั้งหมด ไม่ใช่การ Migrate
 **ปรับปรุงตาม Scheduling Addendum**: แก้ไขแถว `bracket_matches` ในหมวด 1 (target เปลี่ยนจาก `tournament_bracket_matches` เป็น `tournament_matches` + `tournament_knockout_rounds` โดยตรง ตาม Data Model Correction) และเพิ่มหมวด 7 (Group Slot/Draw — ไม่มี Old Source เช่นกัน)
-**Precondition**: ต้องตอบ Open Question "ข้อมูล Tournament เดิมต้องย้ายทั้งหมดหรือเริ่มรายการใหม่" ก่อน (`TOURNAMENT_V2_OPEN_QUESTIONS.md`) — เอกสารนี้เตรียมไว้สำหรับทั้งสองกรณี
+**Precondition**: ~~ต้องตอบ Open Question "ข้อมูล Tournament เดิมต้องย้ายทั้งหมดหรือเริ่มรายการใหม่" ก่อน~~ **ตอบแล้ว — ดู Banner ด้านล่าง**
+
+---
+
+## ⚠️ NOT APPLICABLE — DECISION LOCKED (D-02, 2026-07-14)
+
+**เจ้าของระบบตัดสินใจแล้วว่า Tournament V2 เริ่มข้อมูลใหม่ทั้งหมด ไม่ Migrate ข้อมูล Tournament V1** — หมวด 1-5 ของเอกสารนี้ (Entity Mapping Table, ID Mapping, กรณีพิเศษ, Data Loss Register, Verification Checklist) **กลายเป็น Non-applicable สำหรับ Execution Plan ปัจจุบัน** เก็บเอกสารทั้งฉบับไว้เป็น **Historical Reference เท่านั้น** (ไม่ใช่ Execution Plan) เผื่อกรณีเจ้าของระบบเปลี่ยนใจในอนาคตหรือมีความจำเป็นต้อง Reverse-engineer ข้อมูลบางส่วนจาก V1
+
+**สิ่งที่ยังใช้ได้จริง**:
+- หมวด 6 (Venue/RBAC/Result-Workflow Seed Data) และหมวด 7 (Group Slot/Draw Seed Data) — ยังใช้ได้ตามเดิม เพราะเป็น **Fresh Insert ล้วนๆ ไม่ใช่ Migration** จาก League DB
+- Tournament V1 (โค้ด/ข้อมูลเดิม) **เก็บไว้เป็น Reference เท่านั้น** (Read-only) — **ห้ามลบในรอบ Implementation แรก** การ Decommission ยังคงต้องรอ Phase 14 และขออนุมัติแยกต่างหากตามเดิม
+- Phase 11 (`TOURNAMENT_V2_IMPLEMENTATION_PHASES.md`) เปลี่ยนชื่อ/ขอบเขตเป็น **"Fresh-data Verification / Import Rehearsal"** — ซ้อมนำเข้าข้อมูลใหม่ (ทีม/นักกีฬา/ตารางแข่ง) เข้า Tournament V2 ให้ถูกต้องก่อน Go-live แทนการย้ายข้อมูลจริงจาก League DB
+
+ดูรายละเอียดคำตัดสินเต็มที่ `TOURNAMENT_V2_DECISION_CHECKLIST.md` (D-02)
+
+---
 
 **Source (V1)**: League Supabase Project ปัจจุบัน — เฉพาะ record ที่มี `seasons.competition_type IN ('tournament','mixed')` และ match ที่มี `stage IS NOT NULL` หรือ `tournament_group_id IS NOT NULL`
 **Target (V2)**: Tournament Supabase Project ใหม่ (ตาม `TOURNAMENT_V2_DATA_MODEL.md`)
+
+> **หมายเหตุ**: หมวด 1-5 ด้านล่างนี้เป็น **Historical Reference** — อ่านโดยเข้าใจว่าไม่ใช่แผนที่จะดำเนินการจริงในรอบ Implementation ปัจจุบัน (ดู Banner ด้านบน)
 
 ---
 

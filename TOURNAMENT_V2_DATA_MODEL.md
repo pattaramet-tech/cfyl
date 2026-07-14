@@ -1,6 +1,6 @@
 # Tournament V2 — Data Model (Draft)
 
-**สถานะ**: Draft SQL เพื่อการออกแบบเท่านั้น **ยังไม่ได้รัน และห้ามรันจนกว่าจะอนุมัติ**
+**สถานะ**: Draft SQL เพื่อการออกแบบเท่านั้น **ยังไม่ได้รัน และห้ามรันจนกว่าจะอนุมัติ** — Sync แล้วกับ Final Decisions จาก `TOURNAMENT_V2_DECISION_CHECKLIST.md` (2026-07-14) จุดที่มีคำว่า **DECISION LOCKED** คือคำตอบสุดท้ายจากเจ้าของระบบ
 **ฐาน**: Candidate table list จาก `TOURNAMENT_V2_PREPARATION_PLAN.md` Section 6, ปรับตามข้อพิจารณา 17 ข้อในเอกสารเดียวกัน
 **อ้างอิงปัญหาที่ต้องแก้จาก V1**: ดู `TOURNAMENT_V2_CURRENT_STATE_AUDIT.md` โดยเฉพาะ R1 (goals/cards เข้าไม่ถึง tournament match), R3 (tiebreak ไม่ครบ), TD-5 (bracket ไม่รองรับ custom round/bye), R7 (ไม่มี RBAC ระดับ Venue), R8 (ไม่มี Placeholder/Draw ใน V1)
 **ปรับปรุงตาม v1.1**: เพิ่มตาราง Venue/Court/RBAC/Result-Workflow (หมวด 2.17-2.22) เพื่อรองรับ 7 ประเภทการแข่งขัน กระจายลง 4 สนามพร้อมกัน — ดูสถาปัตยกรรมเต็มใน `TOURNAMENT_V2_TARGET_ARCHITECTURE.md` หมวด 11 และ `TOURNAMENT_V2_VENUE_OPERATIONS.md`
@@ -67,6 +67,10 @@ erDiagram
     tournament_suspension_events ||--o{ tournament_suspension_serving_matches : "served across"
 
     tournament_groups ||--o{ tournament_standing_overrides : "manual override"
+
+    tournament_categories ||--o{ tournament_qualification_draws : "qualification draw per category"
+    tournament_qualification_draws ||--o{ tournament_qualification_draw_candidates : "eligible teams"
+    tournament_teams ||--o{ tournament_qualification_draw_candidates : "candidate/drawn"
 ```
 
 > **หมายเหตุ**: `tournament_bracket_matches` ที่เคยมีในรอบก่อนหน้าถูก**ยุบรวมเข้า `tournament_matches` แล้ว** (ดูเหตุผลหมวด 2.15) — ไม่ปรากฏใน ERD นี้อีกต่อไป ความสัมพันธ์ "winner/loser ของนัดก่อนหน้าไปยังนัดถัดไป" ตอนนี้แสดงผ่าน `tournament_matches.away_source_ref`/`home_source_ref` ที่อ้าง `match_code` ของนัดต้นทางโดยตรง (self-referencing ผ่านค่า text ไม่ใช่ FK)
@@ -177,7 +181,7 @@ create table tournament.tournament_teams (
   id uuid primary key default gen_random_uuid(),
   tournament_id uuid not null references tournament.tournaments(id) on delete cascade,
   category_id uuid not null references tournament.tournament_categories(id) on delete cascade,
-  school_name text,                    -- ไม่ FK ไป master ภายนอก (ดู Open Questions: ทีม Master ใช้ร่วมหรือ import แยก)
+  school_name text,                    -- ไม่ FK ไป master ภายนอก — DECISION LOCKED (D-04, 2026-07-14): Tournament Team Data แยกอิสระ ไม่มี School/Team Master ร่วมกับ League ใน MVP, school_name ซ้ำกันข้าม category ได้
   name text not null,
   short_name text,
   team_code text not null,
@@ -192,6 +196,8 @@ create table tournament.tournament_teams (
 create index idx_tteams_category on tournament.tournament_teams (category_id) where deleted_at is null;
 ```
 **เหตุผล**: `unique(category_id, team_code)` ตรงตาม "Team Code ต้องไม่ชนกันภายใน Tournament Category" — **ไม่** unique ข้าม category ทั้ง tournament เพื่อให้ "ทีมโรงเรียนเดียวกันอาจลงหลายรุ่น" ทำได้ (โรงเรียนเดียวกันสมัคร U14 และ U16 เป็นคนละ `tournament_teams` row, คนละ `team_code` ก็ได้)
+
+**DECISION LOCKED (D-04, 2026-07-14)**: ไม่สร้าง `school_master` ใน MVP — Import ทีมใหม่แยกอิสระต่อ Tournament ทุกครั้ง ไม่มี FK ไปยัง League `teams` โดยเด็ดขาด สามารถเพิ่ม `school_master` เป็น Future Enhancement ได้โดยไม่เปลี่ยน Match History เดิม
 
 ### 2.5 `tournament_players`
 ```sql
@@ -212,7 +218,9 @@ create table tournament.tournament_players (
   unique (team_id, shirt_no)
 );
 ```
-**เหตุผล**: "นักกีฬาอาจมี Shirt Number แยกตามรายการ" → `unique(team_id, shirt_no)` แทนที่จะ unique ข้าม tournament ทั้งหมด — นักกีฬาคนเดียวกันที่ลงสองทีม (สองรุ่นอายุ) จะมีสอง `tournament_players` row คนละ `team_id`, คนละเบอร์ได้ (การผูกว่าเป็นคนเดียวกันข้าม row ต้องตัดสินใจแยก — ดู Open Questions "Player คนเดิมสามารถผูกข้ามรายการได้หรือไม่")
+**เหตุผล**: "นักกีฬาอาจมี Shirt Number แยกตามรายการ" → `unique(team_id, shirt_no)` แทนที่จะ unique ข้าม tournament ทั้งหมด — นักกีฬาคนเดียวกันที่ลงสองทีม (สองรุ่นอายุ) จะมีสอง `tournament_players` row คนละ `team_id`, คนละเบอร์ได้
+
+**DECISION LOCKED (D-05, 2026-07-14)**: **ไม่สร้าง `person_id` กลางใน MVP** — ไม่เชื่อมนักกีฬาข้าม Tournament หรือข้าม Category, Discipline/Suspension ไม่สะสมข้าม Tournament และไม่สะสมข้าม Category, ไม่ใช้เลขบัตรประชาชนเป็น Global Identity, ห้าม Join หรือ Sync กับ League `players` โดยเด็ดขาด
 
 ### 2.6 `tournament_staff`
 ```sql
@@ -296,19 +304,21 @@ create table tournament.tournament_matches (
     check (away_source_type in ('team','group_slot','group_rank','match_winner','match_loser','best_ranked','bye','tbd')),
   away_source_ref text,                     -- ใหม่
   sources_resolved_at timestamptz,          -- ใหม่: เวลาที่ home/away_team_id ถูกเติมจาก source_ref ล่าสุด (null = ยังไม่ resolve หรือยังเป็น TBD)
-  home_score int,
-  away_score int,
-  home_penalty_score int,
-  away_penalty_score int,
+  regulation_home_score int,                -- DECISION LOCKED (D-09, 2026-07-14): แยกจากคะแนนจุดโทษชัดเจน (เดิมชื่อ home_score ซึ่งกำกวมว่ารวม Penalty หรือไม่)
+  regulation_away_score int,
+  penalty_home_score int,                   -- DECISION LOCKED (D-09): เดิมชื่อ home_penalty_score — เปลี่ยนชื่อให้ตรงกับคำตัดสิน
+  penalty_away_score int,
+  decided_by text                           -- DECISION LOCKED (D-09): 'regulation' | 'penalty' — ระบุว่าผลตัดสินจบที่เวลาปกติหรือต้องยิงจุดโทษ
+    check (decided_by in ('regulation','penalty')),
   winner_team_id uuid references tournament.tournament_teams(id) on delete set null,
   status text not null default 'scheduled'
     check (status in ('scheduled','ready','in_progress','finished','postponed','cancelled','abandoned','bye','void')),
-  result_workflow_status text not null default 'not_started'                      -- v1.1: แยกจาก match status
+  result_workflow_status text not null default 'not_started'                      -- DECISION LOCKED (D-16, 2026-07-14): Single-step with Mandatory Preview — เอา approved/rejected ออก (ไม่มีผู้อนุมัติคนที่สองในกระบวนการปกติ) เพิ่ม previewed
     check (result_workflow_status in
-      ('not_started','draft','submitted','approved','published','correction_requested','corrected','rejected')),
+      ('not_started','draft','previewed','submitted','published','correction_requested','corrected')),
   schedule_status text not null default 'draft'                                   -- ใหม่ QA fix: cache ของ tournament_schedule_versions.status ที่ (category_id, stage) นี้สังกัดอยู่
     check (schedule_status in ('draft','validated','published','revision_required','archived')),
-  result_policy text not null default 'two_step'                                  -- ใหม่ Scheduling Addendum: override ต่อนัดได้ผ่าน Excel import
+  result_policy text not null default 'single_step'                              -- DECISION LOCKED (D-16, 2026-07-14): Default เป็น single_step ทุกนัด ไม่มี Stage-based Variation ในคำตัดสินนี้ — Column คงไว้เผื่อยืดหยุ่นอนาคต ค่า two_step/central_review ยังไม่ถูกใช้จริงในรอบนี้
     check (result_policy in ('single_step','two_step','central_review')),
   result_type text not null default 'normal'
     check (result_type in ('normal','bye','walkover','penalty_decided')),
@@ -321,7 +331,8 @@ create table tournament.tournament_matches (
   updated_at timestamptz not null default now(),
   deleted_at timestamptz,
   unique (tournament_id, match_code),
-  check (home_team_id is not null or away_team_id is not null or status in ('scheduled','postponed','cancelled'))
+  check (home_team_id is not null or away_team_id is not null or status in ('scheduled','postponed','cancelled')),
+  check (status <> 'finished' or winner_team_id is not null)     -- DECISION LOCKED (D-09, 2026-07-14): ไม่มีผลเสมออีกต่อไป — นัดที่ finished ต้องมีผู้ชนะเสมอ (ตัดสินด้วย Penalty ถ้าเสมอในเวลาปกติ)
 );
 create index idx_tmatches_category_stage on tournament.tournament_matches (category_id, stage);
 create index idx_tmatches_group on tournament.tournament_matches (group_id);
@@ -332,7 +343,7 @@ create index idx_tmatches_away_source on tournament.tournament_matches (away_sou
 ```
 **เหตุผลของแต่ละจุดที่ V1 ไม่มี**:
 - `home_team_id`/`away_team_id` เป็น **nullable** → รองรับ "Bye" แบบมี match row จริง ต่างจาก V1 ที่ `home_team_id`/`away_team_id` เป็น `NOT NULL` เสมอ (`scripts/schema.sql:82-83`) — **ปรับ `check` constraint ใน Scheduling Addendum**: เดิมบังคับต้องมีทีมอย่างน้อยหนึ่งฝั่งเสมอ แต่ตอนนี้นัดที่วางตารางไว้ล่วงหน้าด้วย Placeholder (เช่น `group_slot`/`match_winner`) อาจไม่มีทีมทั้งสองฝั่งเลยตอนสร้าง (สถานะ `scheduled` เท่านั้นที่ยอมให้ทั้งคู่เป็น `null` ได้ — ทันทีที่ resolve หรือแข่งจริงต้องมีอย่างน้อยฝั่งหนึ่ง)
-- `home_penalty_score`/`away_penalty_score` แยกจาก `home_score`/`away_score` → รองรับ "ผู้ชนะจากจุดโทษ" ได้ตรงไปตรงมา
+- `penalty_home_score`/`penalty_away_score` แยกจาก `regulation_home_score`/`regulation_away_score` → รองรับ "ผู้ชนะจากจุดโทษ" ได้ตรงไปตรงมา — **DECISION LOCKED (D-09, 2026-07-14)**: Tournament นี้ไม่มีผลเสมอเลยในตารางคะแนน (ต่างจาก FIFA 3/1/0 ที่มีผลเสมอ) เวลาแข่งขันปกติ 40 นาที เสมอแล้วต้องยิงจุดโทษตัดสินทุกนัด รวมถึงรอบแบ่งกลุ่ม — `decided_by` ระบุว่าผลจบที่ `regulation` หรือ `penalty`, ประตูจาก Penalty Shootout **ไม่นำไปรวม** `goals_for`/`goals_against`/`goal_difference`/Top Scorer (คำนวณจาก `tournament_match_goals` เท่านั้นซึ่งไม่บันทึกประตู Penalty Shootout)
 - `status` มี `'bye'` และ `'void'` เพิ่มจาก V1 (V1 มีแค่ `scheduled/finished/postponed/cancelled`, `scripts/schema.sql:86`)
 - `stage` มี `'round_of_32'` และ `'custom'` เพิ่มจาก V1 (V1 จำกัดที่ 4/8/16 เท่านั้น, `lib/bracket.ts:6`)
 - ไม่มี `division_id` เลยในตารางนี้ (V1 ยังมี `division_id` nullable ค้างอยู่บน `matches` แม้ Tournament ไม่ใช้ — เป็นต้นเหตุของ R1)
@@ -340,7 +351,7 @@ create index idx_tmatches_away_source on tournament.tournament_matches (away_sou
 - `court_id` แยกจาก `venue_id` เพื่อรองรับ "สนามเดียวกันมีมากกว่า 1 สนามแข่งย่อย (Court)"
 - **`home_source_type`/`home_source_ref`/`away_source_type`/`away_source_ref` (ใหม่ Scheduling Addendum)**: เก็บ "ที่มา" ของทีมแต่ละฝั่งแบบ Human-readable (`match_code`/`slot_code` ไม่ใช่ UUID) ตรงตามข้อกำหนด "ห้ามลบ Source Definition หลัง Resolve" — แม้ `home_team_id` ถูกเติมค่าแล้ว `home_source_type`/`home_source_ref` ยังคงอยู่ถาวรเพื่อสืบย้อนได้เสมอว่า "ทีมนี้มาจากไหน" (เช่น มาจาก Group A อันดับ 1 หรือมาจากผู้ชนะนัด R16-01) `sources_resolved_at` ใช้แยกว่า field นี้เพิ่งถูก resolve ครั้งล่าสุดเมื่อไร สำหรับ Re-resolve และ Correction Workflow
 - **ทั้ง 8 ค่าของ `source_type` ตรงตามที่กำหนดไว้ในบริบทจริง**: `team` (ทีมจริงกำหนดตรงๆ, เดิมเรียก `direct_team` ใน `tournament_bracket_matches` รอบก่อนหน้า — เปลี่ยนชื่อให้สอดคล้องกับ Excel Format ใหม่), `group_slot` (ตำแหน่งจับฉลาก เช่น `A-S1` — ก่อนจับฉลาก), `group_rank` (อันดับหลังจบกลุ่ม เช่น `A:1` — หลังแข่งจบ), `match_winner`/`match_loser` (อ้าง `match_code` ของนัดต้นทาง), `best_ranked` (ทีมอันดับดีที่สุดข้ามกลุ่ม เช่น `third_place:1`), `bye`, `tbd`
-- **`result_policy` ต่อนัด (ใหม่)**: เดิมออกแบบเป็นแค่ Recommendation ระดับ Venue Operations (ดู `TOURNAMENT_V2_VENUE_OPERATIONS.md` หมวด 9) ตอนนี้กำหนดผ่าน Excel import ได้เป็นรายนัด — รอบชิงอันดับ 3/ชิงชนะเลิศตั้ง `central_review` ได้โดยไม่กระทบนัดอื่น
+- **`result_policy` ต่อนัด**: **DECISION LOCKED (D-16, 2026-07-14)**: Default = `single_step` ทุกนัดไม่มีข้อยกเว้น (Single-step Result Submission with Mandatory Preview, ไม่มีผู้อนุมัติคนที่สอง) — ค่า `two_step`/`central_review` ยังคงอยู่ใน CHECK constraint เผื่อความยืดหยุ่นในอนาคตแต่ไม่ถูกใช้จริงในรอบนี้ (ไม่มี Stage-based Policy Variation ตามคำตัดสิน)
 - **`version` (ใหม่ QA fix)**: Optimistic Lock แยกต่างหากจาก `tournament_result_submissions.version` — `tournament_matches.version` ล็อกการแก้ไข **ระดับ Schedule/Fixture** (วันที่ เวลา สนาม Court Source Definition) ในขณะที่ `tournament_result_submissions.version` ล็อกการแก้ไข **ระดับผลการแข่งขัน** (สกอร์ ประตู ใบโทษ) — สองเรื่องนี้แก้โดยคนละบทบาทกันได้ (ผู้จัดโปรแกรมแก้วันเวลา vs เจ้าหน้าที่สนามกรอกผล) จึงต้องมี Lock แยกกัน ไม่ใช้ตัวเดียวร่วมกันเพราะจะทำให้แก้ Schedule บล็อกการกรอกผลโดยไม่จำเป็น (หรือกลับกัน)
 - **`schedule_status` (ใหม่ QA fix)**: Denormalized Cache ของ `tournament_schedule_versions.status` ที่ `(category_id, stage)` ของนัดนี้สังกัดอยู่ ณ เวลาล่าสุด — Pattern เดียวกับ `tournament_group_members.assignment_version` (คือ cache จากตาราง version/history แยกต่างหาก) เหตุผลที่ต้อง cache ลงมาถึงระดับ Match แทนที่จะ query `tournament_schedule_versions` ทุกครั้ง: หน้า Venue Matchday Dashboard และ Public Fixtures ต้อง Filter "แสดงเฉพาะนัดที่ Schedule Publish แล้ว" เป็น Query หลักที่ใช้บ่อยมาก — มี Column ตรงบน `tournament_matches` ให้ Index ได้เร็วกว่า Join ทุกครั้ง ตัว `tournament_schedule_versions` ยังคงเป็น Source of Truth ที่มี Audit/History ครบ ส่วนนี้เป็นแค่ Read-optimization
 
@@ -382,6 +393,7 @@ create table tournament.tournament_match_goals (
 );
 create index idx_tgoals_match on tournament.tournament_match_goals (match_id);
 ```
+**DECISION LOCKED (D-09, 2026-07-14)**: ตารางนี้บันทึกเฉพาะประตูในเวลาแข่งขันปกติ (Regulation Play) เท่านั้น — **ไม่บันทึกการยิงจุดโทษ (Penalty Shootout) เป็น Goal Event** เพราะไม่นับรวมใน `goals_for`/`goals_against`/Top Scorer ตามคำตัดสิน ผลจุดโทษเก็บที่ `tournament_matches.penalty_home_score`/`penalty_away_score` เท่านั้น
 
 ### 2.10 `tournament_match_cards`
 ```sql
@@ -413,6 +425,9 @@ create table tournament.tournament_match_reports (
 ```
 
 ### 2.12 `tournament_suspension_events` / `tournament_suspension_serving_matches`
+
+**DECISION LOCKED (D-06, 2026-07-14)**: Tournament Suspension **ไม่ใช้สูตรคะแนนสะสม 2/4/6/8 ของ League** — ใช้กติกาอ้างอิงจาก `world-cup-2026-rules-summary-th.md`: นับจำนวน/ประเภทใบ (Card-count/type based) ไม่ใช่คะแนนสะสมข้ามเกณฑ์ (Points-threshold) — Schema ด้านล่างปรับ `event_type`/เอา `points_added`/`points_total_after`/`threshold_crossed` ออกเพราะเป็น League-specific concept ที่ไม่ตรงกับกติกาที่ตัดสินใจแล้ว
+
 ```sql
 create table tournament.tournament_suspension_events (
   id uuid primary key default gen_random_uuid(),
@@ -422,13 +437,10 @@ create table tournament.tournament_suspension_events (
   team_id uuid not null references tournament.tournament_teams(id),
   trigger_match_id uuid references tournament.tournament_matches(id) on delete set null,
   event_type text not null check (event_type in
-    ('accumulated_points','second_yellow','direct_red','manual')),
-  points_added int not null default 0,
-  points_total_after int not null default 0,
-  threshold_crossed int,
-  ban_matches int not null default 0,
+    ('accumulated_two_yellow','second_yellow_same_match','direct_red','manual')),  -- DECISION LOCKED (D-06): Card-count/type based, ไม่ใช่ points-threshold
+  ban_matches int not null default 1,       -- DECISION LOCKED (D-06): ค่าเริ่มต้น 1 นัดตามกติกาอ้างอิง (ยกเว้น manual ที่ Admin ระบุเอง)
   status text not null default 'pending' check (status in ('pending','active','served','cancelled','appealed')),
-  is_manual_override boolean not null default false,
+  is_manual_override boolean not null default false,  -- Manual Additional Suspension (D-06) ใช้ flag นี้ร่วมกับ event_type='manual'
   created_by uuid,
   note text,
   created_at timestamptz not null default now(),
@@ -445,7 +457,9 @@ create table tournament.tournament_suspension_serving_matches (
   unique (suspension_event_id, match_id)
 );
 ```
-**เหตุผล**: แยก Suspension Trigger (`tournament_suspension_events`) ออกจาก Serving Match (`tournament_suspension_serving_matches`) ตรงตามข้อกำหนด Section 9 ของแผนต้นทาง ("แยก Disciplinary Score / Suspension Trigger / Serving Match / Suspension Completion ออกจากกันอย่างชัดเจน") — `status` ของ serving match รองรับ Bye/Postponed/Cancelled ตรงๆ ในระดับ schema (V1 ไม่มี field นี้ ต้อง derive จาก join กับ `matches.status` ทุกครั้งใน `lib/suspension-calc.ts::findNextMatchesForSuspension`)
+**เหตุผล**: แยก Suspension Trigger (`tournament_suspension_events`) ออกจาก Serving Match (`tournament_suspension_serving_matches`) ตรงตามข้อกำหนด Section 9 ของแผนต้นทาง ("แยก Disciplinary Score / Suspension Trigger / Serving Match / Suspension Completion ออกจากกันอย่างชัดเจน") — `status` ของ serving match รองรับ Bye/Postponed/Cancelled ตรงๆ ในระดับ schema (V1 ไม่มี field นี้ ต้อง derive จาก join กับ `matches.status` ทุกครั้งใน `lib/suspension-calc.ts::findNextMatchesForSuspension`) — **Open Sub-question (D-06, ยังไม่ตัดสินใจ)**: กรณี Bye/Postponed/Cancelled นับเป็นนัดที่ต้องพักหรือไม่ ยังไม่มีคำตอบ ห้ามเดา `status` ของ Serving Match ในสามกรณีนี้ยังใช้ Placeholder logic เดิมจนกว่าจะได้คำตอบ
+
+**Fair-play Score — DECISION LOCKED (D-06, 2026-07-14) แยกจาก Suspension Trigger โดยเจตนา**: Fair Play เป็น**ค่าที่คำนวณ (Computed)** ไม่ใช่ Stored Column — อ่านจาก `tournament_match_cards` โดยตรงแล้วให้น้ำหนักตามกติกา (ใบเหลือง = -1, ใบแดงจากสองใบเหลือง = -3, ใบแดงโดยตรง = -4, ใบเหลืองแล้วตามด้วยใบแดงโดยตรง = -5, หักเฉพาะเหตุการณ์รุนแรงที่สุดต่อคนต่อนัด) ผ่านฟังก์ชัน `calculateFairPlayScore()` — ดู [หมวด 6](#6-rule-ใดควรอยู่ใน-database-vs-code) ไม่ต้องมีตารางหรือ Column แยกเพราะเป็น Derived Data เหมือน Goal Difference ที่ไม่ถูก Store เช่นกัน
 
 ### 2.13 `tournament_standing_rules`
 ```sql
@@ -454,18 +468,20 @@ create table tournament.tournament_standing_rules (
   tournament_id uuid not null references tournament.tournaments(id) on delete cascade,
   category_id uuid references tournament.tournament_categories(id) on delete cascade, -- null = ใช้กับทุก category
   points_win int not null default 3,
-  points_draw int not null default 1,
+  points_draw int not null default 1,       -- DECISION LOCKED (D-09, 2026-07-14): UNUSED — Tournament ไม่มีผลเสมอ (ตัดสินด้วย Penalty ทุกนัดที่เสมอในเวลาปกติ) คงคอลัมน์ไว้เพื่อ Backward-compat กับ Standings Engine เดิม แต่ค่านี้จะไม่ถูกใช้จริง
   points_loss int not null default 0,
   tiebreak_order jsonb not null default
-    '["points","head_to_head","goal_diff","goals_for","fair_play","lot"]',
-  fair_play_enabled boolean not null default false,
+    '["points","head_to_head_points","head_to_head_goal_diff","head_to_head_goals_for","group_goal_diff","group_goals_for","fair_play","lot"]',  -- DECISION LOCKED (D-09): ลำดับตามคำตัดสิน — Head-to-head (คะแนน→GD→GF) ก่อน ตามด้วยทั้งกลุ่ม (GD→GF) แล้วจึง Fair Play และจับฉลาก ไม่มี FIFA Ranking
+  fair_play_enabled boolean not null default true,   -- DECISION LOCKED (D-09): เปิดใช้เสมอตามกติกาที่ตัดสินแล้ว
   lot_enabled boolean not null default true,
-  mini_table_enabled boolean not null default true,
+  mini_table_enabled boolean not null default true,   -- DECISION LOCKED (D-09): เปิดใช้เสมอ — ถ้ามีหลายทีมเท่ากันและ Head-to-head แยกบางทีมออกได้แล้ว ต้องคำนวณ Head-to-head ใหม่เฉพาะทีมที่ยังเท่ากัน (Recursive Mini-league)
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
 ```
 **เหตุผล**: ตอบ Section 7 ของแผนต้นทาง — เก็บ**ลำดับ**และ**เปิด/ปิด**กติกา tiebreak เป็น config ใน DB (`tiebreak_order` jsonb) แต่ **สูตรคำนวณจริงของแต่ละ tiebreak อยู่ใน Code** (`lib/tournament/standings/resolveTiebreak.ts`) — ดูเหตุผลแยก Code vs DB ใน [หมวด 6](#6-rule-ใดควรอยู่ใน-database-vs-code)
+
+**DECISION LOCKED (D-09, 2026-07-14) — Group Ranking เมื่อคะแนนเท่ากัน**: (1) คะแนนจาก Head-to-head (2) ผลต่างประตู Head-to-head (3) ประตูได้ Head-to-head (4) ผลต่างประตูทั้งกลุ่ม (5) ประตูได้ทั้งกลุ่ม (6) Fair Play (7) จับฉลาก — ถ้ามีหลายทีมเท่ากันและ Head-to-head แยกบางทีมออกได้แล้ว ให้ **คำนวณ Head-to-head ใหม่เฉพาะทีมที่ยังเท่ากัน** (Recursive Mini-league) — **ไม่ใช้ FIFA World Ranking** เพราะทีมโรงเรียนไม่มี Ranking นี้ (ต่างจากไฟล์อ้างอิง FIFA World Cup 2026 ที่ใช้ Ranking เป็นเกณฑ์สุดท้าย)
 
 ### 2.14 `tournament_qualification_rules` / `tournament_standing_overrides`
 ```sql
@@ -475,6 +491,8 @@ create table tournament.tournament_qualification_rules (
   category_id uuid not null references tournament.tournament_categories(id) on delete cascade,
   qualify_rank_per_group int not null default 2,
   best_third_placed_count int not null default 0,
+  best_third_placed_method text not null default 'ranked'       -- ใหม่ (D-07/D-29, 2026-07-14): 'ranked' = ใช้ tiebreak คะแนน/GD/GF/Fair Play/จับฉลาก ตาม D-07, 'draw' = จับฉลากเลือกตรงจากผู้มีสิทธิ์ทั้งหมดตาม D-29 (ไม่จัดอันดับ)
+    check (best_third_placed_method in ('ranked','draw')),
   cross_group_comparison boolean not null default false,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
@@ -492,6 +510,41 @@ create table tournament.tournament_standing_overrides (
 );
 ```
 **เหตุผล**: `tournament_standing_overrides` แยกออกมาต่างหาก (V1 ไม่มีเลย) เพื่อให้ Manual Override มี **Audit Trail ในตัว** (`created_by`, `reason` บังคับกรอก) ตรงตาม requirement "รองรับ Manual Override พร้อม Audit Log" — การ compute standing จริงยัง auto-calculate ตามปกติ แต่ถ้ามี override row จะ "ชนะ" การจัดอันดับอัตโนมัติ (Engine ต้อง join ตารางนี้เป็นขั้นตอนสุดท้าย)
+
+### 2.14b `tournament_qualification_draws` / `tournament_qualification_draw_candidates` (ใหม่ — DECISION LOCKED D-07/D-29, 2026-07-14)
+
+> เพิ่มเข้ามาเพื่อรองรับ Category ที่ `tournament_qualification_rules.best_third_placed_method = 'draw'` (เช่น G-U16 ตาม D-29) — จับฉลากเลือกทีมที่ผ่านเข้ารอบจาก Candidate Pool แทนการจัดอันดับด้วยคะแนน/GD/GF **ห้าม Hardcode ใน Engine กลาง** (`rankBestThirdPlacedTeams()`) ต้องอ่าน Config นี้เสมอ
+
+```sql
+create table tournament.tournament_qualification_draws (
+  id uuid primary key default gen_random_uuid(),
+  category_id uuid not null references tournament.tournament_categories(id) on delete cascade,
+  qualification_slot text not null,          -- ป้ายกำกับ Pool ที่จับฉลาก เช่น 'group_third_place'
+  slots_available int not null,              -- จำนวนที่ผ่านเข้ารอบจาก Pool นี้ เช่น 2 (สำหรับ G-U16: จับ 2 จาก 3)
+  version int not null default 1,
+  drawn_by uuid,
+  drawn_at timestamptz not null default now(),
+  note text,
+  superseded_at timestamptz                  -- ไม่ null = ถูกแทนที่ด้วย version ใหม่กว่าแล้ว (append-only เหมือน tournament_draw_assignments)
+);
+create index idx_tqualdraw_category on tournament.tournament_qualification_draws (category_id, qualification_slot, version desc);
+
+create table tournament.tournament_qualification_draw_candidates (
+  id uuid primary key default gen_random_uuid(),
+  draw_id uuid not null references tournament.tournament_qualification_draws(id) on delete cascade,
+  team_id uuid not null references tournament.tournament_teams(id) on delete cascade,
+  group_id uuid references tournament.tournament_groups(id) on delete set null,   -- กลุ่มต้นทางของทีมนี้ (เพื่อ Audit ว่ามาจากกลุ่มไหน)
+  is_selected boolean not null default false,   -- true = จับได้ ผ่านเข้ารอบ
+  draw_order int,                               -- ลำดับที่จับ (ถ้ามีนัยสำคัญ)
+  created_at timestamptz not null default now(),
+  unique (draw_id, team_id)
+);
+create index idx_tqualcand_draw on tournament.tournament_qualification_draw_candidates (draw_id);
+```
+
+**เหตุผล**: ตอบข้อกำหนด D-29 ตรงตัว — ต้องเก็บ **รายชื่อทีมที่มีสิทธิ์จับฉลาก** (`tournament_qualification_draw_candidates` ทุกแถวของ `draw_id`), **ทีมที่จับได้** (`is_selected=true`), **ผู้ดำเนินการ** (`drawn_by`), **วันที่และเวลา** (`drawn_at`), **Draw Version** (`version`), **หมายเหตุ/หลักฐาน** (`note`), และ **Audit Log** (ผ่าน `tournament_audit_logs` pattern เดียวกับตารางอื่น) — ออกแบบเป็น Append-only เหมือน `tournament_draw_assignments` (หมวด 2.8b) เพื่อดูประวัติการจับฉลากซ้ำได้ครบถ้วนหากมีการจับใหม่
+
+**ตัวอย่างข้อมูลสำหรับ G-U16 (D-29)**: `tournament_qualification_draws` 1 แถว (`qualification_slot='group_third_place'`, `slots_available=2`) + `tournament_qualification_draw_candidates` 3 แถว (ทีมอันดับ 3 ของกลุ่ม A/B/C ทั้งหมด, `is_selected` เป็น `true` สำหรับ 2 ทีมที่จับได้)
 
 ### 2.15 `tournament_knockout_rounds` (ปรับใน Scheduling Addendum — `tournament_bracket_matches` ถูกยุบรวมแล้ว)
 
@@ -569,7 +622,9 @@ create index idx_trole_user on tournament.tournament_role_assignments (user_id);
 create index idx_trole_venue on tournament.tournament_role_assignments (venue_id) where venue_id is not null;
 create index idx_trole_category on tournament.tournament_role_assignments (category_id) where category_id is not null;
 ```
-**เหตุผล**: ตอบข้อกำหนด v1.1 หมวด RBAC โดยตรง — หนึ่ง row ต่อหนึ่ง Scope (ผู้ใช้คนเดียวรับได้หลาย row ถ้าดูแลหลายสนาม/Category) `tournament_id`/`venue_id`/`category_id`/`match_id` ทุกตัว **nullable และเป็นอิสระต่อกัน**: ตั้งเฉพาะ `tournament_id` = สิทธิ์ทั้งรายการ (เช่น `central_control`), ตั้ง `venue_id` เพิ่ม = จำกัดแค่สนามนั้น (`venue_manager`/`result_operator`), ตั้ง `match_id` เพิ่ม = จำกัดแค่นัดนั้น (`match_official`) — Authorization Logic (`authorizeVenueScope()`) เป็นผู้ตีความ hierarchy นี้ ไม่ใช่ constraint ระดับ DB (ดู Target Architecture หมวด 11.3)
+**เหตุผล**: ตอบข้อกำหนด v1.1 หมวด RBAC โดยตรง — หนึ่ง row ต่อหนึ่ง Scope (ผู้ใช้คนเดียวรับได้หลาย row ถ้าดูแลหลายสนาม/Category) `tournament_id`/`venue_id`/`category_id`/`match_id` ทุกตัว **nullable และเป็นอิสระต่อกัน**: ตั้งเฉพาะ `tournament_id` = สิทธิ์ทั้งรายการ (เช่น `central_control`), ตั้ง `venue_id` เพิ่ม = จำกัดแค่สนามนั้น (`venue_manager`), ตั้ง `match_id` เพิ่ม = จำกัดแค่นัดนั้น (`match_official`) — Authorization Logic (`authorizeVenueScope()`) เป็นผู้ตีความ hierarchy นี้ ไม่ใช่ constraint ระดับ DB (ดู Target Architecture หมวด 11.3)
+
+**DECISION LOCKED (D-03, 2026-07-14) — `result_operator`**: ต่างจาก Role อื่นในตารางนี้ — `result_operator` คือ **Dedicated Shared Tournament Result-entry Account** หนึ่ง `tournament_user_profiles` row (บัญชีเดียว ไม่ใช่รายบุคคล) ที่มี `tournament_role_assignments` row แบบตั้งเฉพาะ `tournament_id` (ไม่ตั้ง `venue_id`/`category_id`/`match_id` ตายตัว เพราะเลือก Venue/Match ได้เองในแอปทุก Session) — Non-repudiation ชดเชยด้วย Audit Log ที่บันทึก `session_id`/`venue_id`/`match_id`/`device metadata`/`before-after data` ทุก Mutation (ดู Target Architecture หมวด 5)
 
 ### 2.18 `tournament_match_officials` (ใหม่ v1.1)
 ```sql
@@ -606,8 +661,8 @@ create table tournament.tournament_result_submissions (
   match_id uuid not null references tournament.tournament_matches(id) on delete cascade,
   stage text not null check (stage in ('quick_result','full_report')),
   payload jsonb not null,             -- สกอร์/ผู้ทำประตู/ใบเหลืองแดง/หมายเหตุ ตาม stage
-  status text not null default 'draft'
-    check (status in ('draft','submitted','approved','published','correction_requested','corrected','rejected')),
+  status text not null default 'not_started'      -- DECISION LOCKED (D-16, 2026-07-14): Single-step with Mandatory Preview — เพิ่ม previewed, เอา approved/rejected ออก (ไม่มีผู้อนุมัติคนที่สองในกระบวนการปกติ)
+    check (status in ('not_started','draft','previewed','submitted','published','correction_requested','corrected')),
   version int not null default 1,                -- Optimistic Locking
   idempotency_key text,                            -- ป้องกัน Double Submit จาก Network Retry
   submitted_by uuid references tournament.tournament_user_profiles(id) on delete set null,
@@ -632,13 +687,15 @@ create table tournament.tournament_result_versions (
 create table tournament.tournament_result_approvals (
   id uuid primary key default gen_random_uuid(),
   submission_id uuid not null references tournament.tournament_result_submissions(id) on delete cascade,
-  action text not null check (action in ('approve','reject','request_correction')),
+  action text not null check (action in ('request_correction','corrected')),   -- DECISION LOCKED (D-16, 2026-07-14): เอา approve/reject ออก — ไม่มี Routine Approval Step แยกอีกต่อไป ตารางนี้ใช้เฉพาะ Correction Workflow เท่านั้น
   actor_id uuid not null references tournament.tournament_user_profiles(id),
   note text,
   created_at timestamptz not null default now()
 );
 create index idx_tapproval_submission on tournament.tournament_result_approvals (submission_id);
 ```
+**DECISION LOCKED (D-16, 2026-07-14)**: บทบาทของ `tournament_result_approvals` ลดลงเหลือแค่ **Correction Workflow เท่านั้น** — Workflow ปกติเป็น Single-step Result Submission with Mandatory Preview (Login → เลือกสนาม → เลือก Match → กรอกผล → Preview → ตรวจสอบ → Submit → Server Validate → บันทึกและ Publish) **ไม่มีผู้อนุมัติคนที่สอง** สำหรับ Submission ปกติ — ตารางนี้ถูกเรียกใช้เฉพาะตอนมีการ `request_correction` บนผลที่ `published` แล้วเท่านั้น
+
 **เหตุผล**: แยก 3 ตารางตามหน้าที่ชัดเจนตาม v1.1 requirement (Result Version History, Approval Workflow, Correction Workflow):
 - `tournament_result_submissions` = สถานะปัจจุบันของการกรอกผล (1 แถวต่อ 1 match ต่อ 1 stage ที่กำลัง active) — `version` ใช้เช็ค stale-write ก่อน update ทุกครั้ง, `idempotency_key` กัน submit ซ้ำจาก retry
 - `tournament_result_versions` = ประวัติ snapshot ทุกครั้งที่มีการแก้ (Before/After) เพื่อดูย้อนหลังได้ครบ ตอบ requirement "ไม่ลบ Result Version เก่าเมื่อแก้ผล"
@@ -779,18 +836,21 @@ alter table tournament.tournament_matches
 
 | Rule | เก็บที่ | เหตุผล |
 |---|---|---|
-| คะแนนชนะ/เสมอ/แพ้ (`points_win/draw/loss`) | **Database** (`tournament_standing_rules`) | เปลี่ยนได้ต่อทัวร์นาเมนต์โดยไม่ต้อง deploy โค้ด |
-| ลำดับ Tiebreak ที่จะใช้ (`tiebreak_order`) | **Database** (jsonb array) | Admin ต้องปรับลำดับได้ต่อการแข่งขัน (บาง cup ใช้ Head-to-head ก่อน goal diff, บาง cup สลับ) |
-| เปิด/ปิด Fair Play, จับฉลาก, Mini-table | **Database** (boolean flags) | เป็น business toggle ไม่ใช่ algorithm |
+| คะแนนชนะ/เสมอ/แพ้ (`points_win/draw/loss`) | **Database** (`tournament_standing_rules`) | เปลี่ยนได้ต่อทัวร์นาเมนต์โดยไม่ต้อง deploy โค้ด — **DECISION LOCKED (D-09)**: `points_draw` ไม่ถูกใช้จริง (ไม่มีผลเสมอ) คงคอลัมน์ไว้เพื่อ Backward-compat เท่านั้น |
+| ลำดับ Tiebreak ที่จะใช้ (`tiebreak_order`) | **Database** (jsonb array) | **DECISION LOCKED (D-09)**: ลำดับกำหนดแล้ว (H2H คะแนน→GD→GF → กลุ่ม GD→GF → Fair Play → จับฉลาก) เก็บเป็น Default ใน DB ยังปรับได้ต่อทัวร์นาเมนต์ในอนาคตถ้าจำเป็น |
+| เปิด/ปิด Fair Play, จับฉลาก, Mini-table | **Database** (boolean flags) | เป็น business toggle ไม่ใช่ algorithm — **DECISION LOCKED (D-09)**: ทั้งสามเปิดใช้เป็น Default |
 | **สูตรคำนวณ**ของแต่ละ Tiebreak (วิธี head-to-head แบบ mini-league หรือแบบนัดเดียว ฯลฯ) | **Code** (`lib/tournament/standings/resolveTiebreak.ts`) | เป็น Algorithm ที่ต้อง Unit Test ได้แน่นอน เปลี่ยนน้อย เปลี่ยนทีต้อง review โค้ด |
-| จำนวนทีมผ่านเข้ารอบต่อกลุ่ม, จำนวน Best Third-place | **Database** (`tournament_qualification_rules`) | เปลี่ยนได้ต่อทัวร์นาเมนต์/รุ่นอายุ |
-| วิธี**เปรียบเทียบ**ทีมอันดับ 3 ข้ามกลุ่ม (สูตรคำนวณ) | **Code** (`rankBestThirdPlacedTeams.ts`) | Algorithm ซับซ้อน ต้อง Unit Test |
+| **Fair-play Score** (คำนวณจาก `tournament_match_cards`) | **Code** (`lib/tournament/standings/calculateFairPlayScore.ts`) | **ใหม่ (D-06)**: -1/-3/-4/-5 ตามประเภทเหตุการณ์ หักเฉพาะรุนแรงที่สุดต่อคนต่อนัด — เป็น Derived Data ไม่ Store เหมือน Goal Difference |
+| จำนวนทีมผ่านเข้ารอบต่อกลุ่ม, จำนวน Best Third-place, วิธีคัดเลือก (`ranked`/`draw`) | **Database** (`tournament_qualification_rules`) | เปลี่ยนได้ต่อทัวร์นาเมนต์/รุ่นอายุ — **DECISION LOCKED (D-29)**: G-U16 ตั้ง `best_third_placed_method='draw'` เป็น Category Override |
+| วิธี**เปรียบเทียบ**ทีมอันดับ 3 ข้ามกลุ่ม เมื่อ `method='ranked'` (สูตรคำนวณ) | **Code** (`rankBestThirdPlacedTeams.ts`) | **DECISION LOCKED (D-07)**: คะแนนรวม→GD→GF→Fair Play→จับฉลาก ไม่ใช้ FIFA Ranking — Algorithm ซับซ้อน ต้อง Unit Test |
+| วิธี**จับฉลาก**เลือกทีมอันดับ 3 เมื่อ `method='draw'` | **Code** (`executeQualificationDraw.ts`) + **Database** (`tournament_qualification_draws`/`tournament_qualification_draw_candidates`) | **ใหม่ (D-29)**: สุ่มเลือกจาก Candidate Pool ไม่จัดอันดับด้วยคะแนน ผลลัพธ์ต้อง Persist พร้อม Audit |
 | Bracket Template (จำนวนสาย, การจับคู่ initial) | **Code** (`buildTemplate.ts`) + **Database** (ผลลัพธ์ที่ generate แล้วเก็บใน `tournament_knockout_rounds` + `tournament_matches` โดยตรง — ดู Data Model Correction หมวด 2.15) | โครงสร้างมาตรฐาน (single-elim) เป็น Algorithm, แต่ผลลัพธ์ที่ Admin แก้ไขต่อ (manual seed) ต้อง persist |
 | Round Robin Pairing Generation (รอบแบ่งกลุ่ม) | **Code** (`generateRoundRobin.ts`) | Algorithm มาตรฐาน (Circle Method) ต้อง Unit Test รองรับทีมคู่/คี่ |
 | Placeholder Resolution (แปลง `source_type`/`source_ref` เป็น `team_id`) | **Code** (`resolvePlaceholder.ts`) | ต้อง Unit Test ครบทั้ง 8 source_type และ Block เมื่อกระทบ Match ที่ Publish แล้ว |
-| Import Validation Rules (Error/Warning ทั้งหมด) | **Code** (`validateScheduleImportRow.ts`) | เป็น Business Rule ที่ต้อง Test ได้แน่นอน แต่ค่าตัวเลข threshold บางตัว (เช่น ระยะพักต่ำกว่ากี่นาทีถึง Warning) ควรอยู่ **Database** (`tournament_standing_rules` หรือตารางแยก) เพื่อปรับได้ต่อทัวร์นาเมนต์โดยไม่ deploy โค้ดใหม่ |
-| Suspension threshold (กี่แต้มแบน, สูตรคะแนนใบเหลือง/แดง) | **Database** ควรย้ายมาเป็น config (`tournament_standing_rules` หรือตารางแยก `tournament_discipline_rules`) — **ต่างจาก V1** ที่ hardcode เป็นค่าคงที่ในโค้ด (`lib/suspension-shared.ts:80-108`) | Tournament แต่ละรายการอาจใช้กติกาสมาคมต่างจาก League |
+| Import Validation Rules (Error/Warning ทั้งหมด) | **Code** (`validateScheduleImportRow.ts`) | เป็น Business Rule ที่ต้อง Test ได้แน่นอน — **DECISION LOCKED (D-24)**: `venue_max_matches_per_day=8` เป็น Error กำหนดแล้ว, `minimum_rest_minutes`/`max_matches_per_team_per_day` ไม่ Validate ใน MVP (Future Enhancement, เก็บเป็น **Database** config เมื่อถึงเวลา implement) |
+| Suspension Trigger Rule (จำนวน/ประเภทใบที่ทำให้พัก) | **Code** (`lib/tournament/discipline/suspensionTrigger.ts`) อ่านค่าจาก **Database** (`tournament_suspension_events.event_type`/`ban_matches`) | **DECISION LOCKED (D-06)**: Card-count/type based (2 ใบเหลืองคนละนัด, 2 ใบเหลืองนัดเดียว, ใบแดงตรง) — **ไม่ใช่** สูตรคะแนนสะสม 2/4/6/8 ของ League (`lib/suspension-shared.ts:80-108`) — Tournament ใช้กติกาอ้างอิง FIFA World Cup 2026 |
 | Manual Override การจัดอันดับ | **Database** (`tournament_standing_overrides`) พร้อม Audit | ต้องคงอยู่ถาวรและตรวจสอบย้อนหลังได้ |
+| Manual Additional Suspension | **Database** (`tournament_suspension_events.event_type='manual'` + `is_manual_override=true`) พร้อม Audit | **DECISION LOCKED (D-06)**: รองรับกรณีใบแดงโดยตรงที่ต้องเพิ่มโทษพักเกิน 1 นัด |
 
 ---
 
@@ -800,20 +860,20 @@ alter table tournament.tournament_matches
 |---|---|
 | Tournament หนึ่งรายการมีหลายรุ่นอายุได้ | `tournament_categories` (1-to-many จาก `tournaments`) |
 | รองรับชายและหญิง | `tournament_categories.gender` |
-| ทีมโรงเรียนเดียวกันอาจลงหลายรุ่น | `tournament_teams` ผูกกับ `category_id` ไม่ผูกกับ school master กลาง |
+| ทีมโรงเรียนเดียวกันอาจลงหลายรุ่น | `tournament_teams` ผูกกับ `category_id` ไม่ผูกกับ school master กลาง — **DECISION LOCKED (D-04, 2026-07-14)**: ไม่มี School Master ใน MVP |
 | Team Code ไม่ชนกันภายใน Category | `unique(category_id, team_code)` |
 | Shirt Number แยกตามรายการ | `unique(team_id, shirt_no)` แทน unique ข้าม tournament |
 | หลายสนาม | `tournament_venues` + `tournament_matches.venue_id` |
 | Match Number ≠ ลำดับในรอบ | `match_no` แยกจาก `bracket_position`/sort order |
 | รองรับ Bye | `home/away_team_id` nullable + `status='bye'`/`result_type='bye'` |
 | รองรับ Postponed/Cancelled | `tournament_matches.status` enum |
-| รองรับผลเสมอในรอบแบ่งกลุ่ม | ไม่มี constraint บังคับ winner ในสถานะ `stage='group'` |
-| ผู้ชนะจากจุดโทษ | `home/away_penalty_score` + `winner_team_id` |
+| รองรับผลเสมอในรอบแบ่งกลุ่ม | **DECISION LOCKED (D-09, 2026-07-14) — เปลี่ยนคำตอบ**: **ไม่มีผลเสมอเลย** ในตารางคะแนน — เสมอในเวลาปกติ (40 นาที) ต้องยิงจุดโทษตัดสินทุกนัดรวมรอบแบ่งกลุ่ม บังคับด้วย `check (status <> 'finished' or winner_team_id is not null)` |
+| ผู้ชนะจากจุดโทษ | `penalty_home_score`/`penalty_away_score` + `winner_team_id` + `decided_by` (ชื่อคอลัมน์ปรับตาม D-09) |
 | แก้ผลย้อนหลัง | ไม่มี lock บน `tournament_matches`; audit ผ่าน `tournament_audit_logs` |
 | Recalculate Bracket ปลอดภัย | Re-resolve `source_type`/`source_ref` บน `tournament_matches` ผ่าน `sources_resolved_at` + Block เมื่อกระทบ Match ที่ `published`/`finished` แล้ว (ดู Scheduling Addendum) |
-| ทีมอันดับ 3 ที่ดีที่สุด | `tournament_qualification_rules.best_third_placed_count` + `rankBestThirdPlacedTeams()` ใน Code |
-| กลุ่มจำนวนทีมไม่เท่ากัน | ไม่มี fixed-size constraint บน `tournament_group_members` |
-| ตัดผลกับทีมอันดับสุดท้าย | Config ใน `tournament_standing_rules` + Algorithm ใน Code (ระบุอย่างชัดเจนใน Open Questions เพราะกติกานี้หลากหลายมากในทางปฏิบัติ) |
+| ทีมอันดับ 3 ที่ดีที่สุด | `tournament_qualification_rules.best_third_placed_count`/`best_third_placed_method` + `rankBestThirdPlacedTeams()` (`method='ranked'`) หรือ `executeQualificationDraw()` (`method='draw'`) ใน Code — **DECISION LOCKED (D-07/D-29)** |
+| กลุ่มจำนวนทีมไม่เท่ากัน | ไม่มี fixed-size constraint บน `tournament_group_members` — วิธีปรับสัดส่วน Best Third-place เมื่อกลุ่มไม่เท่ากันยัง**เป็น Open Sub-question** (D-07) ยกเว้น G-U16 ที่ใช้ Draw แทน (D-29) |
+| ตัดผลกับทีมอันดับสุดท้าย | **ยังเป็น Open Sub-question แยกจาก Tiebreak หลักที่ตัดสินแล้ว** (D-09) — Config ใน `tournament_standing_rules` + Algorithm ใน Code เมื่อได้คำตอบ ห้ามเดา |
 | Fair Play + จับฉลาก | `tournament_standing_rules.fair_play_enabled/lot_enabled` + `resolveTiebreak.ts` |
 | Manual Override + Audit | `tournament_standing_overrides` + `tournament_audit_logs` |
 | **(v1.1) Category ↔ Venue mapping ไม่ hardcode** | `tournament_category_venues` |
@@ -831,6 +891,15 @@ alter table tournament.tournament_matches
 | **(QA Fix) Optimistic Lock ระดับ Schedule/Fixture แยกจากผลการแข่งขัน** | `tournament_matches.version` |
 | **(QA Fix) Schedule Status query เร็วระดับ Match โดยไม่ต้อง Join ทุกครั้ง** | `tournament_matches.schedule_status` (cache จาก `tournament_schedule_versions`) |
 | **(QA Fix) ลำดับจับฉลาก + Lock การ Re-resolve ระดับ Slot** | `tournament_group_members.draw_order`/`assignment_version` (cache จาก `tournament_draw_assignments`) |
+| **(Decision Lock 2026-07-14) Database Isolation สมบูรณ์** | Tournament Supabase Project แยกจาก League — `LEAGUE_*`/`TOURNAMENT_*` env vars (D-01) |
+| **(Decision Lock) ไม่ Migrate ข้อมูล Tournament V1** | เริ่มข้อมูลใหม่ทั้งหมด — Phase 11 เปลี่ยนเป็น Fresh-data Verification (D-02) |
+| **(Decision Lock) Shared Result-entry Account** | `tournament_role_assignments` role `result_operator` = Dedicated Shared Account พร้อม Audit Trail เสริม (D-03) |
+| **(Decision Lock) Team/Player ไม่ผูกกับ League** | ไม่มี FK ไป League `teams`/`players`, ไม่มี `person_id` กลาง (D-04/D-05) |
+| **(Decision Lock) Discipline ใช้กติกา FIFA-derived** | `tournament_suspension_events.event_type` Card-count based + Fair-play Score แยกเป็น Computed Value (D-06) |
+| **(Decision Lock) Best Third-place + G-U16 Override** | `tournament_qualification_rules.best_third_placed_method` + `tournament_qualification_draws` (D-07/D-29) |
+| **(Decision Lock) ไม่มีผลเสมอ — Penalty ตัดสินทุกนัด** | `regulation_home/away_score` + `penalty_home/away_score` + `decided_by` + CHECK constraint บังคับ `winner_team_id` (D-09) |
+| **(Decision Lock) Result Workflow Single-step** | `tournament_result_submissions.status` ไม่มี `approved`/`rejected`, เพิ่ม `previewed` (D-16) |
+| **(Decision Lock) Venue Capacity Limit** | `venue_max_matches_per_day=8` เป็น Error ใน `validateScheduleImportRow.ts`, Rest-time/Team-max ไม่ Validate ใน MVP (D-24) |
 
 ---
 
