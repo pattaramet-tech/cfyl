@@ -12,9 +12,9 @@
 
 import dotenv from 'dotenv';
 dotenv.config({ path: '.env.local' });
-
+import { loadEnvConfig } from '@next/env';
 import { getTournamentServiceClient, getTournamentClient } from '../../lib/tournament/db/supabase-tournament';
-
+loadEnvConfig(process.cwd());
 const ALL_TABLES = [
   // 001
   'tournaments', 'tournament_categories', 'tournament_venues', 'tournament_courts', 'tournament_category_venues',
