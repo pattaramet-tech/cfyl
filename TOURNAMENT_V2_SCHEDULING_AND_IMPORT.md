@@ -75,6 +75,8 @@ away_source_type, away_source_ref, result_policy, status, note
 
 **ไม่ใช้ UUID ในไฟล์ Excel** — ใช้ `match_code` เป็น External Reference เสมอ ให้ Database สร้าง UUID เองตอน Import (ตรงกับ `TOURNAMENT_V2_DATA_MODEL.md` หมวด 12.1 ของ Target Architecture — Human-Readable Reference)
 
+**DECISION LOCKED (D-16, 2026-07-14)**: `result_policy` มีค่า Default = `single_step` ทุกนัด (Single-step Result Submission with Mandatory Preview, ไม่มีผู้อนุมัติคนที่สอง) ไม่มีข้อยกเว้นตาม Stage ในคำตัดสินนี้ — Column ยังคงอยู่ในไฟล์ Excel เผื่อความยืดหยุ่นในอนาคต แต่ตัวอย่างด้านล่างปรับให้สะท้อน Default ปัจจุบัน
+
 ### ตัวอย่างรอบแบ่งกลุ่มก่อนจับฉลาก
 
 ```text
@@ -106,7 +108,7 @@ home_source_type: group_rank
 home_source_ref: A:1
 away_source_type: group_rank
 away_source_ref: B:2
-result_policy: two_step
+result_policy: single_step
 status: scheduled
 ```
 
@@ -266,16 +268,19 @@ Upload Excel → Parse → Validate ทีละแถว → แสดง Previ
 | E15 | รอบน็อกเอาต์ที่ต้องมีผู้ชนะแต่ Source ไม่สมบูรณ์ (เช่น `match_winner` อ้าง Match ที่เป็น Group Stage) | ตรวจ stage ของ Match ต้นทาง |
 | E16 | วันที่อยู่นอกช่วง Tournament (`match_date` ไม่อยู่ระหว่าง `tournaments.start_date`/`end_date`) | เทียบกับ `tournaments` |
 | E17 | Import ไฟล์ผิด Category หรือ Tournament (แถวส่วนใหญ่ใน Batch อ้าง Category/Tournament ที่ผู้ใช้ไม่ได้เลือกไว้) | ตรวจระดับ Batch ก่อน Process ทีละแถว |
+| E18 | **ใหม่ — DECISION LOCKED (D-24, 2026-07-14)**: Venue มี Match เกิน `venue_max_matches_per_day` (Default = 8) ในวันเดียวกัน | นับจำนวน Match ต่อ `venue_id`/`match_date` เทียบกับ Config `venue_max_matches_per_day` |
 
 ### 7.3 Validation Matrix — Warning (บันทึกได้ แต่แจ้งเตือน)
+
+> **DECISION LOCKED (D-24, 2026-07-14)**: W3 และ W4 **ปิดใช้งานใน MVP** — เจ้าของระบบตัดสินใจไม่ Validate `minimum_rest_minutes`/`max_matches_per_team_per_day` ในรอบนี้ (ไม่ใช่แค่รอ Threshold แต่เป็นการตัดสินใจไม่ Validate เลย) ทำเครื่องหมายเป็น Future Enhancement — **ห้ามใส่ค่า Threshold ที่เดาขึ้นมาเอง**
 
 | # | กติกา | ตรวจสอบใน |
 |---|---|---|
 | W1 | Category ถูกจัดลงสนามที่ไม่ใช่สนามหลัก (ไม่ตรง `tournament_category_venues.is_primary=true`) | เทียบกับ Data Model หมวด 2.3c |
 | W2 | ทีมแข่งติดกัน (Match ติดกันไม่มีช่วงพัก) | คำนวณช่วงเวลาระหว่างนัดของทีมเดียวกัน |
-| W3 | ระยะพักต่ำกว่าเกณฑ์ (ค่า Threshold ตาม Open Question Q24) | เทียบกับ Config |
-| W4 | ทีมแข่งมากกว่า 1 Match ต่อวัน (เกินค่าที่แนะนำตาม Q24) | นับจำนวน Match ต่อทีมต่อวัน |
-| W5 | จำนวนคู่ต่อวันเกินค่าที่แนะนำ (ต่อ Venue/Court) | นับจำนวน Match ต่อ venue/court/วัน |
+| W3 | ~~ระยะพักต่ำกว่าเกณฑ์~~ **DISABLED ใน MVP (D-24)** — `minimum_rest_minutes` ไม่ Validate ในรอบนี้ | Future Enhancement |
+| W4 | ~~ทีมแข่งมากกว่า 1 Match ต่อวัน~~ **DISABLED ใน MVP (D-24)** — `max_matches_per_team_per_day` ไม่ Validate ในรอบนี้ | Future Enhancement |
+| W5 | จำนวนคู่ต่อวันเกินค่าที่แนะนำ **ระดับ Court** (ระดับ Venue ใช้ E18 เป็น Error แทนแล้วตาม D-24) | นับจำนวน Match ต่อ court/วัน |
 | W6 | Match ไม่มี Court ระบุ | ตรวจ `court_code` ว่าง |
 | W7 | Match เริ่มก่อนเวลาเปิดสนามหรือหลังเวลาปิดสนาม | เทียบกับ Config เวลาทำการสนาม (ถ้ามี) |
 | W8 | Placeholder ยัง Resolve ไม่ได้ (ปกติสำหรับ Fixture ก่อนจับฉลาก — เป็น Warning ไม่ใช่ Error) | ตรวจ `home_team_id`/`away_team_id` เป็น null |

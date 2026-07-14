@@ -9,7 +9,8 @@
     "lint": "eslint",
     "test": "vitest run",
     "assign:teams": "ts-node scripts/assign-teams-to-divisions.ts",
-    "import:staffs": "ts-node scripts/import-staffs-from-xlsx.ts"
+    "import:staffs": "ts-node scripts/import-staffs-from-xlsx.ts",
+    "verify:tournament-foundation": "ts-node -P scripts/tournament-v2/tsconfig.verify.json scripts/tournament-v2/verify-foundation.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.108.2",

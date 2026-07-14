@@ -1,6 +1,6 @@
 # Tournament V2 — Venue Operations
 
-**สถานะ**: Proposal เท่านั้น รอการอนุมัติก่อนเริ่ม Implementation — เอกสารนี้เป็นส่วนขยายจาก `TOURNAMENT_V2_TARGET_ARCHITECTURE.md` หมวด 11 และ `TOURNAMENT_V2_DATA_MODEL.md` หมวด 2.17-2.20
+**สถานะ**: Proposal ที่ผ่าน Decision Lock บางส่วนแล้ว (2026-07-14) — ดู `TOURNAMENT_V2_DECISION_CHECKLIST.md` (โดยเฉพาะ D-03, D-16) สำหรับ Final Decision จุดที่มีคำว่า **DECISION LOCKED** คือคำตอบสุดท้าย — เอกสารนี้เป็นส่วนขยายจาก `TOURNAMENT_V2_TARGET_ARCHITECTURE.md` หมวด 11 และ `TOURNAMENT_V2_DATA_MODEL.md` หมวด 2.17-2.20
 **เพิ่มเข้ามาตาม**: `TOURNAMENT_V2_PREPARATION_PLAN.md` revision `v1.1 — Multi-Venue Match Operations`
 **บริบท**: รายการกีฬานักเรียนนักศึกษาจังหวัดชลบุรี ประเภทฟุตซอลเท่านั้น
 **ปรับปรุงตาม Scheduling Addendum**: `result_policy` ที่หมวด 9 อธิบายไว้ ตอนนี้เป็นคอลัมน์จริงบน `tournament_matches.result_policy` (ตั้งค่าได้ต่อนัดผ่าน Excel Import) ไม่ใช่แค่ Recommendation ระดับ Category — ดู `TOURNAMENT_V2_SCHEDULING_AND_IMPORT.md` สำหรับ Excel Format เต็ม และหมวด 10 ด้านล่างซึ่งตอนนี้มี "Schedule Status" เป็นมิติที่ 3 เพิ่มจาก Match Status และ Result Workflow Status
@@ -79,56 +79,62 @@ tournament_venues (สนามที่ 1-4)
 
 ### 4.1 Roles (สรุปจาก Target Architecture หมวด 11.2)
 
-| Role | Scope | ความสามารถหลัก |
-|---|---|---|
-| `tournament_super_admin` | ทั้งรายการ | จัดการทุกอย่าง: รายการ ผู้ใช้ กติกา สนาม ข้อมูลทุกส่วน |
-| `central_control` | ทั้งรายการ | ดูสถานะ 4 สนาม, ตรวจ/แก้ Conflict ข้ามสนาม, อนุมัติผลขั้นสุดท้าย, จัดการคำร้องขอแก้ไข |
-| `venue_manager` | สนามที่ได้รับมอบหมาย | ควบคุม Matchday Dashboard, ยืนยัน/โยกย้ายตารางแข่งภายในสนามตน |
-| `result_operator` | สนาม + Category ที่ได้รับมอบหมาย | กรอกผลการแข่งขัน (Quick Result + Full Match Report), ประตู, ใบเหลืองแดง |
-| `match_official` | เฉพาะ Match ที่ได้รับมอบหมาย | ตรวจ/ยืนยันผลและรายงานเฉพาะนัดของตัวเอง |
-| `read_only` | ตาม Scope ที่กำหนด | ดูข้อมูลอย่างเดียว |
+| Role | Scope | ความสามารถหลัก | Account Model |
+|---|---|---|---|
+| `tournament_super_admin` | ทั้งรายการ | จัดการทุกอย่าง: รายการ ผู้ใช้ กติกา สนาม ข้อมูลทุกส่วน | รายบุคคล |
+| `central_control` | ทั้งรายการ | ดูสถานะ 4 สนาม, ตรวจ/แก้ Conflict ข้ามสนาม, จัดการคำร้องขอแก้ไข (Correction เท่านั้น — ไม่มี Approve ผลปกติแล้วตาม D-16) | รายบุคคล |
+| `venue_manager` | สนามที่ได้รับมอบหมาย | ควบคุม Matchday Dashboard, ยืนยัน/โยกย้ายตารางแข่งภายในสนามตน, Request Correction | รายบุคคล |
+| `result_operator` | ทุกสนาม (เลือกเองในแอปทุก Session) | กรอกผลการแข่งขัน (Quick Result + Full Match Report) แบบ Single-step + Mandatory Preview, ประตู, ใบเหลืองแดง | **DECISION LOCKED (D-03, 2026-07-14) — Dedicated Shared Account** (1 บัญชีร่วม ไม่ใช่รายบุคคล) |
+| `match_official` | เฉพาะ Match ที่ได้รับมอบหมาย | ตรวจ/ยืนยันผลและรายงานเฉพาะนัดของตัวเอง | รายบุคคล |
+| `read_only` | ตาม Scope ที่กำหนด | ดูข้อมูลอย่างเดียว | รายบุคคล |
+
+**DECISION LOCKED (D-03, 2026-07-14)**: `result_operator` เป็นข้อยกเว้นเดียวจากหลักการ "บัญชีรายบุคคลเท่านั้น" — ดูรายละเอียดสิทธิ์ที่อนุญาต/ห้าม และ Non-repudiation Limitation เต็มที่ `TOURNAMENT_V2_DECISION_CHECKLIST.md` D-03
 
 ### 4.2 Permission Matrix
 
-| Action | `tournament_super_admin` | `central_control` | `venue_manager` | `result_operator` | `match_official` | `read_only` |
+> **DECISION LOCKED (D-16, 2026-07-14)**: Result Workflow เปลี่ยนเป็น Single-step Result Submission with Mandatory Preview — **ไม่มี Approve Step แยกสำหรับ Submission ปกติอีกต่อไป** Submit ที่ผ่าน Server Validate แล้ว = Publish ทันที ตารางด้านล่างปรับตามคำตัดสินนี้
+
+| Action | `tournament_super_admin` | `central_control` | `venue_manager` | `result_operator` (Shared) | `match_official` | `read_only` |
 |---|:---:|:---:|:---:|:---:|:---:|:---:|
 | ตั้งค่า Tournament/Category/Venue | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
 | แก้ Category↔Venue Mapping | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
 | จัดการ Role Assignment | ✅ | ❌ (เสนอแต่ไม่อนุมัติเอง) | ❌ | ❌ | ❌ | ❌ |
-| ดู Matchday Dashboard สนามตน | ✅ | ✅ (ทุกสนาม) | ✅ (สนามตน) | ✅ (สนาม/Category ตน) | ✅ (เฉพาะ Match ตน) | ✅ (ตาม Scope) |
+| ดู Matchday Dashboard | ✅ | ✅ (ทุกสนาม) | ✅ (สนามตน) | ✅ (เลือกสนามเองในแอป) | ✅ (เฉพาะ Match ตน) | ✅ (ตาม Scope) |
 | กรอก Quick Result | ✅ | ❌ | ✅ | ✅ | ❌ | ❌ |
 | กรอก Full Match Report | ✅ | ❌ | ✅ | ✅ | ✅ (เฉพาะ Match ตน) | ❌ |
-| Submit ผล | ✅ | ❌ | ✅ | ✅ | ✅ (เฉพาะ Match ตน) | ❌ |
-| Approve ผล (`two_step`) | ✅ | ✅ | ✅ (สนามตน) | ❌ | ✅ (เฉพาะ Match ตน) | ❌ |
-| Publish ผลขั้นสุดท้าย | ✅ | ✅ | ❌ (ต้องผ่าน Approval ก่อน) | ❌ | ❌ | ❌ |
-| Request Correction | ✅ | ✅ | ✅ (สนามตน) | ✅ (นัดที่ตนกรอก) | ❌ | ❌ |
+| Preview ผล (บังคับก่อน Submit) | ✅ | ❌ | ✅ | ✅ | ✅ (เฉพาะ Match ตน) | ❌ |
+| Submit ผล (= Publish ทันทีตาม Single-step) | ✅ | ❌ | ✅ | ✅ | ✅ (เฉพาะ Match ตน) | ❌ |
+| Request Correction (บนผลที่ Published แล้ว) | ✅ | ✅ | ✅ (สนามตน) | ❌ (ห้ามตาม D-03) | ❌ | ❌ |
+| แก้ไข/Submit ผลที่ถูก Correction แล้ว (`corrected→previewed→submitted→published`) | ✅ | ❌ | ✅ | ✅ (เฉพาะขั้นตอน Preview/Submit ปกติ หลัง Correction ถูกเปิดแล้ว) | ✅ (เฉพาะ Match ตน) | ❌ |
 | ดู Central Control Center | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ |
 | ดู Audit Log ทั้งหมด | ✅ | ✅ | ❌ (เฉพาะสนามตน) | ❌ | ❌ | ❌ |
+| Import/Rollback โปรแกรมแข่งขัน, สร้าง/ลบ Tournament, แก้กติกา, จัดกลุ่ม, แก้ Draw Assignment | ✅ (ตาม Role จริง) | ❌ | ❌ | ❌ (ห้ามตาม D-03) | ❌ | ❌ |
 
 ### 4.3 Venue Scope Matrix (ตัวอย่าง)
 
 | User | Venue | Category | Match Scope | Allowed Actions |
 |---|---|---|---|---|
-| สมชาย (venue_manager) | สนามที่ 1 | ทั้งหมดในสนาม 1 (B-U12, G-U14) | ทุกนัดในสนาม 1 | ควบคุม Matchday, ยืนยัน/โยกย้ายตาราง |
-| สมหญิง (result_operator) | สนามที่ 2 | B-U14 เท่านั้น | ทุกนัด B-U14 ในสนาม 2 | กรอกผล B-U14 เท่านั้น แม้อยู่สนามเดียวกับ G-U16 ก็แก้ G-U16 ไม่ได้ |
+| สมชาย (venue_manager) | สนามที่ 1 | ทั้งหมดในสนาม 1 (B-U12, G-U14) | ทุกนัดในสนาม 1 | ควบคุม Matchday, ยืนยัน/โยกย้ายตาราง, Request Correction |
+| Dedicated Result-entry Account (`result_operator`, **DECISION LOCKED D-03**) | ทุกสนาม (เลือกเองในแอปทุก Session) | ทุก Category | ทุกนัดที่เลือกในแอป — Server ตรวจ Consistency ว่า Match สังกัด Venue ที่อ้างจริง | กรอกผล + Preview + Submit (=Publish ทันที) ตาม D-16 — **บัญชีเดียวใช้ร่วมกันทุกสนาม/ทุกเจ้าหน้าที่ ไม่แยกตามสนามหรือ Category แบบเดิมอีกต่อไป** |
 | กรรมการ A (match_official) | — | — | เฉพาะ Match ID ที่มอบหมาย | ตรวจ/ยืนยันเฉพาะนัดของตน |
-| ผู้บริหาร (central_control) | ทั้งหมด | ทั้งหมด | ทั้งหมด | ดูภาพรวม + อนุมัติขั้นสุดท้าย |
+| ผู้บริหาร (central_control) | ทั้งหมด | ทั้งหมด | ทั้งหมด | ดูภาพรวม + จัดการ Correction เท่านั้น (ไม่มี Approve ผลปกติแล้ว) |
 
-**กฎบังคับ**: Server ต้องตรวจ Scope จริงทุกครั้งจาก `tournament_role_assignments` ห้ามเชื่อค่า `venueId`/`categoryId` ที่ Client ส่งมา (ดู Target Architecture หมวด 11.3 และ Current State Audit R7)
+**กฎบังคับ**: Server ต้องตรวจ Scope จริงทุกครั้งจาก `tournament_role_assignments` ห้ามเชื่อค่า `venueId`/`categoryId` ที่ Client ส่งมา (ดู Target Architecture หมวด 11.3 และ Current State Audit R7) — สำหรับ `result_operator` (Shared Account) Server ตรวจ **Consistency** ว่า `match_id` สังกัด `venue_id` ที่อ้างจริง แทนการ Reject ข้าม Venue เหมือน Role อื่น เพราะบัญชีนี้มีสิทธิ์ทุกสนามโดยเจตนาตาม D-03
 
 ---
 
 ## 5. Venue-Scoped Authorization
 
 ```text
-1. Client ส่ง Request พร้อม JWT (จาก League Supabase Identity Provider)
+1. Client ส่ง Request พร้อม JWT (จาก League Supabase Identity Provider หรือ Shared Result-entry Session สำหรับ `result_operator`)
 2. API Route เรียก authorizeVenueScope(userId, { venueId?, categoryId?, matchId? })
 3. authorizeVenueScope():
    a. Query tournament_role_assignments WHERE user_id = userId
    b. ตรวจว่ามี row ใดที่ scope ครอบคลุมคำขอนี้หรือไม่
       - tournament_super_admin / central_control: อนุญาตทุกกรณี (tournament_id ตรง)
-      - venue_manager / result_operator: ต้องมี venue_id ตรง (และ category_id ตรงถ้าระบุ)
+      - venue_manager: ต้องมี venue_id ตรง (และ category_id ตรงถ้าระบุ)
       - match_official: ต้องมี match_id ตรงเป๊ะ
+      - **result_operator (DECISION LOCKED D-03, 2026-07-14 — Shared Account)**: ไม่ Reject ข้าม Venue — ตรวจ **Consistency** แทนว่า `matchId` ที่ส่งมาสังกัด `venueId` ที่อ้างจริงหรือไม่ (query `tournament_matches.venue_id` เทียบกับ `venueId` ที่ Client ส่ง) เพราะบัญชีนี้มีสิทธิ์ทุกสนามโดยเจตนา — บันทึก `session_id`/`device metadata` ลง Audit Log ทุกครั้งเพื่อชดเชย Non-repudiation ที่ขาดหายไปจากการใช้บัญชีร่วม
    c. คืน { allowed, role, matchedScope }
 4. ถ้า allowed = false → 403 Forbidden ทันที ก่อนแตะ Business Logic ใดๆ
 ```
@@ -222,28 +228,28 @@ Quick Result และ Full Match Report ต้องแก้ไขข้อม
 
 ## 9. Result Approval Policies
 
-ระบบต้องรองรับ Policy ที่กำหนดได้ ไม่ Hardcode รูปแบบเดียว:
+> **DECISION LOCKED (D-16, 2026-07-14)**: เจ้าของระบบเลือก **Single-step Result Submission with Mandatory Preview** เป็น Policy เดียวที่ใช้จริง ไม่มีข้อยกเว้นตาม Stage — ส่วนด้านล่างนี้คงตัวเลือกอื่น (`two_step`/`central_review`) ไว้เป็นข้อมูลอ้างอิงในเอกสาร Column `result_policy` แต่**ไม่ถูกใช้จริงในรอบนี้**
 
 ```text
-single_step
-  venue_manager กรอกและยืนยันในขั้นตอนเดียว
+single_step   ← DECIDED — Policy เดียวที่ใช้จริงทุกนัด (ตาม D-16)
+  เจ้าหน้าที่ (Dedicated Result-entry Account) กรอกผล → Preview (บังคับ) → ตรวจสอบ → Submit
+  → Server Validate → บันทึกและ Publish ทันที — ไม่มีผู้อนุมัติคนที่สอง
 
-two_step   ← Default แนะนำ
+two_step   (ไม่ได้ใช้ในรอบนี้ — คงไว้เป็น Column Value เผื่ออนาคต)
   result_operator กรอก → venue_manager หรือ match_official ยืนยัน
 
-central_review
+central_review   (ไม่ได้ใช้ในรอบนี้ — คงไว้เป็น Column Value เผื่ออนาคต)
   ทุกสนาม Submit ผล → central_control ตรวจและยืนยันทุกนัด
 ```
 
-**Recommendation**:
-- รอบทั่วไป (Group Stage): `single_step` หรือ `two_step` ตามความพร้อมของเจ้าหน้าที่แต่ละสนาม
-- รอบก่อนรองชนะเลิศขึ้นไป: `two_step`
-- รอบชิงอันดับ 3 และรอบชิงชนะเลิศ: `two_step` หรือ `central_review`
-- การแก้ผลลัพธ์ที่ `published` แล้วต้องผ่าน `central_review` เสมอ ไม่มีข้อยกเว้น
+**Final Decision (D-16, 2026-07-14)**:
+- ทุกนัดไม่ว่า Stage ใด (รอบทั่วไป, รอบก่อนรองชนะเลิศ, รอบชิงอันดับ 3, รอบชิงชนะเลิศ) ใช้ **Single-step + Mandatory Preview เหมือนกันหมด** — ไม่มี Stage-based Variation ตามที่เคย Recommend ไว้
+- Workflow: Login (Dedicated Result-entry Account) → เลือกสนาม → เลือก Match → กรอกผล → Preview → ตรวจสอบ → Submit → Server Validate → บันทึกและ Publish
+- Submit ไม่ได้หากยังไม่ผ่าน Preview ของข้อมูล Version ล่าสุด — แก้ค่าใดหลัง Preview ต้อง Preview ใหม่
+- การแก้ผลลัพธ์ที่ `published` แล้วต้องผ่าน Correction Workflow เท่านั้น (Result-entry Account ไม่มีสิทธิ์แก้ตรงตาม D-03) — ผู้ Request Correction ต้องเป็น `venue_manager` ขึ้นไป (ตามหลักการเดิมที่ยังไม่เปลี่ยน)
+- ต้องมี Confirmation ก่อน Submit และป้องกัน Double Submit ด้วย Idempotency Key
 
-Default Policy ที่จะใช้จริงต้องยืนยันจากเจ้าของระบบ (ดู Open Question Q16)
-
-**อัปเดต Scheduling Addendum**: Policy นี้ตั้งค่าได้เป็นรายนัดผ่านคอลัมน์ `tournament_matches.result_policy` และกำหนดได้ตั้งแต่ตอน Import Excel (คอลัมน์ `result_policy` ใน Fixture Format — ดู `TOURNAMENT_V2_SCHEDULING_AND_IMPORT.md` หมวด 3) ไม่ต้องรอมาตั้งทีหลังในหน้า Admin แยกต่างหาก
+**อัปเดต Scheduling Addendum**: `tournament_matches.result_policy` ยังคงมี Default = `single_step` และตั้งค่าได้ผ่าน Excel Import (ดู `TOURNAMENT_V2_SCHEDULING_AND_IMPORT.md` หมวด 3) แต่ตามคำตัดสิน D-16 ไม่มีนัดใดตั้งเป็น `two_step`/`central_review` ในทางปฏิบัติของรอบนี้
 
 ---
 
@@ -263,21 +269,22 @@ scheduled → ready → in_progress → finished
 
 ### 10.2 Result Workflow Status (สถานะกระบวนการอนุมัติผล)
 
+> **DECISION LOCKED (D-16, 2026-07-14) — State Machine เปลี่ยนจากแผนเดิม**: เอา `approved`/`rejected` ออก (ไม่มีผู้อนุมัติคนที่สองในกระบวนการปกติอีกต่อไป) เพิ่ม `previewed` เป็น Gate บังคับก่อน Submit — Correction Workflow วนกลับเข้า `previewed→submitted→published` แทนที่จะจบที่ `corrected`
+
 ```mermaid
 stateDiagram-v2
     [*] --> not_started
     not_started --> draft: เริ่มกรอก Quick Result / Full Report
-    draft --> submitted: Submit
-    submitted --> approved: Approve (venue_manager/match_official/central_control)
-    submitted --> rejected: Reject
-    rejected --> draft: แก้ไขใหม่
-    approved --> published: Publish (trigger Standings/Bracket/Suspension recalculation)
-    published --> correction_requested: Request Correction (ต้องมีเหตุผล + สิทธิ์สูงกว่า)
-    correction_requested --> corrected: แก้ไขและยืนยันใหม่
-    corrected --> published: Publish ผลที่แก้ไขแล้ว
+    draft --> previewed: Preview (บังคับก่อน Submit เสมอ)
+    previewed --> draft: แก้ไขค่าใดๆ หลัง Preview (ต้อง Preview ใหม่)
+    previewed --> submitted: Submit (เฉพาะ Version ล่าสุดที่ผ่าน Preview แล้ว)
+    submitted --> published: Server Validate ผ่าน → Publish ทันที (ไม่มีผู้อนุมัติคนที่สอง — trigger Standings/Bracket/Suspension recalculation)
+    published --> correction_requested: Request Correction (ต้องมีเหตุผล + สิทธิ์ venue_manager ขึ้นไป — Result-entry Account ทำไม่ได้ตาม D-03)
+    correction_requested --> corrected: เริ่มแก้ไขข้อมูล
+    corrected --> previewed: Preview ผลที่แก้ไขแล้ว (วนกลับเข้า Flow ปกติ)
 ```
 
-**กฎ**: `published` เป็นสถานะเดียวที่ Public เห็นได้ (ผ่าน `tournament.public_matches_view`) ทุก Transition ต้องบันทึกลง `tournament_result_versions` และ `tournament_audit_logs`
+**กฎ**: `published` เป็นสถานะเดียวที่ Public เห็นได้ (ผ่าน `tournament.public_matches_view`) ทุก Transition ต้องบันทึกลง `tournament_result_versions` และ `tournament_audit_logs` — สำหรับ Transition ที่ทำผ่าน Dedicated Result-entry Account ต้องบันทึก `session_id`/`device metadata` เพิ่มเติมตาม D-03
 
 ---
 
@@ -332,7 +339,7 @@ stateDiagram-v2
 /tournament/schedule?venue=[venueSlug]&date=YYYY-MM-DD        — filter ตามสนาม+วันที่
 ```
 
-Public เห็นเฉพาะผลที่ `result_workflow_status = 'published'` เท่านั้น (ผ่าน `tournament.public_matches_view`) — Draft/Submitted/Approved-แต่ยังไม่ Publish จะไม่ปรากฏบน Public Page ไม่ว่ากรณีใด
+Public เห็นเฉพาะผลที่ `result_workflow_status = 'published'` เท่านั้น (ผ่าน `tournament.public_matches_view`) — Draft/Previewed/Submitted-แต่ยังไม่ Publish จะไม่ปรากฏบน Public Page ไม่ว่ากรณีใด (DECISION LOCKED D-16 — State ปรับตามที่ตัดสินแล้ว)
 
 ---
 
@@ -400,44 +407,51 @@ erDiagram
 
 ### B. Quick Result Sequence Diagram
 
+> **DECISION LOCKED (D-03/D-16, 2026-07-14)**: `U` คือ Dedicated Shared Result-entry Account (ไม่ใช่บัญชีรายบุคคล) — เพิ่มขั้นตอน Preview บังคับก่อน Submit และ Consistency Check แทน Venue Scope Rejection
+
 ```mermaid
 sequenceDiagram
-    participant U as เจ้าหน้าที่สนาม (result_operator)
+    participant U as เจ้าหน้าที่สนาม (Dedicated Result-entry Account)
     participant C as Client (มือถือ)
     participant A as API /matches/[id]/quick-result
     participant D as Tournament DB
 
+    U->>C: เลือกสนาม + เลือก Match
     U->>C: กรอกสกอร์ + สถานะ
     C->>C: บันทึก Local Draft ทันที
-    C->>A: POST quick-result (idempotencyKey, version)
-    A->>A: authorizeVenueScope(user, venueId, categoryId)
-    alt ไม่มีสิทธิ์
+    U->>C: กด Preview (บังคับ)
+    C->>C: แสดงหน้าสรุปให้ตรวจสอบ
+    U->>C: ยืนยัน Submit
+    C->>A: POST quick-result (idempotencyKey, version, sessionId, deviceMetadata)
+    A->>A: authorizeVenueScope(user, venueId, matchId) — ตรวจ Consistency ไม่ Reject ข้าม Venue
+    alt matchId ไม่สังกัด venueId ที่อ้าง
         A-->>C: 403 Forbidden
-    else version ไม่ตรง
+    else version ไม่ตรง (ยังไม่ผ่าน Preview ล่าสุด)
         A-->>C: 409 Conflict (ส่งข้อมูลล่าสุดกลับ)
     else สำเร็จ
         A->>D: Upsert tournament_result_submissions (status=submitted)
         A->>D: Insert tournament_result_versions (snapshot)
-        A->>D: Insert tournament_audit_logs
+        A->>D: Insert tournament_audit_logs (รวม session_id/device metadata ตาม D-03)
+        A->>D: Publish ทันที (ไม่มีผู้อนุมัติคนที่สอง — ดู Diagram C)
         A-->>C: 200 OK
         C->>C: ล้าง Local Draft, อัปเดต UI
     end
 ```
 
-### C. Publish Result → Recalculate Flow
+### C. Submit → Publish → Recalculate Flow (DECISION LOCKED D-16 — ไม่มี Approve Step แยกอีกต่อไป)
 
 ```mermaid
 flowchart TD
-    A["central_control / venue_manager กด Approve"] --> B{Policy ผ่านครบหรือยัง}
-    B -- ยังไม่ครบ --> C["คงสถานะ submitted รออนุมัติเพิ่ม"]
-    B -- ครบแล้ว --> D["เริ่ม Database Transaction"]
+    A["Dedicated Result-entry Account กด Submit (หลัง Preview บังคับแล้ว)"] --> B["Server Validate: authorizeVenueScope + Idempotency Key + Version"]
+    B -- Validate ไม่ผ่าน --> Z["403/409 — ไม่บันทึก"]
+    B -- Validate ผ่าน --> D["เริ่ม Database Transaction ทันที (ไม่รอผู้อนุมัติคนที่สอง)"]
     D --> E["Update tournament_matches (score/status)"]
     D --> F["Recalculate Group Standings"]
     D --> G["Recalculate Bracket Advancement (ถ้าเป็นนัดน็อกเอาต์)"]
     D --> H["Trigger Suspension Engine (ถ้ามีใบเหลืองแดง)"]
     E & F & G & H --> I{ทุกขั้นตอนสำเร็จ}
     I -- สำเร็จ --> J["Commit Transaction + set result_workflow_status=published"]
-    I -- ล้มเหลวจุดใดจุดหนึ่ง --> K["Rollback ทั้งหมด + แจ้ง Error ให้ผู้อนุมัติ"]
+    I -- ล้มเหลวจุดใดจุดหนึ่ง --> K["Rollback ทั้งหมด + แจ้ง Error ให้ผู้กรอกผล"]
     J --> L["Public View แสดงผลทันที"]
 ```
 
