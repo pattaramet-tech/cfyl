@@ -84,3 +84,79 @@ must exist first) and before testing anything through the client or `verify-foun
   (`tournament_venues`, `tournament_courts`, `tournament_staff`, `tournament_standing_rules`,
   `tournament_qualification_rules` — extended by judgment call, not literal spec), and
   the exact aggregate shape for public goal/card counts (deferred to Phase 9).
+
+---
+
+# Phase 2 — Core Domain CRUD + Seed Data
+
+## Prerequisites
+
+1. Phase 1 migrations (001–011) must be applied to the Tournament Supabase project.
+2. The `tournament` schema must be in **Project Settings → Data API → Exposed schemas**.
+3. `.env.local` must have:
+   - `TOURNAMENT_SUPABASE_URL`
+   - `TOURNAMENT_SUPABASE_ANON_KEY`
+   - `TOURNAMENT_SUPABASE_SERVICE_ROLE_KEY` (for bootstrap and seed scripts)
+
+## Phase 2 Scripts
+
+### 1. Bootstrap super_admin (one-time)
+
+```bash
+export TOURNAMENT_BOOTSTRAP_ADMIN_USER_ID='<your-league-auth-uid>'
+export TOURNAMENT_BOOTSTRAP_ADMIN_EMAIL='your-email@example.com'
+npm run bootstrap:tournament-super-admin
+```
+
+**What it does**: Creates one `tournament_user_profiles` row and assigns the
+`tournament_super_admin` role (global scope) for that user. Idempotent — re-running
+is a no-op if the role already exists.
+
+**Where to find your League auth.uid**:
+1. Supabase Dashboard → Authentication → Users
+2. Find your user, click it, copy the `UUID` from the **User ID** field
+3. Set both env vars in `.env.local` (never commit them)
+
+### 2. Seed core domain data
+
+```bash
+npm run seed:tournament-phase2 -- --tournament-slug=cfyl-2025 --tournament-name="CFYL 2025"
+```
+
+**What it does**: Idempotently upserts:
+- 1 tournament record (`tournaments`)
+- 4 venues: V1, V2, V3, V4 (`tournament_venues`)
+- 7 categories: B-U12, G-U14, B-U14, G-U16, B-U16, G-U18, B-U18 (`tournament_categories`)
+- 7 category-venue mappings per the Phase 2 spec (`tournament_category_venues`)
+
+All mappings can be changed later via the admin UI without rerunning this script.
+
+### 3. Verify Phase 2 CRUD (optional, integration test)
+
+```bash
+npm run verify:tournament-phase2-crud
+```
+
+**What it does**: Exercises the Phase 2 API endpoints against a live Tournament DB
+to verify CRUD, unique constraints, cross-tenant checks, and audit logging.
+
+## Admin Setup UI
+
+After bootstrap and seed, navigate to `/admin/tournament` to manage:
+- Tournaments (create/edit/soft-delete)
+- Categories (create/edit/soft-delete, tied to a tournament)
+- Venues (create/edit/deactivate, tied to a tournament)
+- Courts (create/edit/deactivate, tied to a venue)
+- Category-Venue Mappings (create/update venue/delete, grid UI)
+
+All mutations are logged to `tournament_audit_logs` with admin id/email and old/new data.
+
+## Auth for Phase 2 Admin
+
+- Admin API endpoints (`/api/tournament/admin/**`) require `Authorization: Bearer <token>`
+  header with a valid League Supabase JWT.
+- The JWT is verified against the League Supabase project (League is the Identity Provider).
+- Authorization is checked via a `tournament_user_profiles` + `tournament_role_assignments`
+  lookup in the Tournament project.
+- Phase 2 only supports `tournament_super_admin` role (global scope). Other roles
+  (`venue_manager`, `result_operator`, etc.) are Phase 3+.

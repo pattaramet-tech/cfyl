@@ -17,7 +17,7 @@ const eslintConfig = defineConfig([
   // League doesn't live under lib/league/** yet (that reorg is Phase 14+), so this
   // guards the concrete files that exist today: the League Supabase clients.
   {
-    files: ["lib/tournament/**/*.{ts,tsx}", "app/api/tournament/**/*.{ts,tsx}", "app/(tournament)/**/*.{ts,tsx}"],
+    files: ["lib/tournament/**/*.{ts,tsx}", "app/api/tournament/**/*.{ts,tsx}", "app/admin/tournament/**/*.{ts,tsx}", "app/(tournament)/**/*.{ts,tsx}"],
     rules: {
       "no-restricted-imports": [
         "error",
@@ -44,7 +44,7 @@ const eslintConfig = defineConfig([
   },
   {
     files: ["lib/**/*.{ts,tsx}", "app/**/*.{ts,tsx}"],
-    ignores: ["lib/tournament/**/*.{ts,tsx}", "app/api/tournament/**/*.{ts,tsx}", "app/(tournament)/**/*.{ts,tsx}"],
+    ignores: ["lib/tournament/**/*.{ts,tsx}", "app/api/tournament/**/*.{ts,tsx}", "app/admin/tournament/**/*.{ts,tsx}", "app/(tournament)/**/*.{ts,tsx}"],
     rules: {
       "no-restricted-imports": [
         "error",
