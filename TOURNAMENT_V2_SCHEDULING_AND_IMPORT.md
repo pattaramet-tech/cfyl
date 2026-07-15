@@ -358,6 +358,21 @@ stateDiagram-v2
 
 **ความสัมพันธ์กับ Match Status/Result Workflow Status**: เป็นอิสระต่อกันทั้ง 3 มิติ — ตัวอย่าง: Schedule `published` (ตารางแข่งประกาศแล้ว สาธารณะเห็นวันเวลา) + Match `scheduled` (ยังไม่แข่ง) + Result Workflow `not_started` (ยังไม่มีผล) เป็นสถานะปกติของนัดที่ยังไม่ถึงกำหนดแข่ง
 
+### 8.1 D-28 — `published → revision_required` ต้องมีคนกดยืนยัน (✅ DECIDED 2026-07-15)
+
+**Decision**: Option (b) — ห้าม Auto-downgrade สถานะ `published` โดยไม่มีการยืนยันจาก Authorized Admin (`tournament_super_admin`) อย่างชัดเจน
+
+**พฤติกรรมที่กำหนด**:
+
+1. Import Preview ตรวจพบการเปลี่ยนแปลงต่อ Match ที่ `schedule_status='published'` → แสดง Warning **W11** พร้อม Diff เต็ม (ก่อน/หลัง) และ flag แถวนั้นด้วย `requires_revision_confirmation: true`
+2. ที่ระดับ Batch, Preview คืนค่า `has_published_changes`, `published_change_count`, `published_match_codes` ให้ Client แสดงคำเตือนได้ก่อนกด Save
+3. Save ปกติ (ไม่ส่ง `confirmPublishedRevision`) เมื่อ Batch มีการเปลี่ยนแปลงต่อ Published Fixture ต้องถูกปฏิเสธด้วย **HTTP 409** — Batch ต้องยังอยู่ในสถานะที่ยืนยันได้ (ไม่ถูก Claim เป็น `saving`)
+4. Save พร้อม `confirmPublishedRevision: true` จากผู้ใช้ที่มีสิทธิ์ `tournament_super_admin` เท่านั้น จึงจะดำเนินการ: Revalidate ทุกแถวจาก Database ปัจจุบัน (ไม่เชื่อ Boolean เพียงอย่างเดียว), Claim Batch แบบ Atomic, เปลี่ยนเฉพาะคู่ที่แก้ไขจริงเป็น `revision_required`, คงคู่ที่ไม่เปลี่ยนแปลงไว้ที่ `published` เดิม
+5. การเปลี่ยนแปลงที่ยืนยันแล้ว **ต้องไม่ Auto-publish** — ผู้มีสิทธิ์ต้องตรวจสอบและ Publish ตารางที่แก้ไขแยกต่างหากอีกครั้ง (ขั้นตอน Publish เป็นคนละ Flow)
+6. `tournament_schedule_versions` ของคู่ที่ยืนยันแก้ไข สร้าง Version ใหม่ด้วยสถานะ `revision_required` โดยไม่แก้ไข Version ประวัติเดิมที่เป็น `published`
+7. Public Schedule (`schedule_status='published'` เท่านั้น) จะไม่แสดงคู่ที่เพิ่งเปลี่ยนเป็น `revision_required` อีกต่อไปจนกว่าจะ Publish ใหม่ — Confirmation UI ต้องเตือนผู้ใช้เรื่องนี้อย่างชัดเจนก่อนยืนยัน
+8. ทุกการยืนยัน Revision ต้องมี Audit Log ระดับ Match (ไม่ใช่แค่สรุประดับ Batch): Actor, Match ID/Code, สถานะเดิม/ใหม่, ค่าก่อน/หลัง, เวลายืนยัน, Schedule Version ID
+
 ---
 
 ## 9. Import Batch และ Rollback

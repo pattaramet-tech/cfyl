@@ -318,6 +318,9 @@ create table tournament.tournament_matches (
       ('not_started','draft','previewed','submitted','published','correction_requested','corrected')),
   schedule_status text not null default 'draft'                                   -- ใหม่ QA fix: cache ของ tournament_schedule_versions.status ที่ (category_id, stage) นี้สังกัดอยู่
     check (schedule_status in ('draft','validated','published','revision_required','archived')),
+    -- DECISION LOCKED (D-28, 2026-07-15): published -> revision_required ต้องมีคนกดยืนยันเสมอ
+    -- (tournament_super_admin เท่านั้น) — ห้าม Auto-downgrade จาก Import โดยไม่มี Confirmation
+    -- แยกต่างหาก ดู TOURNAMENT_V2_SCHEDULING_AND_IMPORT.md หมวด 8.1
   result_policy text not null default 'single_step'                              -- DECISION LOCKED (D-16, 2026-07-14): Default เป็น single_step ทุกนัด ไม่มี Stage-based Variation ในคำตัดสินนี้ — Column คงไว้เผื่อยืดหยุ่นอนาคต ค่า two_step/central_review ยังไม่ถูกใช้จริงในรอบนี้
     check (result_policy in ('single_step','two_step','central_review')),
   result_type text not null default 'normal'
