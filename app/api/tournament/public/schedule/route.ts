@@ -154,6 +154,9 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({
       tournament_slug: tournamentSlug,
+      status: scheduleData.status,
+      is_official: scheduleData.is_official,
+      source: scheduleData.source,
       competition_dates: scheduleData.competition_dates,
       total_matches: resolvedMatches.length,
       data: resolvedMatches,
