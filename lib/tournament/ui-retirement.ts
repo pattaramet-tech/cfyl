@@ -39,9 +39,9 @@ function isTruthyFlag(value: string | undefined): boolean {
 }
 
 export function shouldShowTournamentV1Links(
-  env: NodeJS.ProcessEnv = process.env,
+  value = process.env.NEXT_PUBLIC_SHOW_TOURNAMENT_V1_LINKS,
 ): boolean {
-  return isTruthyFlag(env.NEXT_PUBLIC_SHOW_TOURNAMENT_V1_LINKS);
+  return isTruthyFlag(value);
 }
 
 export function buildPublicTournamentNavLinks(

@@ -17,7 +17,8 @@ function repoFileExists(...segments: string[]): boolean {
 
 describe('tournament UI retirement helpers', () => {
   it('hides legacy links by default', () => {
-    expect(shouldShowTournamentV1Links({})).toBe(false);
+    expect(shouldShowTournamentV1Links(undefined)).toBe(false);
+    expect(shouldShowTournamentV1Links('false')).toBe(false);
     expect(buildPublicTournamentNavLinks(false)).toEqual([
       {
         href: '/tournament/schedule',
@@ -28,10 +29,10 @@ describe('tournament UI retirement helpers', () => {
   });
 
   it('reveals legacy links when NEXT_PUBLIC_SHOW_TOURNAMENT_V1_LINKS is enabled', () => {
-    expect(shouldShowTournamentV1Links({ NEXT_PUBLIC_SHOW_TOURNAMENT_V1_LINKS: 'true' })).toBe(
-      true,
-    );
-    expect(shouldShowTournamentV1Links({ NEXT_PUBLIC_SHOW_TOURNAMENT_V1_LINKS: '1' })).toBe(true);
+    expect(shouldShowTournamentV1Links('true')).toBe(true);
+    expect(shouldShowTournamentV1Links('1')).toBe(true);
+    expect(shouldShowTournamentV1Links('yes')).toBe(true);
+    expect(shouldShowTournamentV1Links('on')).toBe(true);
     expect(buildPublicTournamentNavLinks(true)).toEqual([
       {
         href: '/tournament/schedule',
