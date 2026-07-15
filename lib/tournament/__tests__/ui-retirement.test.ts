@@ -1,6 +1,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { describe, expect, it } from 'vitest';
+import React from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
+import { afterEach, describe, expect, it } from 'vitest';
+import TournamentV2DashboardPage from '@/app/admin/tournament/page';
 import {
   buildLegacyAdminRollbackLinks,
   buildPublicTournamentNavLinks,
@@ -14,6 +17,17 @@ function readRepoFile(...segments: string[]): string {
 function repoFileExists(...segments: string[]): boolean {
   return fs.existsSync(path.join(process.cwd(), ...segments));
 }
+
+const ORIGINAL_TOURNAMENT_V1_FLAG = process.env.NEXT_PUBLIC_SHOW_TOURNAMENT_V1_LINKS;
+
+afterEach(() => {
+  if (ORIGINAL_TOURNAMENT_V1_FLAG === undefined) {
+    delete process.env.NEXT_PUBLIC_SHOW_TOURNAMENT_V1_LINKS;
+    return;
+  }
+
+  process.env.NEXT_PUBLIC_SHOW_TOURNAMENT_V1_LINKS = ORIGINAL_TOURNAMENT_V1_FLAG;
+});
 
 describe('tournament UI retirement helpers', () => {
   it('hides legacy links by default', () => {
@@ -50,6 +64,22 @@ describe('tournament UI retirement helpers', () => {
       '/admin/tournament-bracket',
     ]);
   });
+
+  it('renders Tournament V2 dashboard rollback links only when the legacy flag is enabled', () => {
+    delete process.env.NEXT_PUBLIC_SHOW_TOURNAMENT_V1_LINKS;
+    const defaultHtml = renderToStaticMarkup(React.createElement(TournamentV2DashboardPage));
+
+    expect(defaultHtml).not.toContain('/admin/tournament-groups');
+    expect(defaultHtml).not.toContain('/admin/tournament-fixtures');
+    expect(defaultHtml).not.toContain('/admin/tournament-bracket');
+
+    process.env.NEXT_PUBLIC_SHOW_TOURNAMENT_V1_LINKS = 'true';
+    const enabledHtml = renderToStaticMarkup(React.createElement(TournamentV2DashboardPage));
+
+    expect(enabledHtml).toContain('/admin/tournament-groups');
+    expect(enabledHtml).toContain('/admin/tournament-fixtures');
+    expect(enabledHtml).toContain('/admin/tournament-bracket');
+  });
 });
 
 describe('tournament UI retirement source wiring', () => {
@@ -60,6 +90,7 @@ describe('tournament UI retirement source wiring', () => {
     expect(source).toContain("/admin/tournament/setup'");
     expect(source).toContain("/admin/tournament/meeting-draw'");
     expect(source).toContain("/admin/tournament/schedule/import'");
+    expect(source).toContain("/admin/tournament/qualification-draw'");
     expect(source).not.toContain("/admin/tournament-groups'");
     expect(source).not.toContain("/admin/tournament-fixtures'");
     expect(source).not.toContain("/admin/tournament-bracket'");
