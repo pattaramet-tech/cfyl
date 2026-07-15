@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
+import { buildLegacyAdminRollbackLinks } from '@/lib/tournament/ui-retirement';
 
 interface TournamentSummary {
   id: string;
@@ -52,7 +53,7 @@ const WORKFLOWS: WorkflowCard[] = [
     href: '/tournament/schedule',
     icon: '📅',
     title: 'ตารางแข่งขัน Public',
-    description: 'ตรวจข้อมูลที่นำเข้าและชื่อทีมที่ Resolve จากผลจับฉลาก',
+    description: 'ตรวจข้อมูลที่นำเข้าและชื่อทีมที่ resolve จากผลจับฉลาก',
     badge: 'Public',
     external: true,
   },
@@ -62,6 +63,7 @@ export default function TournamentV2DashboardPage() {
   const [tournaments, setTournaments] = useState<TournamentSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const rollbackLinks = buildLegacyAdminRollbackLinks();
 
   useEffect(() => {
     const token = localStorage.getItem('admin_token');
@@ -98,7 +100,8 @@ export default function TournamentV2DashboardPage() {
             </span>
             <h1 className="mt-4 text-3xl font-bold sm:text-4xl">ศูนย์จัดการ Tournament</h1>
             <p className="mt-2 max-w-3xl text-sm leading-6 text-blue-100 sm:text-base">
-              ระบบใหม่แยกจาก League Database รองรับ Group Slot, Placeholder, 4 สนาม และ Import ตารางแข่งขันก่อนทราบทีมจริง
+              ระบบใหม่แยกจาก League Database รองรับ Group Slot, Placeholder, 4 สนาม และ
+              Import ตารางแข่งขันก่อนทราบทีมจริง
             </p>
           </div>
           <a
@@ -122,7 +125,9 @@ export default function TournamentV2DashboardPage() {
         <div className="mb-3 flex items-end justify-between gap-4">
           <div>
             <h2 className="text-xl font-bold text-slate-900">ขั้นตอนการทำงาน</h2>
-            <p className="mt-1 text-sm text-slate-500">เมนู Tournament V1 ถูกถอดออกจาก Navigation แล้ว</p>
+            <p className="mt-1 text-sm text-slate-500">
+              Tournament V2 เป็นเส้นทางหลัก ส่วนเมนู Tournament V1 ถูกซ่อนจาก navigation ปกติ
+            </p>
           </div>
         </div>
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
@@ -130,14 +135,18 @@ export default function TournamentV2DashboardPage() {
             const card = (
               <div className="h-full rounded-xl bg-white p-5 shadow-sm ring-1 ring-slate-200 transition hover:-translate-y-0.5 hover:shadow-md hover:ring-blue-300">
                 <div className="flex items-start justify-between gap-3">
-                  <span className="text-3xl" aria-hidden="true">{workflow.icon}</span>
+                  <span className="text-3xl" aria-hidden="true">
+                    {workflow.icon}
+                  </span>
                   <span className="rounded-full bg-blue-50 px-2.5 py-1 text-[11px] font-bold text-blue-700">
                     {workflow.badge}
                   </span>
                 </div>
                 <h3 className="mt-4 font-bold text-slate-900">{workflow.title}</h3>
                 <p className="mt-2 text-sm leading-6 text-slate-600">{workflow.description}</p>
-                <span className="mt-4 inline-flex text-sm font-semibold text-blue-700">เปิดใช้งาน →</span>
+                <span className="mt-4 inline-flex text-sm font-semibold text-blue-700">
+                  เปิดใช้งาน →
+                </span>
               </div>
             );
 
@@ -158,7 +167,9 @@ export default function TournamentV2DashboardPage() {
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <h2 className="text-xl font-bold text-slate-900">รายการใน Tournament V2</h2>
-            <p className="mt-1 text-sm text-slate-500">ข้อมูลจาก Tournament Supabase Project แยกต่างหาก</p>
+            <p className="mt-1 text-sm text-slate-500">
+              ข้อมูลจาก Tournament Supabase Project แยกต่างหาก
+            </p>
           </div>
           <span className="rounded-full bg-slate-100 px-3 py-1 text-sm font-semibold text-slate-700">
             {loading ? 'กำลังโหลด...' : `${tournaments.length} รายการ`}
@@ -202,7 +213,33 @@ export default function TournamentV2DashboardPage() {
       </section>
 
       <aside className="rounded-xl border border-amber-200 bg-amber-50 p-5 text-sm leading-6 text-amber-900">
-        <strong>Legacy rollback:</strong> หน้าและ API ของ Tournament V1 ยังอยู่ใน Repository แต่ถูกซ่อนจากเมนูหลัก เพื่อให้ย้อนกลับได้โดยไม่กระทบข้อมูลเดิม จนกว่าจะอนุมัติการ Decommission ถาวร
+        <p>
+          <strong>Legacy rollback:</strong> หน้าและ API ของ Tournament V1 ยังถูกเก็บไว้ใน
+          repository เพื่อรองรับการตรวจสอบและย้อนกลับชั่วคราว แต่ถูกซ่อนจาก navigation ปกติแล้ว
+        </p>
+        {rollbackLinks.length > 0 ? (
+          <div className="mt-4 flex flex-wrap gap-2">
+            {rollbackLinks.map((link) => (
+              <Link
+                key={link.href}
+                href={link.href}
+                className="inline-flex items-center gap-2 rounded-lg border border-amber-300 bg-white px-3 py-2 font-semibold text-amber-900 hover:bg-amber-100"
+              >
+                <span>{link.label}</span>
+                {link.badge ? (
+                  <span className="rounded-full bg-amber-200 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-950">
+                    {link.badge}
+                  </span>
+                ) : null}
+              </Link>
+            ))}
+          </div>
+        ) : (
+          <p className="mt-2 text-amber-800">
+            ลิงก์ rollback แบบแสดงผลถูกปิดไว้ตามค่าเริ่มต้น แต่ direct URL ของ Tournament V1
+            ยังใช้งานได้หากจำเป็น
+          </p>
+        )}
       </aside>
     </div>
   );
