@@ -8,7 +8,9 @@ import {
   courtKey,
   createScheduleBatchSeen,
   groupKey,
+  groupStagePairKey,
   groupSlotKey,
+  matchNoKey,
   normalizeScheduleImportRow,
   scheduleSlotKey,
   teamKey,
@@ -269,6 +271,8 @@ export async function POST(request: NextRequest) {
     const existingMatchesByCode = new Map<string, ExistingScheduleMatch>();
     const existingSlotOwners = new Map<string, string>();
     const existingVenueDayCounts = new Map<string, number>();
+    const existingPairOwners = new Map<string, string>();
+    const existingMatchNoOwners = new Map<string, string>();
 
     existingMatches.forEach((match) => {
       const matchCode = match.match_code.trim().toUpperCase();
@@ -282,6 +286,30 @@ export async function POST(request: NextRequest) {
           scheduleSlotKey(match.venue_id, match.court_id, match.match_date, match.match_time),
           matchCode
         );
+      }
+      if (
+        match.stage === 'group' &&
+        match.group_id &&
+        match.home_source_type &&
+        match.home_source_ref &&
+        match.away_source_type &&
+        match.away_source_ref
+      ) {
+        existingPairOwners.set(
+          groupStagePairKey(
+            match.category_id,
+            match.stage,
+            match.group_id,
+            match.home_source_type,
+            match.home_source_ref,
+            match.away_source_type,
+            match.away_source_ref
+          ),
+          matchCode
+        );
+      }
+      if (match.match_no !== null && match.match_no !== undefined) {
+        existingMatchNoOwners.set(matchNoKey(match.category_id, match.stage, match.match_no), matchCode);
       }
     });
 
@@ -304,6 +332,8 @@ export async function POST(request: NextRequest) {
       existingMatchesByCode,
       existingSlotOwners,
       existingVenueDayCounts,
+      existingPairOwners,
+      existingMatchNoOwners,
       allKnownMatchCodes,
       drawSelectedConfigsByRef,
       drawSelectedConfigsByCategoryCode,

@@ -113,6 +113,8 @@ export interface ScheduleValidationContext {
   existingMatchesByCode: Map<string, ExistingScheduleMatch>;
   existingSlotOwners: Map<string, string>;
   existingVenueDayCounts: Map<string, number>;
+  existingPairOwners: Map<string, string>;
+  existingMatchNoOwners: Map<string, string>;
   allKnownMatchCodes: Set<string>;
   drawSelectedConfigsByRef: Map<string, DrawSelectedConfig>;
   drawSelectedConfigsByCategoryCode: Map<string, DrawSelectedConfig[]>;
@@ -122,6 +124,8 @@ export interface ScheduleBatchSeen {
   matchCodes: Set<string>;
   slotOwners: Map<string, string>;
   venueDayCounts: Map<string, number>;
+  pairOwners: Map<string, string>;
+  matchNoOwners: Map<string, string>;
 }
 
 export interface ScheduleImportDiff {
@@ -197,6 +201,8 @@ export function createScheduleBatchSeen(): ScheduleBatchSeen {
     matchCodes: new Set<string>(),
     slotOwners: new Map<string, string>(),
     venueDayCounts: new Map<string, number>(),
+    pairOwners: new Map<string, string>(),
+    matchNoOwners: new Map<string, string>(),
   };
 }
 
@@ -231,6 +237,30 @@ export function scheduleSlotKey(
 
 export function venueDayKey(venueId: string, date: string): string {
   return `${venueId}|${date}`;
+}
+
+export function sourceIdentity(sourceType: string, sourceRef: string): string {
+  return `${upper(sourceType)}:${upper(sourceRef)}`;
+}
+
+export function groupStagePairKey(
+  categoryId: string,
+  stage: string,
+  groupId: string,
+  homeSourceType: string,
+  homeSourceRef: string,
+  awaySourceType: string,
+  awaySourceRef: string
+): string {
+  const identities = [
+    sourceIdentity(homeSourceType, homeSourceRef),
+    sourceIdentity(awaySourceType, awaySourceRef),
+  ].sort();
+  return `${categoryId}|${stage}|${groupId}|${identities[0]}|${identities[1]}`;
+}
+
+export function matchNoKey(categoryId: string, stage: string, matchNo: number): string {
+  return `${categoryId}|${stage}|${matchNo}`;
 }
 
 function addMessage(
@@ -473,11 +503,11 @@ export function validateScheduleImportRow(
     addMessage(messages, 'error', 'E12', 'Home และ Away Resolve เป็นทีมเดียวกัน');
   }
   if (
-    row.home_source_type === 'group_slot' &&
-    row.away_source_type === 'group_slot' &&
+    !['bye', 'tbd'].includes(row.home_source_type) &&
+    row.home_source_type === row.away_source_type &&
     row.home_source_ref === row.away_source_ref
   ) {
-    addMessage(messages, 'error', 'E12', 'Home และ Away ใช้ Group Slot เดียวกัน');
+    addMessage(messages, 'error', 'E12', 'Home และ Away อ้างอิงตำแหน่ง/ทีมเดียวกัน (Self-match)');
   }
 
   if (category && venue && !context.primaryCategoryVenues.has(categoryVenueKey(category.id, venue.id))) {
@@ -522,6 +552,52 @@ export function validateScheduleImportRow(
     addMessage(messages, 'warning', 'W11', 'กำลังแก้ไข Match จากตารางที่ Publish แล้ว');
   }
 
+  const pairKey =
+    row.stage === 'group' && category && group
+      ? groupStagePairKey(
+          category.id,
+          row.stage,
+          group.id,
+          row.home_source_type,
+          row.home_source_ref,
+          row.away_source_type,
+          row.away_source_ref
+        )
+      : null;
+
+  if (pairKey) {
+    const existingPairOwner = context.existingPairOwners.get(pairKey);
+    const batchPairOwner = seen.pairOwners.get(pairKey);
+    if (existingPairOwner && existingPairOwner !== row.match_code) {
+      addMessage(
+        messages,
+        'error',
+        'E20',
+        `คู่แข่งขันนี้ซ้ำกับ Match ${existingPairOwner} ในกลุ่มเดียวกัน (Home/Away อาจสลับกัน)`
+      );
+    }
+    if (batchPairOwner && batchPairOwner !== row.match_code) {
+      addMessage(
+        messages,
+        'error',
+        'E20',
+        `คู่แข่งขันนี้ซ้ำภายในไฟล์กับ Match ${batchPairOwner} ในกลุ่มเดียวกัน (Home/Away อาจสลับกัน)`
+      );
+    }
+  }
+
+  if (row.match_no !== null && category) {
+    const noKey = matchNoKey(category.id, row.stage, row.match_no);
+    const existingNoOwner = context.existingMatchNoOwners.get(noKey);
+    const batchNoOwner = seen.matchNoOwners.get(noKey);
+    if (existingNoOwner && existingNoOwner !== row.match_code) {
+      addMessage(messages, 'error', 'E19', `match_no ${row.match_no} ซ้ำกับ Match ${existingNoOwner} ใน Category/Stage เดียวกัน`);
+    }
+    if (batchNoOwner && batchNoOwner !== row.match_code) {
+      addMessage(messages, 'error', 'E19', `match_no ${row.match_no} ซ้ำภายในไฟล์กับ Match ${batchNoOwner} ใน Category/Stage เดียวกัน`);
+    }
+  }
+
   const diff = buildScheduleImportDiff(
     existing,
     row,
@@ -540,6 +616,10 @@ export function validateScheduleImportRow(
   if (!hasError && venue && row.match_date) {
     const dayKey = venueDayKey(venue.id, row.match_date);
     seen.venueDayCounts.set(dayKey, (seen.venueDayCounts.get(dayKey) || 0) + 1);
+  }
+  if (!hasError && pairKey) seen.pairOwners.set(pairKey, row.match_code);
+  if (!hasError && row.match_no !== null && category) {
+    seen.matchNoOwners.set(matchNoKey(category.id, row.stage, row.match_no), row.match_code);
   }
 
   return {

@@ -5,7 +5,10 @@ import {
   createScheduleBatchSeen,
   groupKey,
   groupSlotKey,
+  groupStagePairKey,
+  matchNoKey,
   scheduleSlotKey,
+  teamKey,
   validateScheduleImportRow,
   venueDayKey,
   type RawScheduleImportRow,
@@ -44,6 +47,8 @@ function makeContext(
     existingMatchesByCode: new Map(),
     existingSlotOwners: new Map(),
     existingVenueDayCounts: new Map(),
+    existingPairOwners: new Map(),
+    existingMatchNoOwners: new Map(),
     allKnownMatchCodes: new Set(['B-U12-GA-001']),
     drawSelectedConfigsByRef: new Map(),
     drawSelectedConfigsByCategoryCode: new Map(),
@@ -307,5 +312,254 @@ describe('validateScheduleImportRow', () => {
     expect(result.messages.some((message) => message.code === 'E_DRAW_SELECTED_CATEGORY')).toBe(
       true
     );
+  });
+});
+
+describe('duplicate group-stage pair detection', () => {
+  const groupB = { id: 'group-2', category_id: category.id, code: 'B', name: 'Group B' };
+
+  function pairRow(overrides: Partial<RawScheduleImportRow> = {}): RawScheduleImportRow {
+    return validRow({
+      match_code: 'B-U12-GA-002',
+      home_source_type: 'group_slot',
+      home_source_ref: 'A-S1',
+      away_source_type: 'group_slot',
+      away_source_ref: 'A-S2',
+      ...overrides,
+    });
+  }
+
+  it('blocks an exact duplicate pair within the same file', () => {
+    const context = makeContext();
+    const seen = createScheduleBatchSeen();
+    validateScheduleImportRow(pairRow({ match_code: 'B-U12-GA-001' }), 2, context, seen);
+    const duplicate = validateScheduleImportRow(
+      pairRow({ match_code: 'B-U12-GA-002', start_time: '10:00' }),
+      3,
+      context,
+      seen
+    );
+
+    expect(duplicate.status).toBe('error');
+    expect(duplicate.messages.some((message) => message.code === 'E20')).toBe(true);
+  });
+
+  it('blocks a swapped home/away pair within the same file', () => {
+    const context = makeContext();
+    const seen = createScheduleBatchSeen();
+    validateScheduleImportRow(pairRow({ match_code: 'B-U12-GA-001' }), 2, context, seen);
+    const swapped = validateScheduleImportRow(
+      pairRow({
+        match_code: 'B-U12-GA-002',
+        start_time: '10:00',
+        home_source_ref: 'A-S2',
+        away_source_ref: 'A-S1',
+      }),
+      3,
+      context,
+      seen
+    );
+
+    expect(swapped.status).toBe('error');
+    expect(swapped.messages.some((message) => message.code === 'E20')).toBe(true);
+  });
+
+  it('blocks a pair that duplicates an active database match', () => {
+    const context = makeContext({
+      existingPairOwners: new Map([
+        [
+          groupStagePairKey(category.id, 'group', group.id, 'group_slot', 'A-S1', 'group_slot', 'A-S2'),
+          'OTHER-MATCH',
+        ],
+      ]),
+    });
+
+    const result = validateScheduleImportRow(pairRow(), 2, context, createScheduleBatchSeen());
+
+    expect(result.status).toBe('error');
+    expect(result.messages.some((message) => message.code === 'E20')).toBe(true);
+  });
+
+  it('does not flag an update against its own existing database row', () => {
+    const context = makeContext({
+      existingPairOwners: new Map([
+        [
+          groupStagePairKey(category.id, 'group', group.id, 'group_slot', 'A-S1', 'group_slot', 'A-S2'),
+          'B-U12-GA-002',
+        ],
+      ]),
+    });
+
+    const result = validateScheduleImportRow(pairRow(), 2, context, createScheduleBatchSeen());
+
+    expect(result.messages.some((message) => message.code === 'E20')).toBe(false);
+  });
+
+  it('allows the same slot pair in a different group', () => {
+    const context = makeContext({
+      groupsByCategoryAndCode: new Map([
+        [groupKey(category.id, group.code), group],
+        [groupKey(category.id, groupB.code), groupB],
+      ]),
+      groupSlots: new Set([
+        groupSlotKey(group.id, 'A-S1'),
+        groupSlotKey(group.id, 'A-S2'),
+        groupSlotKey(groupB.id, 'A-S1'),
+        groupSlotKey(groupB.id, 'A-S2'),
+      ]),
+      existingPairOwners: new Map([
+        [
+          groupStagePairKey(category.id, 'group', group.id, 'group_slot', 'A-S1', 'group_slot', 'A-S2'),
+          'OTHER-MATCH',
+        ],
+      ]),
+    });
+
+    const result = validateScheduleImportRow(
+      pairRow({ group_code: 'B' }),
+      2,
+      context,
+      createScheduleBatchSeen()
+    );
+
+    expect(result.messages.some((message) => message.code === 'E20')).toBe(false);
+  });
+
+  it('allows the same slot text pair in a different category', () => {
+    const context = makeContext({
+      existingPairOwners: new Map([
+        [
+          groupStagePairKey(drawCategory.id, 'group', group.id, 'group_slot', 'A-S1', 'group_slot', 'A-S2'),
+          'OTHER-MATCH',
+        ],
+      ]),
+    });
+
+    const result = validateScheduleImportRow(pairRow(), 2, context, createScheduleBatchSeen());
+
+    expect(result.messages.some((message) => message.code === 'E20')).toBe(false);
+  });
+
+  it('does not treat identical ref text with different source types as the same pair', () => {
+    const context = makeContext({
+      existingPairOwners: new Map([
+        [
+          groupStagePairKey(category.id, 'group', group.id, 'team', 'A-S1', 'group_slot', 'A-S2'),
+          'OTHER-MATCH',
+        ],
+      ]),
+    });
+
+    const result = validateScheduleImportRow(pairRow(), 2, context, createScheduleBatchSeen());
+
+    expect(result.messages.some((message) => message.code === 'E20')).toBe(false);
+  });
+});
+
+describe('self-match detection', () => {
+  it('rejects team vs itself', () => {
+    const context = makeContext({
+      teamsByCategoryAndCode: new Map([
+        [teamKey(category.id, 'B12-HTN'), { id: 'team-1', category_id: category.id, team_code: 'B12-HTN' }],
+      ]),
+    });
+
+    const result = validateScheduleImportRow(
+      validRow({
+        home_source_type: 'team',
+        home_source_ref: 'B12-HTN',
+        away_source_type: 'team',
+        away_source_ref: 'B12-HTN',
+      }),
+      2,
+      context,
+      createScheduleBatchSeen()
+    );
+
+    expect(result.status).toBe('error');
+    expect(result.messages.some((message) => message.code === 'E12')).toBe(true);
+  });
+
+  it('rejects group_slot vs itself', () => {
+    const result = validateScheduleImportRow(
+      validRow({
+        home_source_type: 'group_slot',
+        home_source_ref: 'A-S1',
+        away_source_type: 'group_slot',
+        away_source_ref: 'A-S1',
+      }),
+      2,
+      makeContext(),
+      createScheduleBatchSeen()
+    );
+
+    expect(result.status).toBe('error');
+    expect(result.messages.some((message) => message.code === 'E12')).toBe(true);
+  });
+
+  it('rejects two placeholders that resolve to the same team', () => {
+    const context = makeContext({
+      teamsByCategoryAndCode: new Map([
+        [teamKey(category.id, 'B12-HTN'), { id: 'team-1', category_id: category.id, team_code: 'B12-HTN' }],
+      ]),
+      groupsByCategoryAndCode: new Map([[groupKey(category.id, group.code), group]]),
+    });
+
+    const result = validateScheduleImportRow(
+      validRow({ home_source_type: 'team', home_source_ref: 'B12-HTN', away_source_type: 'team', away_source_ref: 'B12-HTN' }),
+      2,
+      context,
+      createScheduleBatchSeen()
+    );
+
+    expect(result.messages.some((message) => message.code === 'E12')).toBe(true);
+  });
+});
+
+describe('duplicate match_no detection', () => {
+  it('blocks a duplicate match_no within the same category/stage inside the file', () => {
+    const context = makeContext();
+    const seen = createScheduleBatchSeen();
+    validateScheduleImportRow(validRow({ match_code: 'B-U12-GA-001', match_no: 1 }), 2, context, seen);
+    const duplicate = validateScheduleImportRow(
+      validRow({ match_code: 'B-U12-GA-003', match_no: 1, start_time: '11:00' }),
+      3,
+      context,
+      seen
+    );
+
+    expect(duplicate.status).toBe('error');
+    expect(duplicate.messages.some((message) => message.code === 'E19')).toBe(true);
+  });
+
+  it('blocks a match_no that duplicates an active database match', () => {
+    const context = makeContext({
+      existingMatchNoOwners: new Map([[matchNoKey(category.id, 'group', 1), 'OTHER-MATCH']]),
+    });
+
+    const result = validateScheduleImportRow(
+      validRow({ match_no: 1 }),
+      2,
+      context,
+      createScheduleBatchSeen()
+    );
+
+    expect(result.status).toBe('error');
+    expect(result.messages.some((message) => message.code === 'E19')).toBe(true);
+  });
+
+  it('does not flag an update against its own existing match_no', () => {
+    const context = makeContext({
+      existingMatchNoOwners: new Map([[matchNoKey(category.id, 'group', 1), 'B-U12-GA-001']]),
+    });
+
+    const result = validateScheduleImportRow(
+      validRow({ match_no: 1 }),
+      2,
+      context,
+      createScheduleBatchSeen()
+    );
+
+    expect(result.messages.some((message) => message.code === 'E19')).toBe(false);
   });
 });
