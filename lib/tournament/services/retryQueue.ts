@@ -15,6 +15,12 @@ export interface RetryQueueItem {
   homeScore: number;
   awayScore: number;
   expectedVersion: number;
+  /** The exact signed token returned by the Preview call that authorized
+   * this submission. Never regenerated client-side — a retry always resends
+   * this same token alongside the same idempotency key. If it expires before
+   * the retry succeeds, the retry will be rejected (QUICK_RESULT_PREVIEW_EXPIRED)
+   * and the operator must Preview again. */
+  previewToken: string;
   status: RetryQueueItemStatus;
   attempts: number;
   lastError: string | null;

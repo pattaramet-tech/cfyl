@@ -1,4 +1,5 @@
 import { getTournamentServiceClient } from '../db/supabase-tournament';
+import { issuePreviewToken, verifyPreviewToken } from './previewToken';
 
 // Tournament V2 Quick Result (Phase 5b, Stage A) — a provisional matchday
 // operational score only. It NEVER sets tournament_matches.result_workflow_status
@@ -104,6 +105,8 @@ export interface QuickResultPreview {
   homeScore: number;
   awayScore: number;
   currentVersion: number;
+  previewToken: string;
+  previewExpiresAt: string;
 }
 
 async function loadMatchContext(params: {
@@ -197,9 +200,15 @@ export interface PreviewQuickResultParams {
   matchId: string;
   homeScore: unknown;
   awayScore: unknown;
+  actorUserId: string | null;
 }
 
-/** Read-only: validates and returns the preview payload. Writes nothing. */
+/**
+ * Read-only: validates and returns the preview payload, plus a signed
+ * previewToken that Submit requires. Writes nothing to the database — the
+ * token is the only "record" of this Preview having happened, and it is
+ * entirely self-contained (no server-side storage).
+ */
 export async function previewQuickResult(params: PreviewQuickResultParams): Promise<QuickResultPreview> {
   const homeScoreResult = validateScoreInput(params.homeScore);
   if (!homeScoreResult.ok) throw new QuickResultError(`HOME_SCORE_${homeScoreResult.error}`, `Invalid home score: ${homeScoreResult.error}`);
@@ -213,6 +222,19 @@ export async function previewQuickResult(params: PreviewQuickResultParams): Prom
   });
 
   assertEligible({ match, venueId: params.venueId });
+
+  const homeScore = homeScoreResult.value as number;
+  const awayScore = awayScoreResult.value as number;
+
+  const issued = issuePreviewToken({
+    tournamentId: match.tournament_id,
+    matchId: match.id,
+    venueId: params.venueId,
+    homeScore,
+    awayScore,
+    matchVersion: match.version,
+    actorUserId: params.actorUserId,
+  });
 
   return {
     matchId: match.id,
@@ -228,9 +250,11 @@ export async function previewQuickResult(params: PreviewQuickResultParams): Prom
     matchTime: match.match_time,
     homeTeamName,
     awayTeamName,
-    homeScore: homeScoreResult.value as number,
-    awayScore: awayScoreResult.value as number,
+    homeScore,
+    awayScore,
     currentVersion: match.version,
+    previewToken: issued.token,
+    previewExpiresAt: issued.expiresAt,
   };
 }
 
@@ -251,6 +275,7 @@ export interface SubmitQuickResultParams {
   awayScore: unknown;
   expectedVersion: number;
   idempotencyKey: string;
+  previewToken: string;
   actorUserId: string | null;
   actorEmail: string | null;
   sessionId: string | null;
@@ -316,6 +341,41 @@ export async function submitQuickResult(params: SubmitQuickResultParams): Promis
     };
   }
 
+  // This is a genuinely new write (no matching idempotency key found above)
+  // — a signed Preview Token is mandatory. Without this check, a caller
+  // could send expected_version + idempotency_key straight to Submit
+  // without ever calling Preview.
+  if (!params.previewToken || !params.previewToken.trim()) {
+    throw new QuickResultError('QUICK_RESULT_PREVIEW_REQUIRED', 'A valid Quick Result preview is required before submission.');
+  }
+
+  const tokenVerification = verifyPreviewToken(params.previewToken);
+  if (!tokenVerification.ok) {
+    throw new QuickResultError(
+      tokenVerification.code,
+      tokenVerification.code === 'QUICK_RESULT_PREVIEW_EXPIRED'
+        ? 'Quick Result preview has expired — request a new preview before submitting'
+        : 'Quick Result preview token is invalid or was tampered with'
+    );
+  }
+
+  const claims = tokenVerification.claims;
+  const claimsMatchRequest =
+    claims.tournamentId === params.tournamentId &&
+    claims.matchId === params.matchId &&
+    claims.venueId === params.venueId &&
+    claims.homeScore === homeScore &&
+    claims.awayScore === awayScore &&
+    claims.matchVersion === params.expectedVersion &&
+    claims.actorUserId === params.actorUserId;
+
+  if (!claimsMatchRequest) {
+    throw new QuickResultError(
+      'QUICK_RESULT_PREVIEW_MISMATCH',
+      'The submitted request no longer matches the previewed match, venue, score, version, or actor — preview again'
+    );
+  }
+
   const { match } = await loadMatchContext({
     client: params.client,
     matchId: params.matchId,
@@ -379,17 +439,48 @@ export async function submitQuickResult(params: SubmitQuickResultParams): Promis
     .single();
 
   if (submissionError || !submissionData) {
+    // NOT a database transaction: supabase-js issues each .from() call as an
+    // independent request, and this codebase has no approved RPC/transaction
+    // mechanism for Tournament V2 (confirmed: no .rpc( call exists anywhere
+    // in lib/tournament or app/api/tournament). This is a best-effort
+    // compensating rollback of the version claim above, not atomicity — if
+    // this rollback UPDATE itself fails (e.g. connection drop), the match is
+    // left with an incremented version and no submission. That failure mode
+    // is fail-safe, not silent corruption: no result is ever fabricated, and
+    // the operator sees QUICK_RESULT_VERSION_CONFLICT on retry and must
+    // Preview again (which reads the true current version) rather than the
+    // retry silently succeeding against stale state or duplicating data.
+    // True atomicity would require a Postgres RPC wrapping the version claim
+    // + submission insert + version-history insert in one transaction — not
+    // implemented here; see PR description.
+    // Use params.expectedVersion (a captured primitive, already asserted
+    // equal to the pre-claim match.version above) rather than re-reading
+    // match.version here — some Supabase client / mock implementations may
+    // return the same row reference across calls, so match.version could
+    // already reflect the post-claim state by this point.
+    await params.client
+      .from('tournament_matches')
+      .update({ version: params.expectedVersion })
+      .eq('id', params.matchId)
+      .eq('version', newVersion);
     throw new Error(submissionError?.message || 'Failed to create quick result submission');
   }
 
   const submissionId = (submissionData as { id: string }).id;
 
-  await params.client.from('tournament_result_versions').insert({
+  const { error: versionInsertError } = await params.client.from('tournament_result_versions').insert({
     submission_id: submissionId,
     version: 1,
     payload,
     changed_by: params.actorUserId,
   });
+  if (versionInsertError) {
+    // Non-fatal: the submission itself (the actual provisional result) is
+    // already saved and is the source of truth; tournament_result_versions
+    // is supplementary audit history. Same "log and continue" pattern used
+    // by the schedule-import version insert in PR #6.
+    console.error('[QUICK_RESULT] result_versions insert failed:', versionInsertError.message);
+  }
 
   return {
     submissionId,

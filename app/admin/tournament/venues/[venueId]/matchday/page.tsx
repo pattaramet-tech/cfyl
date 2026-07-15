@@ -43,6 +43,26 @@ interface PreviewData {
   home_score: number;
   away_score: number;
   current_version: number;
+  preview_token: string;
+  preview_expires_at: string;
+}
+
+const PREVIEW_EXPIRED_MESSAGE = 'ตัวอย่างผลหมดอายุแล้ว กรุณาตรวจสอบตัวอย่างอีกครั้งก่อนส่งผล';
+
+/** Module-level (not component-body) so the impure Date.now() read is never
+ * mistaken for a render-time call by the React Compiler purity check — this
+ * is only ever invoked from the submitQuickResult event-handler callback. */
+function isPreviewExpired(expiresAt: string | null): boolean {
+  if (!expiresAt) return false;
+  return Date.now() > new Date(expiresAt).getTime();
+}
+
+function errorMessageForCode(code: string | undefined, fallback: string): string {
+  if (code === 'QUICK_RESULT_PREVIEW_EXPIRED') return PREVIEW_EXPIRED_MESSAGE;
+  if (code === 'QUICK_RESULT_PREVIEW_REQUIRED') return 'กรุณาดูตัวอย่างผลก่อนยืนยันส่ง';
+  if (code === 'QUICK_RESULT_PREVIEW_INVALID') return 'ตัวอย่างผลไม่ถูกต้อง กรุณาดูตัวอย่างอีกครั้ง';
+  if (code === 'QUICK_RESULT_PREVIEW_MISMATCH') return 'ข้อมูลไม่ตรงกับตัวอย่างที่ดูไว้ กรุณาดูตัวอย่างอีกครั้ง';
+  return fallback;
 }
 
 function getToken(): string | null {
@@ -100,6 +120,8 @@ export default function VenueMatchdayPage({ params }: { params: Promise<{ venueI
 
   const [preview, setPreview] = useState<PreviewData | null>(null);
   const [previewStale, setPreviewStale] = useState(false);
+  const [previewToken, setPreviewToken] = useState<string | null>(null);
+  const [previewExpiresAt, setPreviewExpiresAt] = useState<string | null>(null);
   const [idempotencyKey, setIdempotencyKey] = useState<string | null>(null);
 
   const [busy, setBusy] = useState(false);
@@ -136,12 +158,19 @@ export default function VenueMatchdayPage({ params }: { params: Promise<{ venueI
       window.location.href = '/admin/login';
       return;
     }
-    // Fetch-on-mount-and-param-change: loadMatches/setRetryQueue set state
-    // only inside their own async continuations (.then/.finally) except for
-    // the initial setLoading(true)/setRetryQueue seed, which is intentional
-    // here — this effect's sole purpose is to synchronize this page with the
+    // Tournament/Venue/Date selection changed the active Match context —
+    // any held Preview (and its signed token) is no longer valid for a
+    // different context and must be cleared, not just marked stale. Plus
+    // fetch-on-mount-and-param-change (loadMatches/setRetryQueue): this
+    // effect's sole purpose is to synchronize this page with the
     // tournamentSlug/date/venueId route params.
     // eslint-disable-next-line react-hooks/set-state-in-effect
+    setSelectedMatchId(null);
+    setPreview(null);
+    setPreviewStale(false);
+    setPreviewToken(null);
+    setPreviewExpiresAt(null);
+    setIdempotencyKey(null);
     loadMatches();
     setRetryQueue(getRetryQueue());
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -163,6 +192,8 @@ export default function VenueMatchdayPage({ params }: { params: Promise<{ venueI
     setSelectedMatchId(match.match_id);
     setPreview(null);
     setPreviewStale(false);
+    setPreviewToken(null);
+    setPreviewExpiresAt(null);
     setSubmitError('');
     setSuccessMessage('');
     setConflict(false);
@@ -185,8 +216,15 @@ export default function VenueMatchdayPage({ params }: { params: Promise<{ venueI
   const onScoreChange = (side: 'home' | 'away', value: string) => {
     if (side === 'home') setHomeScoreInput(value);
     else setAwayScoreInput(value);
-    // Editing after Preview invalidates it — a fresh Preview is required before Submit.
-    if (preview) setPreviewStale(true);
+    // Editing after Preview invalidates the signed Preview Token — it was
+    // issued for the previous score pair and will fail the server's
+    // claims-match-request check. Clear it entirely rather than merely
+    // marking it stale, so no expired/mismatched token can be resent.
+    if (preview || previewToken) {
+      setPreviewStale(true);
+      setPreviewToken(null);
+      setPreviewExpiresAt(null);
+    }
 
     if (selectedMatchId) {
       saveLocalDraft({
@@ -221,9 +259,12 @@ export default function VenueMatchdayPage({ params }: { params: Promise<{ venueI
       });
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.error || 'ดูตัวอย่างไม่สำเร็จ');
-      setPreview(payload.data as PreviewData);
+      const data = payload.data as PreviewData;
+      setPreview(data);
       setPreviewStale(false);
-      setMatchVersion((payload.data as PreviewData).current_version);
+      setPreviewToken(data.preview_token);
+      setPreviewExpiresAt(data.preview_expires_at);
+      setMatchVersion(data.current_version);
       setIdempotencyKey(crypto.randomUUID());
     } catch (reason) {
       setSubmitError(reason instanceof Error ? reason.message : 'ดูตัวอย่างไม่สำเร็จ');
@@ -233,7 +274,19 @@ export default function VenueMatchdayPage({ params }: { params: Promise<{ venueI
   };
 
   const submitQuickResult = async (retryKey?: string) => {
-    if (!selectedMatchId || !preview || previewStale || matchVersion === null) return;
+    if (!selectedMatchId || !preview || previewStale || matchVersion === null || !previewToken) return;
+
+    // Client-side expiry guard — the server verifies this independently and
+    // authoritatively, but checking here avoids a doomed round-trip and
+    // shows the required Thai wording immediately.
+    if (isPreviewExpired(previewExpiresAt)) {
+      setPreviewStale(true);
+      setPreviewToken(null);
+      setPreviewExpiresAt(null);
+      setSubmitError(PREVIEW_EXPIRED_MESSAGE);
+      return;
+    }
+
     const key = retryKey || idempotencyKey;
     if (!key) return;
 
@@ -252,17 +305,34 @@ export default function VenueMatchdayPage({ params }: { params: Promise<{ venueI
           away_score: preview.away_score,
           expected_version: matchVersion,
           idempotency_key: key,
+          preview_token: previewToken,
           session_id: getSessionId(),
           device_metadata: { user_agent: navigator.userAgent, platform: navigator.platform },
         }),
       });
       const payload = await response.json();
 
-      if (response.status === 409) {
+      if (response.status === 409 && payload.code === 'QUICK_RESULT_VERSION_CONFLICT') {
         setConflict(true);
         setSubmitError('ข้อมูลการแข่งขันมีการเปลี่ยนแปลง กรุณาตรวจสอบใหม่');
         setPreviewStale(true);
+        setPreviewToken(null);
+        setPreviewExpiresAt(null);
         markFailed(key, 'version_conflict');
+        setRetryQueue(getRetryQueue());
+        return;
+      }
+      if (
+        payload.code === 'QUICK_RESULT_PREVIEW_EXPIRED' ||
+        payload.code === 'QUICK_RESULT_PREVIEW_INVALID' ||
+        payload.code === 'QUICK_RESULT_PREVIEW_MISMATCH' ||
+        payload.code === 'QUICK_RESULT_PREVIEW_REQUIRED'
+      ) {
+        setPreviewStale(true);
+        setPreviewToken(null);
+        setPreviewExpiresAt(null);
+        setSubmitError(errorMessageForCode(payload.code, payload.error || 'ส่งผลเบื้องต้นไม่สำเร็จ'));
+        markFailed(key, payload.code);
         setRetryQueue(getRetryQueue());
         return;
       }
@@ -273,11 +343,14 @@ export default function VenueMatchdayPage({ params }: { params: Promise<{ venueI
       clearLocalDraft(tournamentSlug, venueId, selectedMatchId);
       setSuccessMessage('ส่งผลเบื้องต้นสำเร็จ');
       setPreview(null);
+      setPreviewToken(null);
+      setPreviewExpiresAt(null);
       setIdempotencyKey(null);
       setDraftSavedNotice(false);
       loadMatches();
     } catch (reason) {
-      // Network failure — queue for retry, preserving the same idempotency key.
+      // Network failure — queue for retry, preserving the same idempotency
+      // key and the same Preview Token (never regenerated client-side).
       enqueueRetry({
         idempotencyKey: key,
         matchId: selectedMatchId,
@@ -286,6 +359,7 @@ export default function VenueMatchdayPage({ params }: { params: Promise<{ venueI
         homeScore: preview.home_score,
         awayScore: preview.away_score,
         expectedVersion: matchVersion,
+        previewToken,
       });
       setRetryQueue(getRetryQueue());
       setSubmitError(reason instanceof Error ? reason.message : 'รอเชื่อมต่อเพื่อส่งอีกครั้ง');
@@ -309,6 +383,7 @@ export default function VenueMatchdayPage({ params }: { params: Promise<{ venueI
           away_score: item.awayScore,
           expected_version: item.expectedVersion,
           idempotency_key: item.idempotencyKey,
+          preview_token: item.previewToken,
           session_id: getSessionId(),
         }),
       });
@@ -318,7 +393,9 @@ export default function VenueMatchdayPage({ params }: { params: Promise<{ venueI
         loadMatches();
       } else {
         const payload = await response.json().catch(() => null);
-        markFailed(item.idempotencyKey, payload?.error || 'retry_failed');
+        // A token that expired while queued cannot be retried — the operator
+        // must return to this match and Preview again.
+        markFailed(item.idempotencyKey, payload?.code || payload?.error || 'retry_failed');
       }
     } catch {
       markFailed(item.idempotencyKey, 'network_error');
@@ -488,7 +565,7 @@ export default function VenueMatchdayPage({ params }: { params: Promise<{ venueI
                   </div>
                 )}
 
-                {!preview || previewStale ? (
+                {!preview || previewStale || !previewToken ? (
                   <button
                     type="button"
                     onClick={runPreview}
@@ -523,6 +600,8 @@ export default function VenueMatchdayPage({ params }: { params: Promise<{ venueI
                         onClick={() => {
                           setPreview(null);
                           setPreviewStale(false);
+                          setPreviewToken(null);
+                          setPreviewExpiresAt(null);
                         }}
                         disabled={busy}
                         className="rounded-lg border border-slate-300 px-5 py-3.5 text-base font-semibold text-slate-700"

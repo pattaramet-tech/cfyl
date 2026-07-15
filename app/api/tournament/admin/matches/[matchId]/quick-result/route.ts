@@ -19,6 +19,7 @@ interface QuickResultRequestBody {
   expected_version?: unknown;
   idempotency_key?: unknown;
   preview?: unknown;
+  preview_token?: unknown;
   session_id?: unknown;
   device_metadata?: unknown;
 }
@@ -43,6 +44,7 @@ async function resolveTournamentId(
 
 function errorStatus(code: string): number {
   if (code === 'QUICK_RESULT_VERSION_CONFLICT') return 409;
+  if (code === 'QUICK_RESULT_PREVIEW_REQUIRED') return 409;
   if (code === 'MATCH_NOT_FOUND') return 404;
   if (
     [
@@ -55,6 +57,9 @@ function errorStatus(code: string): number {
       'AWAY_TEAM_UNRESOLVED',
       'IDEMPOTENCY_KEY_PAYLOAD_MISMATCH',
       'IDEMPOTENCY_KEY_REQUIRED',
+      'QUICK_RESULT_PREVIEW_INVALID',
+      'QUICK_RESULT_PREVIEW_EXPIRED',
+      'QUICK_RESULT_PREVIEW_MISMATCH',
     ].includes(code) ||
     code.startsWith('HOME_SCORE_') ||
     code.startsWith('AWAY_SCORE_')
@@ -107,6 +112,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
         matchId,
         homeScore: body.home_score,
         awayScore: body.away_score,
+        actorUserId: auth.userId || null,
       });
 
       return NextResponse.json({
@@ -128,6 +134,8 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
           home_score: preview.homeScore,
           away_score: preview.awayScore,
           current_version: preview.currentVersion,
+          preview_token: preview.previewToken,
+          preview_expires_at: preview.previewExpiresAt,
         },
       });
     }
@@ -140,6 +148,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     if (!idempotencyKey) {
       return NextResponse.json({ error: 'idempotency_key is required' }, { status: 400 });
     }
+    const previewToken = asText(body.preview_token);
 
     const result = (await submitQuickResult({
       client,
@@ -150,6 +159,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       awayScore: body.away_score,
       expectedVersion,
       idempotencyKey,
+      previewToken,
       actorUserId: auth.userId || null,
       actorEmail: auth.email || null,
       sessionId: body.session_id ? asText(body.session_id) : null,
