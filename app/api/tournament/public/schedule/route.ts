@@ -108,13 +108,18 @@ async function resolveTeamForSlot(
   }
 }
 
+interface ImportedScheduleResult {
+  publishedMatches: ScheduleMatch[];
+  hasAnyImportedMatches: boolean;
+}
+
 async function loadImportedSchedule(params: {
   client: SupabaseClient;
   tournament: TournamentRow;
   categoryCode: string | null;
   venueCode: string | null;
   date: string | null;
-}): Promise<ScheduleMatch[] | null> {
+}): Promise<ImportedScheduleResult | null> {
   const { client, tournament, categoryCode, venueCode, date } = params;
 
   const [categoriesResult, venuesResult, courtsResult, teamsResult] = await Promise.all([
@@ -148,39 +153,66 @@ async function loadImportedSchedule(params: {
   const courtsById = new Map(((courtsResult.data || []) as CodeRow[]).map((item) => [item.id, item.code]));
   const teamsById = new Map(((teamsResult.data || []) as TeamRow[]).map((item) => [item.id, item.name]));
 
-  let query = client
-    .from('tournament_matches')
-    .select(
-      'id, match_code, match_no, match_date, match_time, category_id, venue_id, court_id, home_team_id, away_team_id, home_source_ref, away_source_ref, stage, schedule_status'
-    )
-    .eq('tournament_id', tournament.id)
-    .is('deleted_at', null)
+  function baseQuery() {
+    let query = client
+      .from('tournament_matches')
+      .select(
+        'id, match_code, match_no, match_date, match_time, category_id, venue_id, court_id, home_team_id, away_team_id, home_source_ref, away_source_ref, stage, schedule_status'
+      )
+      .eq('tournament_id', tournament.id)
+      .is('deleted_at', null);
+
+    if (categoryCode) {
+      const categoryId = categoryIdsByCode.get(categoryCode.trim().toUpperCase());
+      if (!categoryId) return null;
+      query = query.eq('category_id', categoryId);
+    }
+    if (venueCode) {
+      const venueId = venueIdsByCode.get(venueCode.trim().toUpperCase());
+      if (!venueId) return null;
+      query = query.eq('venue_id', venueId);
+    }
+    if (date) query = query.eq('match_date', date);
+
+    return query;
+  }
+
+  // First, cheaply check whether ANY imported match exists in scope (any
+  // schedule_status) — this distinguishes "nothing imported yet" (sample
+  // fallback may apply) from "imported but not published" (must return
+  // NOT_PUBLISHED, never expose draft/validated rows).
+  const existsQuery = baseQuery();
+  if (!existsQuery) return { publishedMatches: [], hasAnyImportedMatches: false };
+  const { data: existsData, error: existsError } = await existsQuery.limit(1);
+  if (existsError) {
+    console.error('[SCHEDULE_GET] imported schedule existence check failed:', existsError.message);
+    return null;
+  }
+  const hasAnyImportedMatches = (existsData || []).length > 0;
+
+  if (!hasAnyImportedMatches) {
+    return { publishedMatches: [], hasAnyImportedMatches: false };
+  }
+
+  // Public API must only ever return matches whose schedule publication
+  // status is 'published' — draft/validated/revision_required rows are
+  // never exposed here, even labeled as draft.
+  const publishedQuery = baseQuery();
+  if (!publishedQuery) return { publishedMatches: [], hasAnyImportedMatches };
+  const { data: matchData, error: matchError } = await publishedQuery
+    .eq('schedule_status', 'published')
     .order('match_date', { ascending: true })
     .order('match_time', { ascending: true })
     .order('match_no', { ascending: true });
 
-  if (categoryCode) {
-    const categoryId = categoryIdsByCode.get(categoryCode.trim().toUpperCase());
-    if (!categoryId) return [];
-    query = query.eq('category_id', categoryId);
-  }
-  if (venueCode) {
-    const venueId = venueIdsByCode.get(venueCode.trim().toUpperCase());
-    if (!venueId) return [];
-    query = query.eq('venue_id', venueId);
-  }
-  if (date) query = query.eq('match_date', date);
-
-  const { data: matchData, error: matchError } = await query;
   if (matchError) {
     console.error('[SCHEDULE_GET] imported schedule query failed:', matchError.message);
     return null;
   }
 
   const matches = (matchData || []) as DbMatchRow[];
-  if (matches.length === 0) return [];
 
-  return matches.map((match) => ({
+  const publishedMatches = matches.map((match) => ({
     id: match.id,
     category_code: categoriesById.get(match.category_id) || 'UNKNOWN',
     venue_code: match.venue_id ? venuesById.get(match.venue_id) || 'TBD' : 'TBD',
@@ -194,6 +226,8 @@ async function loadImportedSchedule(params: {
     round: match.stage,
     match_number: match.match_no || match.match_code,
   }));
+
+  return { publishedMatches, hasAnyImportedMatches };
 }
 
 export async function GET(request: NextRequest) {
@@ -220,7 +254,7 @@ export async function GET(request: NextRequest) {
     }
 
     const tournament = tournamentData as TournamentRow;
-    const importedMatches = await loadImportedSchedule({
+    const imported = await loadImportedSchedule({
       client,
       tournament,
       categoryCode,
@@ -228,33 +262,69 @@ export async function GET(request: NextRequest) {
       date,
     });
 
-    if (importedMatches && importedMatches.length > 0) {
-      const { data: statuses } = await client
-        .from('tournament_matches')
-        .select('schedule_status')
-        .eq('tournament_id', tournament.id)
-        .is('deleted_at', null);
-      const allPublished =
-        (statuses || []).length > 0 &&
-        (statuses || []).every((row: { schedule_status: string }) => row.schedule_status === 'published');
+    if (imported === null) {
+      return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+    }
 
+    if (imported.publishedMatches.length > 0) {
       return NextResponse.json({
         tournament_slug: tournamentSlug,
-        status: allPublished ? 'OFFICIAL' : 'VALIDATED_DRAFT',
-        is_official: allPublished,
+        status: 'OFFICIAL',
+        is_official: true,
         source: {
           type: 'tournament_database',
           fallback: false,
-          note: allPublished
-            ? 'Published Tournament V2 schedule'
-            : 'Imported and validated Tournament V2 schedule awaiting publish',
+          note: 'Published Tournament V2 schedule',
         },
         competition_dates: {
           start: tournament.start_date,
           end: tournament.end_date,
         },
-        total_matches: importedMatches.length,
-        data: importedMatches,
+        total_matches: imported.publishedMatches.length,
+        data: imported.publishedMatches,
+      });
+    }
+
+    if (imported.hasAnyImportedMatches) {
+      // Imports exist for this tournament but nothing is published yet.
+      // Never expose draft/validated/revision_required rows here.
+      return NextResponse.json({
+        tournament_slug: tournamentSlug,
+        status: 'NOT_PUBLISHED',
+        is_official: false,
+        source: {
+          type: 'tournament_database',
+          fallback: false,
+          note: 'Schedule imported but not yet published',
+        },
+        competition_dates: {
+          start: tournament.start_date,
+          end: tournament.end_date,
+        },
+        total_matches: 0,
+        data: [],
+      });
+    }
+
+    // No imports exist at all for this tournament. Sample fallback is only
+    // safe to serve for the tournament it was explicitly authored for —
+    // never mix unrelated sample rows with a real tournament's public page.
+    if (tournamentSlug.trim().toLowerCase() !== scheduleData.tournament_slug.trim().toLowerCase()) {
+      return NextResponse.json({
+        tournament_slug: tournamentSlug,
+        status: 'NOT_PUBLISHED',
+        is_official: false,
+        source: {
+          type: 'tournament_database',
+          fallback: false,
+          note: 'No schedule imported yet',
+        },
+        competition_dates: {
+          start: tournament.start_date,
+          end: tournament.end_date,
+        },
+        total_matches: 0,
+        data: [],
       });
     }
 
