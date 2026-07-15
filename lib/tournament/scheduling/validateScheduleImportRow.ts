@@ -143,6 +143,7 @@ export interface ValidatedScheduleImportRow {
   messages: ScheduleImportMessage[];
   diff: ScheduleImportDiff[];
   existingMatchId: string | null;
+  requiresRevisionConfirmation: boolean;
 }
 
 const text = (value: unknown): string => String(value ?? '').trim();
@@ -631,5 +632,6 @@ export function validateScheduleImportRow(
     messages,
     diff,
     existingMatchId: existing?.id || null,
+    requiresRevisionConfirmation: existing?.schedule_status === 'published' && diff.length > 0,
   };
 }

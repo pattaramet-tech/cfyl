@@ -347,6 +347,9 @@ export async function POST(request: NextRequest) {
     const validRows = results.filter((row) => row.status === 'valid').length;
     const warningRows = results.filter((row) => row.status === 'warning').length;
     const errorRows = results.filter((row) => row.status === 'error').length;
+    const publishedChangeRows = results.filter((row) => row.requiresRevisionConfirmation);
+    const hasPublishedChanges = publishedChangeRows.length > 0;
+    const publishedMatchCodes = publishedChangeRows.map((row) => row.match_code);
 
     const { data: batchData, error: batchError } = await client
       .from('tournament_schedule_batches')
@@ -380,6 +383,7 @@ export async function POST(request: NextRequest) {
         old_match: result.existingMatchId
           ? existingMatchesByCode.get(result.match_code) || null
           : null,
+        requires_revision_confirmation: result.requiresRevisionConfirmation,
       },
       match_code: result.match_code || null,
       status: result.status,
@@ -425,7 +429,13 @@ export async function POST(request: NextRequest) {
           error: errorRows,
           creatable: validRows + warningRows,
         },
-        results,
+        has_published_changes: hasPublishedChanges,
+        published_change_count: publishedChangeRows.length,
+        published_match_codes: publishedMatchCodes,
+        results: results.map((result) => ({
+          ...result,
+          requires_revision_confirmation: result.requiresRevisionConfirmation,
+        })),
       },
     });
   } catch (error) {

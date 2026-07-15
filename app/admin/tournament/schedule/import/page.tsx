@@ -39,6 +39,7 @@ interface PreviewRow {
   };
   messages: ImportMessage[];
   diff: ImportDiff[];
+  requires_revision_confirmation?: boolean;
 }
 
 interface PreviewData {
@@ -51,6 +52,9 @@ interface PreviewData {
     error: number;
     creatable: number;
   };
+  has_published_changes: boolean;
+  published_change_count: number;
+  published_match_codes: string[];
   results: PreviewRow[];
 }
 
@@ -59,9 +63,17 @@ interface SaveData {
   status: string;
   created: number;
   updated: number;
+  unchanged: number;
   skipped: number;
   failed: number;
-  failures: Array<{ row: number; match_code: string | null; error: string }>;
+  revisionsConfirmed: number;
+  failures: Array<{ row: number; match_code: string | null; error: string; code?: string }>;
+}
+
+interface PublishedRevisionConfirmationError {
+  error: string;
+  code: 'PUBLISHED_REVISION_CONFIRMATION_REQUIRED';
+  publishedMatchCodes: string[];
 }
 
 type SheetRow = Record<string, unknown>;
@@ -88,6 +100,9 @@ export default function TournamentScheduleImportPage() {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [publishedRevisionError, setPublishedRevisionError] = useState<PublishedRevisionConfirmationError | null>(
+    null
+  );
 
   useEffect(() => {
     const token = getToken();
@@ -149,6 +164,7 @@ export default function TournamentScheduleImportPage() {
     setError('');
     setPreview(null);
     setSaveResult(null);
+    setPublishedRevisionError(null);
 
     try {
       const arrayBuffer = await file.arrayBuffer();
@@ -176,6 +192,7 @@ export default function TournamentScheduleImportPage() {
     setError('');
     setPreview(null);
     setSaveResult(null);
+    setPublishedRevisionError(null);
 
     try {
       const response = await fetch('/api/tournament/admin/schedule/import/preview', {
@@ -193,19 +210,22 @@ export default function TournamentScheduleImportPage() {
     }
   };
 
-  const saveImport = async () => {
-    if (!preview || preview.summary.creatable === 0) return;
-    if (!window.confirm(`ยืนยันบันทึก ${preview.summary.creatable} แถวที่ผ่านการตรวจสอบ?`)) return;
-
+  const submitSave = async (confirmPublishedRevision: boolean) => {
+    if (!preview) return;
     setBusy(true);
     setError('');
+    setPublishedRevisionError(null);
     try {
       const response = await fetch('/api/tournament/admin/schedule/import/save', {
         method: 'POST',
         headers: authHeaders({ 'Content-Type': 'application/json' }),
-        body: JSON.stringify({ batchId: preview.batchId }),
+        body: JSON.stringify({ batchId: preview.batchId, confirmPublishedRevision }),
       });
       const payload = await response.json();
+      if (response.status === 409 && payload.code === 'PUBLISHED_REVISION_CONFIRMATION_REQUIRED') {
+        setPublishedRevisionError(payload as PublishedRevisionConfirmationError);
+        return;
+      }
       if (!response.ok) throw new Error(payload.error || 'บันทึก Import ไม่สำเร็จ');
       setSaveResult(payload.data as SaveData);
     } catch (reason) {
@@ -213,6 +233,22 @@ export default function TournamentScheduleImportPage() {
     } finally {
       setBusy(false);
     }
+  };
+
+  const saveImport = async () => {
+    if (!preview || preview.summary.creatable === 0) return;
+    if (preview.has_published_changes) {
+      // Normal Save is blocked while unconfirmed published-fixture changes
+      // exist — the confirmation panel below is the only way forward.
+      await submitSave(false);
+      return;
+    }
+    if (!window.confirm(`ยืนยันบันทึก ${preview.summary.creatable} แถวที่ผ่านการตรวจสอบ?`)) return;
+    await submitSave(false);
+  };
+
+  const confirmPublishedRevisionSave = async () => {
+    await submitSave(true);
   };
 
   if (loading) {
@@ -246,9 +282,16 @@ export default function TournamentScheduleImportPage() {
         <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-5 text-emerald-900">
           <h2 className="font-bold">บันทึกตารางแข่งขันเรียบร้อย</h2>
           <p className="mt-1 text-sm">
-            สร้างใหม่ {saveResult.created} นัด · อัปเดต {saveResult.updated} นัด · ข้าม {saveResult.skipped} แถว
+            สร้างใหม่ {saveResult.created} นัด · อัปเดต {saveResult.updated} นัด · ไม่เปลี่ยนแปลง {saveResult.unchanged} นัด · ข้าม{' '}
+            {saveResult.skipped} แถว
             {saveResult.failed > 0 ? ` · ล้มเหลว ${saveResult.failed} แถว` : ''}
           </p>
+          {saveResult.revisionsConfirmed > 0 && (
+            <p className="mt-2 rounded-lg bg-amber-100 px-3 py-2 text-sm font-semibold text-amber-900">
+              ยืนยันฉบับแก้ไขสำหรับคู่ที่ Publish แล้ว {saveResult.revisionsConfirmed} คู่ — คู่เหล่านี้อยู่ในสถานะ
+              &ldquo;รอตรวจสอบการแก้ไข&rdquo; และไม่แสดงในตาราง Public จนกว่าจะเผยแพร่อีกครั้ง
+            </p>
+          )}
           <a
             href="/tournament/schedule"
             target="_blank"
@@ -257,6 +300,16 @@ export default function TournamentScheduleImportPage() {
           >
             เปิดหน้าตารางแข่งขัน Public
           </a>
+        </div>
+      )}
+
+      {publishedRevisionError && (
+        <div role="alert" className="rounded-xl border-2 border-red-300 bg-red-50 p-5 text-red-900">
+          <h2 className="font-bold">ไม่สามารถบันทึกได้ — ต้องยืนยันการแก้ไขตารางที่ Publish แล้วก่อน</h2>
+          <p className="mt-1 text-sm">{publishedRevisionError.error}</p>
+          <p className="mt-2 text-sm font-semibold">
+            Match Code ที่ได้รับผลกระทบ: {publishedRevisionError.publishedMatchCodes.join(', ')}
+          </p>
         </div>
       )}
 
@@ -324,13 +377,14 @@ export default function TournamentScheduleImportPage() {
 
       {preview && (
         <section className="space-y-4">
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-6">
             {[
               ['ทั้งหมด', preview.summary.total, 'bg-slate-100 text-slate-800'],
               ['ผ่าน', preview.summary.valid, 'bg-emerald-100 text-emerald-800'],
               ['คำเตือน', preview.summary.warning, 'bg-amber-100 text-amber-900'],
               ['ผิดพลาด', preview.summary.error, 'bg-red-100 text-red-800'],
               ['บันทึกได้', preview.summary.creatable, 'bg-blue-100 text-blue-800'],
+              ['แก้ไขตาราง Publish แล้ว', preview.published_change_count, 'bg-red-100 text-red-800'],
             ].map(([label, value, className]) => (
               <div key={String(label)} className={`rounded-xl p-4 ${className}`}>
                 <p className="text-xs font-semibold uppercase tracking-wide">{label}</p>
@@ -338,6 +392,39 @@ export default function TournamentScheduleImportPage() {
               </div>
             ))}
           </div>
+
+          {preview.has_published_changes && !saveResult && (
+            <div className="rounded-xl border-2 border-red-300 bg-red-50 p-5 text-red-900">
+              <h2 className="font-bold">
+                ไฟล์นี้มีการแก้ไขตารางแข่งขันที่เผยแพร่แล้วจำนวน {preview.published_change_count} คู่
+              </h2>
+              <p className="mt-2 text-sm">
+                เมื่อยืนยัน ระบบจะเปลี่ยนคู่ที่แก้ไขเป็นสถานะ &ldquo;รอตรวจสอบการแก้ไข&rdquo;
+                และคู่ดังกล่าวจะไม่แสดงในตาราง Public จนกว่าจะเผยแพร่อีกครั้ง
+              </p>
+              <p className="mt-2 text-sm font-semibold">
+                Match Code ที่ได้รับผลกระทบ: {preview.published_match_codes.join(', ')}
+              </p>
+              <div className="mt-4 flex flex-wrap gap-3">
+                <button
+                  type="button"
+                  onClick={confirmPublishedRevisionSave}
+                  disabled={busy}
+                  className="rounded-lg bg-red-700 px-5 py-2.5 text-sm font-semibold text-white hover:bg-red-800 disabled:cursor-not-allowed disabled:bg-slate-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 focus-visible:ring-offset-2"
+                >
+                  {busy ? 'กำลังยืนยัน...' : 'ยืนยันสร้างฉบับแก้ไข'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPreview(null)}
+                  disabled={busy}
+                  className="rounded-lg border border-slate-300 px-5 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed"
+                >
+                  ยกเลิก
+                </button>
+              </div>
+            </div>
+          )}
 
           <div className="overflow-hidden rounded-xl bg-white shadow-sm ring-1 ring-slate-200">
             <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 px-5 py-4">
@@ -348,7 +435,12 @@ export default function TournamentScheduleImportPage() {
               <button
                 type="button"
                 onClick={saveImport}
-                disabled={busy || preview.summary.creatable === 0 || !!saveResult}
+                disabled={busy || preview.summary.creatable === 0 || !!saveResult || preview.has_published_changes}
+                title={
+                  preview.has_published_changes
+                    ? 'มีการแก้ไขตารางที่ Publish แล้ว — ต้องยืนยันในกรอบคำเตือนด้านบนก่อน'
+                    : undefined
+                }
                 className="rounded-lg bg-emerald-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-slate-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2"
               >
                 {busy ? 'กำลังบันทึก...' : `ยืนยันบันทึก ${preview.summary.creatable} แถว`}
@@ -384,6 +476,11 @@ export default function TournamentScheduleImportPage() {
                         >
                           {row.status.toUpperCase()} · {row.action}
                         </span>
+                        {row.requires_revision_confirmation && (
+                          <span className="mt-1 block w-fit rounded-full bg-red-100 px-2.5 py-1 text-xs font-bold text-red-800">
+                            ต้องยืนยันแก้ไขตาราง Publish แล้ว
+                          </span>
+                        )}
                       </td>
                       <td className="whitespace-nowrap px-4 py-3">
                         <div className="font-semibold text-slate-900">{row.match_code || '—'}</div>

@@ -25,15 +25,18 @@ import {
   type RawScheduleImportRow,
   type ScheduleValidationContext,
   type TeamRef,
+  type ValidatedScheduleImportRow,
   type VenueRef,
 } from '@/lib/tournament/scheduling/validateScheduleImportRow';
 
 export const dynamic = 'force-dynamic';
 
-const PUBLISHED_LOCK_MESSAGE = 'Published fixture changes require the D-28 revision confirmation workflow.';
+const PUBLISHED_REVISION_CONFIRMATION_MESSAGE =
+  'Published fixture changes require explicit revision confirmation.';
 
 interface SaveRequestBody {
   batchId?: unknown;
+  confirmPublishedRevision?: unknown;
 }
 
 interface BatchRow {
@@ -106,7 +109,19 @@ interface SaveResultSummary {
   unchanged: number;
   skipped: number;
   failed: number;
+  revisionsConfirmed: number;
   failures: SaveFailure[];
+}
+
+interface RevisionAuditEntry {
+  matchId: string;
+  matchCode: string;
+  categoryId: string;
+  stage: string;
+  previousScheduleStatus: string;
+  newScheduleStatus: string;
+  before: Record<string, unknown>;
+  after: Record<string, unknown>;
 }
 
 function asText(value: unknown): string {
@@ -146,65 +161,64 @@ export async function POST(request: NextRequest) {
   if (!batchId) {
     return NextResponse.json({ error: 'batchId is required' }, { status: 400 });
   }
+  const confirmPublishedRevision = body.confirmPublishedRevision === true;
 
   const client = getTournamentServiceClient();
 
-  // Atomic claim: only one concurrent request can flip preview -> saving.
-  const { data: claimedData, error: claimError } = await client
+  // Read-only status check first. We must NOT claim the batch (preview -> saving)
+  // before we know whether it contains unconfirmed published-fixture changes —
+  // D-28 requires the 409 confirmation-required response to leave the batch
+  // fully untouched and still eligible for a later confirmed Save.
+  const { data: batchData, error: batchError } = await client
     .from('tournament_schedule_batches')
-    .update({ status: 'saving' })
+    .select('id, tournament_id, file_name, status, total_rows, valid_rows, warning_rows, error_rows, save_result')
     .eq('id', batchId)
     .eq('batch_type', 'fixture_import')
-    .eq('status', 'preview')
-    .select('id, tournament_id, file_name, status, total_rows, valid_rows, warning_rows, error_rows, save_result')
     .maybeSingle();
 
-  if (claimError) {
-    console.error('[SCHEDULE_IMPORT_SAVE] claim failed:', claimError.message);
+  if (batchError) {
+    console.error('[SCHEDULE_IMPORT_SAVE] batch query failed:', batchError.message);
     return NextResponse.json({ error: 'โหลด Import Batch ไม่สำเร็จ' }, { status: 500 });
   }
+  if (!batchData) {
+    return NextResponse.json({ error: 'ไม่พบ Import Batch' }, { status: 404 });
+  }
 
-  if (!claimedData) {
-    // Claim failed: batch is missing, or already saving/saved/failed/rolled_back.
-    const { data: currentData, error: currentError } = await client
-      .from('tournament_schedule_batches')
-      .select('id, tournament_id, file_name, status, total_rows, valid_rows, warning_rows, error_rows, save_result')
-      .eq('id', batchId)
-      .eq('batch_type', 'fixture_import')
-      .maybeSingle();
+  const batch = batchData as BatchRow;
 
-    if (currentError) {
-      return NextResponse.json({ error: 'โหลด Import Batch ไม่สำเร็จ' }, { status: 500 });
-    }
-    if (!currentData) {
-      return NextResponse.json({ error: 'ไม่พบ Import Batch' }, { status: 404 });
-    }
-
-    const current = currentData as BatchRow;
-    if (current.status === 'saved') {
-      // Retry after success: return the same result, do not write again.
-      return NextResponse.json({
-        data: {
-          batchId,
-          status: 'saved',
-          idempotent: true,
-          ...(current.save_result || { created: 0, updated: 0, unchanged: 0, skipped: 0, failed: 0, failures: [] }),
-        },
-      });
-    }
-    if (current.status === 'saving') {
-      return NextResponse.json({ error: 'Import Batch นี้กำลังถูกบันทึกโดยคำขออื่นอยู่' }, { status: 409 });
-    }
-    if (current.status === 'failed') {
-      return NextResponse.json(
-        { error: 'Import Batch นี้บันทึกไม่สำเร็จก่อนหน้านี้ กรุณาสร้าง Batch ใหม่' },
-        { status: 409 }
-      );
-    }
+  if (batch.status === 'saved') {
+    // Retry after success: return the same result, do not write again.
+    return NextResponse.json({
+      data: {
+        batchId,
+        status: 'saved',
+        idempotent: true,
+        ...(batch.save_result || {
+          created: 0,
+          updated: 0,
+          unchanged: 0,
+          skipped: 0,
+          failed: 0,
+          revisionsConfirmed: 0,
+          failures: [],
+        }),
+      },
+    });
+  }
+  if (batch.status === 'saving') {
+    return NextResponse.json({ error: 'Import Batch นี้กำลังถูกบันทึกโดยคำขออื่นอยู่' }, { status: 409 });
+  }
+  if (batch.status === 'failed') {
+    return NextResponse.json(
+      { error: 'Import Batch นี้บันทึกไม่สำเร็จก่อนหน้านี้ กรุณาสร้าง Batch ใหม่' },
+      { status: 409 }
+    );
+  }
+  if (batch.status !== 'preview') {
     return NextResponse.json({ error: 'Import Batch นี้ไม่พร้อมบันทึก' }, { status: 409 });
   }
 
-  const batch = claimedData as BatchRow;
+  let claimed = false;
 
   try {
     const [
@@ -282,7 +296,6 @@ export async function POST(request: NextRequest) {
 
     if (queryError || !tournamentResult.data) {
       console.error('[SCHEDULE_IMPORT_SAVE] reference query failed:', queryError?.message);
-      await markBatchFailed(client, batchId, queryError?.message || 'reference query failed');
       return NextResponse.json({ error: 'โหลดข้อมูลสำหรับบันทึกไม่สำเร็จ' }, { status: 500 });
     }
 
@@ -414,20 +427,105 @@ export async function POST(request: NextRequest) {
       drawSelectedConfigsByCategoryCode,
     };
 
+    // Revalidate every persisted row against the CURRENT database state (not
+    // Preview's stale snapshot) exactly once, before deciding whether this
+    // Save is blocked by unconfirmed published-fixture changes.
     const seen = createScheduleBatchSeen();
+    const revalidatedByRowId = new Map<string, ValidatedScheduleImportRow>();
+    for (const importRow of importRows) {
+      if (importRow.status === 'error' || importRow.action === 'skip') continue;
+      const storedNormalized = importRow.raw_payload?.normalized;
+      if (!storedNormalized) continue;
+      const revalidated = validateScheduleImportRow(
+        storedNormalized as unknown as RawScheduleImportRow,
+        importRow.row_no,
+        context,
+        seen
+      );
+      revalidatedByRowId.set(importRow.id, revalidated);
+    }
+
+    const publishedChangeRows = importRows.filter((row) => {
+      const revalidated = revalidatedByRowId.get(row.id);
+      return revalidated && revalidated.status !== 'error' && revalidated.requiresRevisionConfirmation;
+    });
+
+    if (publishedChangeRows.length > 0 && !confirmPublishedRevision) {
+      return NextResponse.json(
+        {
+          error: PUBLISHED_REVISION_CONFIRMATION_MESSAGE,
+          code: 'PUBLISHED_REVISION_CONFIRMATION_REQUIRED',
+          publishedMatchCodes: publishedChangeRows.map((row) => upper(row.match_code || '')),
+        },
+        { status: 409 }
+      );
+    }
+
+    // Atomic claim: only one concurrent request can flip preview -> saving.
+    const { data: claimedData, error: claimError } = await client
+      .from('tournament_schedule_batches')
+      .update({ status: 'saving' })
+      .eq('id', batchId)
+      .eq('batch_type', 'fixture_import')
+      .eq('status', 'preview')
+      .select('id')
+      .maybeSingle();
+
+    if (claimError) {
+      console.error('[SCHEDULE_IMPORT_SAVE] claim failed:', claimError.message);
+      return NextResponse.json({ error: 'โหลด Import Batch ไม่สำเร็จ' }, { status: 500 });
+    }
+
+    if (!claimedData) {
+      // Someone else claimed/saved this batch between our read and this attempt.
+      const { data: currentData } = await client
+        .from('tournament_schedule_batches')
+        .select('status, save_result')
+        .eq('id', batchId)
+        .maybeSingle();
+      const current = currentData as { status: string; save_result: SaveResultSummary | null } | null;
+      if (current?.status === 'saved') {
+        return NextResponse.json({
+          data: {
+            batchId,
+            status: 'saved',
+            idempotent: true,
+            ...(current.save_result || {
+              created: 0,
+              updated: 0,
+              unchanged: 0,
+              skipped: 0,
+              failed: 0,
+              revisionsConfirmed: 0,
+              failures: [],
+            }),
+          },
+        });
+      }
+      return NextResponse.json({ error: 'Import Batch นี้กำลังถูกบันทึกโดยคำขออื่นอยู่' }, { status: 409 });
+    }
+
+    claimed = true;
+
     const maxVersionByKey = new Map<string, number>();
     versionRows.forEach((row) => {
       const key = `${row.category_id}|${row.stage}`;
       maxVersionByKey.set(key, Math.max(maxVersionByKey.get(key) || 0, row.version));
     });
-    const affectedCategoryStages = new Set<string>();
+    // 'validated' unless a confirmed published revision touches that key, in
+    // which case the whole (category, stage) version for this batch is
+    // 'revision_required' — it represents a batch of changes that includes at
+    // least one published fixture now awaiting re-publish.
+    const categoryStageStatus = new Map<string, 'validated' | 'revision_required'>();
 
     let created = 0;
     let updated = 0;
     let unchanged = 0;
     let skipped = 0;
     let failed = 0;
+    let revisionsConfirmed = 0;
     const failures: SaveFailure[] = [];
+    const revisionAuditEntries: RevisionAuditEntry[] = [];
 
     for (const importRow of importRows) {
       if (importRow.status === 'error' || importRow.action === 'skip') {
@@ -442,20 +540,16 @@ export async function POST(request: NextRequest) {
         continue;
       }
 
-      // Revalidate against current database state — the same rules Preview
-      // applied, re-run here because the database may have changed since Preview.
-      const revalidated = validateScheduleImportRow(
-        storedNormalized as unknown as RawScheduleImportRow,
-        importRow.row_no,
-        context,
-        seen
-      );
-      if (revalidated.status === 'error') {
+      const revalidated = revalidatedByRowId.get(importRow.id);
+      if (!revalidated || revalidated.status === 'error') {
         failed += 1;
         failures.push({
           row: importRow.row_no,
-          match_code: revalidated.match_code,
-          error: revalidated.messages.filter((message) => message.severity === 'error').map((message) => message.message).join('; '),
+          match_code: revalidated?.match_code || importRow.match_code,
+          error: (revalidated?.messages || [])
+            .filter((message) => message.severity === 'error')
+            .map((message) => message.message)
+            .join('; ') || 'Revalidation failed',
         });
         continue;
       }
@@ -491,13 +585,18 @@ export async function POST(request: NextRequest) {
         continue;
       }
 
-      if (existing && existing.schedule_status === 'published') {
+      const isConfirmedPublishedRevision = existing?.schedule_status === 'published';
+      // Safety net: this branch should be unreachable when !confirmPublishedRevision
+      // because we already returned 409 above for any such row. Kept as a guard
+      // against a row appearing here that the pre-check didn't see (should not
+      // happen given both passes share the same revalidatedByRowId map).
+      if (isConfirmedPublishedRevision && !confirmPublishedRevision) {
         failed += 1;
         failures.push({
           row: importRow.row_no,
           match_code: normalized.match_code,
-          error: PUBLISHED_LOCK_MESSAGE,
-          code: 'E_PUBLISHED_LOCKED',
+          error: PUBLISHED_REVISION_CONFIRMATION_MESSAGE,
+          code: 'PUBLISHED_REVISION_CONFIRMATION_REQUIRED',
         });
         continue;
       }
@@ -526,6 +625,7 @@ export async function POST(request: NextRequest) {
       });
 
       const now = new Date().toISOString();
+      const nextScheduleStatus = isConfirmedPublishedRevision ? 'revision_required' : 'validated';
       const payload = {
         tournament_id: batch.tournament_id,
         category_id: category.id,
@@ -550,10 +650,12 @@ export async function POST(request: NextRequest) {
         status: normalized.status,
         note: normalized.note || null,
         schedule_batch_id: batchId,
-        schedule_status: 'validated',
+        schedule_status: nextScheduleStatus,
         updated_by: auth.userId || null,
         updated_at: now,
       };
+
+      const categoryStageKey = `${category.id}|${normalized.stage}`;
 
       if (existing) {
         const { data: updatedMatch, error: updateError } = await client
@@ -574,6 +676,23 @@ export async function POST(request: NextRequest) {
           .update({ action: 'update', matched_match_id: updatedMatch.id })
           .eq('id', importRow.id);
         updated += 1;
+
+        if (isConfirmedPublishedRevision) {
+          revisionsConfirmed += 1;
+          revisionAuditEntries.push({
+            matchId: updatedMatch.id,
+            matchCode: normalized.match_code,
+            categoryId: category.id,
+            stage: normalized.stage,
+            previousScheduleStatus: 'published',
+            newScheduleStatus: 'revision_required',
+            before: existing as unknown as Record<string, unknown>,
+            after: payload,
+          });
+          categoryStageStatus.set(categoryStageKey, 'revision_required');
+        } else if (!categoryStageStatus.has(categoryStageKey)) {
+          categoryStageStatus.set(categoryStageKey, 'validated');
+        }
       } else {
         const { data: createdMatch, error: createError } = await client
           .from('tournament_matches')
@@ -592,36 +711,46 @@ export async function POST(request: NextRequest) {
           .update({ action: 'create', matched_match_id: createdMatch.id })
           .eq('id', importRow.id);
         created += 1;
+        if (!categoryStageStatus.has(categoryStageKey)) {
+          categoryStageStatus.set(categoryStageKey, 'validated');
+        }
       }
-
-      affectedCategoryStages.add(`${category.id}|${normalized.stage}`);
     }
 
-    // Create schedule version records for categories/stages touched by this batch.
-    // Never published automatically; never created for unchanged-only rows or
-    // rows rejected under the published-fixture lock.
-    const versionInserts = Array.from(affectedCategoryStages).map((key) => {
+    // Create schedule version records for categories/stages touched by this
+    // batch. Never published automatically; never created for unchanged-only
+    // rows. A (category, stage) touched by a confirmed published revision
+    // gets a 'revision_required' version instead of 'validated'.
+    const versionInserts = Array.from(categoryStageStatus.entries()).map(([key, status]) => {
       const [categoryId, stage] = key.split('|');
       const nextVersion = (maxVersionByKey.get(key) || 0) + 1;
       return {
         category_id: categoryId,
         stage,
         version: nextVersion,
-        status: 'validated',
+        status,
         batch_id: batchId,
         note: `Schedule import batch ${batchId}`,
       };
     });
 
+    const versionIdByKey = new Map<string, string>();
     if (versionInserts.length > 0) {
-      const { error: versionInsertError } = await client.from('tournament_schedule_versions').insert(versionInserts);
+      const { data: insertedVersions, error: versionInsertError } = await client
+        .from('tournament_schedule_versions')
+        .insert(versionInserts)
+        .select('id, category_id, stage');
       if (versionInsertError) {
         console.error('[SCHEDULE_IMPORT_SAVE] version insert failed:', versionInsertError.message);
         // Non-fatal: matches are already saved. Log and continue to finalize the batch.
+      } else {
+        (insertedVersions || []).forEach((row: { id: string; category_id: string; stage: string }) => {
+          versionIdByKey.set(`${row.category_id}|${row.stage}`, row.id);
+        });
       }
     }
 
-    const saveResult: SaveResultSummary = { created, updated, unchanged, skipped, failed, failures };
+    const saveResult: SaveResultSummary = { created, updated, unchanged, skipped, failed, revisionsConfirmed, failures };
     const savedAt = new Date().toISOString();
     const { error: finishError } = await client
       .from('tournament_schedule_batches')
@@ -651,6 +780,29 @@ export async function POST(request: NextRequest) {
       newData: saveResult,
     });
 
+    // Per-match audit trail for every confirmed published-fixture revision —
+    // a batch-level summary alone is not sufficient evidence of what changed.
+    const confirmationTimestamp = new Date().toISOString();
+    for (const entry of revisionAuditEntries) {
+      const scheduleVersionId = versionIdByKey.get(`${entry.categoryId}|${entry.stage}`) || null;
+      await logTournamentAdminAction({
+        tournamentId: batch.tournament_id,
+        admin: { id: auth.userId, email: auth.email },
+        action: 'schedule.import.confirm_published_revision',
+        entityType: 'tournament_match',
+        entityId: entry.matchId,
+        entityLabel: entry.matchCode,
+        oldData: { schedule_status: entry.previousScheduleStatus, match: entry.before },
+        newData: {
+          schedule_status: entry.newScheduleStatus,
+          match: entry.after,
+          batch_id: batchId,
+          schedule_version_id: scheduleVersionId,
+          confirmed_at: confirmationTimestamp,
+        },
+      });
+    }
+
     return NextResponse.json({
       data: {
         batchId,
@@ -661,7 +813,9 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     console.error('[SCHEDULE_IMPORT_SAVE] unexpected error:', message);
-    await markBatchFailed(client, batchId, message);
+    if (claimed) {
+      await markBatchFailed(client, batchId, message);
+    }
     return NextResponse.json({ error: 'เกิดข้อผิดพลาดระหว่างบันทึกตารางแข่งขัน' }, { status: 500 });
   }
 }
