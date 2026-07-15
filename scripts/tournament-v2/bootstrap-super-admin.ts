@@ -1,16 +1,53 @@
 import { loadEnvConfig } from '@next/env';
-import { getTournamentServiceClient } from '@/lib/tournament/db/supabase-tournament';
+import { getTournamentServiceClient } from '../../lib/tournament/db/supabase-tournament';
+
+const args = process.argv.slice(2);
+
+// Handle --help before loading env
+if (args.includes('--help') || args.includes('-h')) {
+  console.log(`
+Tournament Super Admin Bootstrap
+
+Usage: npm run bootstrap:tournament-super-admin
+
+Required environment variables (set in .env.local, do not commit):
+  TOURNAMENT_BOOTSTRAP_ADMIN_USER_ID    - User ID from League Auth (find in Supabase Auth dashboard)
+  TOURNAMENT_BOOTSTRAP_ADMIN_EMAIL      - User email
+  TOURNAMENT_SUPABASE_URL               - Tournament Supabase project URL
+  TOURNAMENT_SUPABASE_SERVICE_ROLE_KEY  - Service role key (full permissions)
+
+Example .env.local entry:
+  TOURNAMENT_BOOTSTRAP_ADMIN_USER_ID=550e8400-e29b-41d4-a716-446655440000
+  TOURNAMENT_BOOTSTRAP_ADMIN_EMAIL=admin@example.com
+  TOURNAMENT_SUPABASE_URL=https://xxx.supabase.co
+  TOURNAMENT_SUPABASE_SERVICE_ROLE_KEY=eyJh...
+
+This script:
+1. Creates a tournament_user_profiles row for the user
+2. Creates a tournament_role_assignments row with role='tournament_super_admin'
+3. Idempotent: safe to re-run (no error if already exists)
+`);
+  process.exit(0);
+}
 
 loadEnvConfig(process.cwd());
 
 const userId = process.env.TOURNAMENT_BOOTSTRAP_ADMIN_USER_ID;
 const email = process.env.TOURNAMENT_BOOTSTRAP_ADMIN_EMAIL;
+const supabaseUrl = process.env.TOURNAMENT_SUPABASE_URL;
+const serviceRoleKey = process.env.TOURNAMENT_SUPABASE_SERVICE_ROLE_KEY;
 
-if (!userId || !email) {
-  console.error(
-    '[BOOTSTRAP] Error: TOURNAMENT_BOOTSTRAP_ADMIN_USER_ID and TOURNAMENT_BOOTSTRAP_ADMIN_EMAIL env vars are required'
-  );
+const missingVars: string[] = [];
+if (!userId) missingVars.push('TOURNAMENT_BOOTSTRAP_ADMIN_USER_ID');
+if (!email) missingVars.push('TOURNAMENT_BOOTSTRAP_ADMIN_EMAIL');
+if (!supabaseUrl) missingVars.push('TOURNAMENT_SUPABASE_URL');
+if (!serviceRoleKey) missingVars.push('TOURNAMENT_SUPABASE_SERVICE_ROLE_KEY');
+
+if (missingVars.length > 0) {
+  console.error('[BOOTSTRAP] Error: Missing required environment variables:');
+  missingVars.forEach((v) => console.error(`  - ${v}`));
   console.error('[BOOTSTRAP] Set them in .env.local (do not commit)');
+  console.error('[BOOTSTRAP] Run: npm run bootstrap:tournament-super-admin -- --help');
   process.exit(1);
 }
 
