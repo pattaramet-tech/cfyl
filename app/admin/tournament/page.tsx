@@ -12,12 +12,21 @@ interface TournamentSummary {
   end_date: string | null;
 }
 
+interface WorkflowCard {
+  href: string;
+  icon: string;
+  title: string;
+  description: string;
+  badge: string;
+  external?: boolean;
+}
+
 function authHeader(): Record<string, string> {
   const token = typeof window === 'undefined' ? null : localStorage.getItem('admin_token');
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
-const WORKFLOWS = [
+const WORKFLOWS: WorkflowCard[] = [
   {
     href: '/admin/tournament/setup',
     icon: '⚙️',
@@ -47,7 +56,7 @@ const WORKFLOWS = [
     badge: 'Public',
     external: true,
   },
-] as const;
+];
 
 export default function TournamentV2DashboardPage() {
   const [tournaments, setTournaments] = useState<TournamentSummary[]>([]);
