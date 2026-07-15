@@ -53,6 +53,7 @@ const NAV_GROUPS: NavGroup[] = [
       { href: '/admin/tournament/setup', label: 'Setup & Venues', icon: '⚙️' },
       { href: '/admin/tournament/meeting-draw', label: 'Meeting Draw', icon: '🎲' },
       { href: '/admin/tournament/schedule/import', label: 'Import Schedule', icon: '📅' },
+      { href: '/admin/tournament/qualification-draw', label: 'บันทึกผลจับฉลาก', icon: '🎟️' },
     ],
   },
   {
