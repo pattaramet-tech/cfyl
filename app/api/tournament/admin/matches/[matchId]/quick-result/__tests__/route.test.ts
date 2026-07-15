@@ -91,7 +91,7 @@ function createMockClient(db: Db) {
 }
 
 const state = vi.hoisted(() => ({ client: null as ReturnType<typeof createMockClient> | null }));
-const authState = vi.hoisted(() => ({ authorized: true as boolean }));
+const authState = vi.hoisted(() => ({ authorized: true as boolean, userId: 'operator-1' as string }));
 
 vi.mock('@/lib/tournament/db/supabase-tournament', () => ({
   getTournamentServiceClient: () => state.client,
@@ -101,7 +101,7 @@ vi.mock('@/lib/tournament/services/auth', () => ({
   requireTournamentResultOperator: async () => ({
     authenticated: true,
     authorized: authState.authorized,
-    userId: 'operator-1',
+    userId: authState.userId,
     email: 'operator@test.com',
     error: authState.authorized ? undefined : 'Not authorized',
   }),
@@ -162,21 +162,34 @@ const previewBody = {
   preview: true,
 };
 
-const submitBody = {
-  tournament_slug: 'cfyl-2026',
-  venue_id: 'venue-1',
-  home_score: 2,
-  away_score: 1,
-  expected_version: 3,
-  idempotency_key: 'idem-key-1',
-  session_id: 'session-abc',
-  device_metadata: { user_agent: 'test-agent', platform: 'test' },
-};
+function submitBodyWithToken(previewToken: string, overrides: Record<string, unknown> = {}) {
+  return {
+    tournament_slug: 'cfyl-2026',
+    venue_id: 'venue-1',
+    home_score: 2,
+    away_score: 1,
+    expected_version: 3,
+    idempotency_key: 'idem-key-1',
+    preview_token: previewToken,
+    session_id: 'session-abc',
+    device_metadata: { user_agent: 'test-agent', platform: 'test' },
+    ...overrides,
+  };
+}
+
+async function getPreviewToken(matchId = 'match-1', body: Record<string, unknown> = previewBody): Promise<string> {
+  const response = await POST(makeRequest(body), makeParams(matchId));
+  const payload = await response.json();
+  if (response.status !== 200) throw new Error(`preview failed: ${JSON.stringify(payload)}`);
+  return payload.data.preview_token as string;
+}
 
 describe('POST /api/tournament/admin/matches/[matchId]/quick-result', () => {
   beforeEach(() => {
     state.client = null;
     authState.authorized = true;
+    authState.userId = 'operator-1';
+    process.env.TOURNAMENT_QUICK_RESULT_PREVIEW_SECRET = 'test-secret-do-not-use-in-production';
   });
 
   it('returns 403 for an unauthorized caller', async () => {
@@ -184,13 +197,13 @@ describe('POST /api/tournament/admin/matches/[matchId]/quick-result', () => {
     const db = buildDb();
     state.client = createMockClient(db);
 
-    const response = await POST(makeRequest(submitBody), makeParams('match-1'));
+    const response = await POST(makeRequest(submitBodyWithToken('irrelevant')), makeParams('match-1'));
 
     expect(response.status).toBe(403);
     expect(db.tournament_result_submissions).toHaveLength(0);
   });
 
-  it('preview writes no final submission', async () => {
+  it('preview writes no final submission and returns a signed preview token', async () => {
     const db = buildDb();
     state.client = createMockClient(db);
 
@@ -200,18 +213,31 @@ describe('POST /api/tournament/admin/matches/[matchId]/quick-result', () => {
     expect(response.status).toBe(200);
     expect(body.data.preview).toBe(true);
     expect(body.data.home_team_name).toBe('Home School');
+    expect(body.data.preview_token).toEqual(expect.any(String));
+    expect(body.data.preview_expires_at).toEqual(expect.any(String));
     expect(db.tournament_result_submissions).toHaveLength(0);
     expect(db.tournament_matches[0].version).toBe(3);
   });
 
-  it('valid preview followed by submit succeeds and remains provisional', async () => {
+  it('submit without a preview token is rejected (409 QUICK_RESULT_PREVIEW_REQUIRED)', async () => {
     const db = buildDb();
     state.client = createMockClient(db);
 
-    const previewResponse = await POST(makeRequest(previewBody), makeParams('match-1'));
-    expect(previewResponse.status).toBe(200);
+    const response = await POST(makeRequest(submitBodyWithToken('')), makeParams('match-1'));
+    const body = await response.json();
 
-    const submitResponse = await POST(makeRequest(submitBody), makeParams('match-1'));
+    expect(response.status).toBe(409);
+    expect(body.code).toBe('QUICK_RESULT_PREVIEW_REQUIRED');
+    expect(db.tournament_result_submissions).toHaveLength(0);
+    expect(db.tournament_matches[0].version).toBe(3);
+  });
+
+  it('valid preview followed by submit with the token succeeds and remains provisional', async () => {
+    const db = buildDb();
+    state.client = createMockClient(db);
+
+    const token = await getPreviewToken();
+    const submitResponse = await POST(makeRequest(submitBodyWithToken(token)), makeParams('match-1'));
     const submitPayload = await submitResponse.json();
 
     expect(submitResponse.status).toBe(200);
@@ -220,12 +246,83 @@ describe('POST /api/tournament/admin/matches/[matchId]/quick-result', () => {
     expect(db.tournament_matches[0].result_workflow_status).toBe('not_started');
   });
 
+  it('rejects a tampered preview token', async () => {
+    const db = buildDb();
+    state.client = createMockClient(db);
+
+    const token = await getPreviewToken();
+    const [payload] = token.split('.');
+    const tampered = `${payload}.tamperedsignature`;
+
+    const response = await POST(makeRequest(submitBodyWithToken(tampered)), makeParams('match-1'));
+    const body = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(body.code).toBe('QUICK_RESULT_PREVIEW_INVALID');
+    expect(db.tournament_result_submissions).toHaveLength(0);
+  });
+
+  it('rejects a preview token issued for a different match', async () => {
+    const db = buildDb();
+    db.tournament_matches.push({ ...db.tournament_matches[0], id: 'match-2', match_code: 'B-U12-GA-002' });
+    state.client = createMockClient(db);
+
+    const tokenForMatch2 = await getPreviewToken('match-2');
+    const response = await POST(makeRequest(submitBodyWithToken(tokenForMatch2)), makeParams('match-1'));
+    const body = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(body.code).toBe('QUICK_RESULT_PREVIEW_MISMATCH');
+  });
+
+  it('rejects a preview token issued for a different venue', async () => {
+    const db = buildDb();
+    state.client = createMockClient(db);
+
+    const token = await getPreviewToken('match-1', { ...previewBody, venue_id: 'venue-1' });
+    const response = await POST(
+      makeRequest(submitBodyWithToken(token, { venue_id: 'venue-OTHER' })),
+      makeParams('match-1')
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(body.code).toBe('QUICK_RESULT_PREVIEW_MISMATCH');
+  });
+
+  it('rejects a home-score edit made after preview', async () => {
+    const db = buildDb();
+    state.client = createMockClient(db);
+
+    const token = await getPreviewToken();
+    const response = await POST(makeRequest(submitBodyWithToken(token, { home_score: 9 })), makeParams('match-1'));
+    const body = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(body.code).toBe('QUICK_RESULT_PREVIEW_MISMATCH');
+  });
+
+  it('rejects an unauthorized actor using another actor’s preview token', async () => {
+    const db = buildDb();
+    state.client = createMockClient(db);
+
+    const token = await getPreviewToken();
+    authState.userId = 'operator-INTRUDER';
+    const response = await POST(makeRequest(submitBodyWithToken(token)), makeParams('match-1'));
+    const body = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(body.code).toBe('QUICK_RESULT_PREVIEW_MISMATCH');
+    expect(db.tournament_result_submissions).toHaveLength(0);
+  });
+
   it('returns the stored result for a duplicate idempotency key with the same payload', async () => {
     const db = buildDb();
     state.client = createMockClient(db);
 
-    await POST(makeRequest(submitBody), makeParams('match-1'));
-    const second = await POST(makeRequest(submitBody), makeParams('match-1'));
+    const token = await getPreviewToken();
+    await POST(makeRequest(submitBodyWithToken(token)), makeParams('match-1'));
+    const second = await POST(makeRequest(submitBodyWithToken(token)), makeParams('match-1'));
     const secondBody = await second.json();
 
     expect(second.status).toBe(200);
@@ -237,18 +334,21 @@ describe('POST /api/tournament/admin/matches/[matchId]/quick-result', () => {
     const db = buildDb();
     state.client = createMockClient(db);
 
-    await POST(makeRequest(submitBody), makeParams('match-1'));
-    const response = await POST(makeRequest({ ...submitBody, home_score: 9 }), makeParams('match-1'));
+    const token = await getPreviewToken();
+    await POST(makeRequest(submitBodyWithToken(token)), makeParams('match-1'));
+    const response = await POST(makeRequest(submitBodyWithToken(token, { home_score: 9 })), makeParams('match-1'));
 
     expect(response.status).toBe(400);
     expect(db.tournament_result_submissions).toHaveLength(1);
   });
 
-  it('returns 409 for a stale match version', async () => {
-    const db = buildDb({ version: 7 });
+  it('returns 409 for a stale match version even with a structurally valid token', async () => {
+    const db = buildDb();
     state.client = createMockClient(db);
+    const token = await getPreviewToken();
+    db.tournament_matches[0].version = 7; // changed after Preview
 
-    const response = await POST(makeRequest(submitBody), makeParams('match-1'));
+    const response = await POST(makeRequest(submitBodyWithToken(token)), makeParams('match-1'));
     const body = await response.json();
 
     expect(response.status).toBe(409);
@@ -260,8 +360,9 @@ describe('POST /api/tournament/admin/matches/[matchId]/quick-result', () => {
     const db = buildDb();
     state.client = createMockClient(db);
 
-    const first = await POST(makeRequest({ ...submitBody, idempotency_key: 'key-A' }), makeParams('match-1'));
-    const second = await POST(makeRequest({ ...submitBody, idempotency_key: 'key-B' }), makeParams('match-1'));
+    const token = await getPreviewToken();
+    const first = await POST(makeRequest(submitBodyWithToken(token, { idempotency_key: 'key-A' })), makeParams('match-1'));
+    const second = await POST(makeRequest(submitBodyWithToken(token, { idempotency_key: 'key-B' })), makeParams('match-1'));
 
     expect(first.status).toBe(200);
     expect(second.status).toBe(409);
@@ -272,7 +373,8 @@ describe('POST /api/tournament/admin/matches/[matchId]/quick-result', () => {
     const db = buildDb();
     state.client = createMockClient(db);
 
-    await POST(makeRequest(submitBody), makeParams('match-1'));
+    const token = await getPreviewToken();
+    await POST(makeRequest(submitBodyWithToken(token)), makeParams('match-1'));
 
     const entry = db.tournament_audit_logs.find((log) => log.action === 'tournament.quick_result.submit');
     expect(entry).toBeDefined();
@@ -288,18 +390,23 @@ describe('POST /api/tournament/admin/matches/[matchId]/quick-result', () => {
     const db = buildDb({ away_team_id: null });
     state.client = createMockClient(db);
 
-    const response = await POST(makeRequest(submitBody), makeParams('match-1'));
-    const body = await response.json();
-
-    expect(response.status).toBe(400);
-    expect(body.code).toBe('AWAY_TEAM_UNRESOLVED');
+    // Preview itself is blocked too — an unresolved placeholder is
+    // ineligible from the start, so there is no token to obtain.
+    const previewResponse = await POST(makeRequest(previewBody), makeParams('match-1'));
+    const previewPayload = await previewResponse.json();
+    expect(previewResponse.status).toBe(400);
+    expect(previewPayload.code).toBe('AWAY_TEAM_UNRESOLVED');
   });
 
-  it('rejects a wrong venue for the match', async () => {
+  it('rejects a wrong venue for the match at submit time', async () => {
     const db = buildDb();
     state.client = createMockClient(db);
 
-    const response = await POST(makeRequest({ ...submitBody, venue_id: 'venue-OTHER' }), makeParams('match-1'));
+    const token = await getPreviewToken();
+    const response = await POST(
+      makeRequest(submitBodyWithToken(token, { venue_id: 'venue-OTHER' })),
+      makeParams('match-1')
+    );
     expect(response.status).toBe(400);
   });
 
@@ -307,7 +414,8 @@ describe('POST /api/tournament/admin/matches/[matchId]/quick-result', () => {
     const db = buildDb();
     state.client = createMockClient(db);
 
-    await POST(makeRequest(submitBody), makeParams('match-1'));
+    const token = await getPreviewToken();
+    await POST(makeRequest(submitBodyWithToken(token)), makeParams('match-1'));
 
     expect(db.tournament_matches[0].result_workflow_status).not.toBe('published');
     expect(db.tournament_match_goals).toBeUndefined();

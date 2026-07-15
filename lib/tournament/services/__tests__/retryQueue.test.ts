@@ -28,6 +28,7 @@ const baseItem = {
   homeScore: 2,
   awayScore: 1,
   expectedVersion: 3,
+  previewToken: 'payload.signature',
 };
 
 describe('retryQueue', () => {
@@ -35,6 +36,14 @@ describe('retryQueue', () => {
     const queue = enqueueRetry(baseItem);
     expect(queue).toHaveLength(1);
     expect(queue[0].status).toBe('waiting');
+  });
+
+  it('preserves the original preview token together with the payload and idempotency key', () => {
+    const queue = enqueueRetry(baseItem);
+    expect(queue[0].previewToken).toBe('payload.signature');
+    expect(queue[0].idempotencyKey).toBe('idem-1');
+    expect(queue[0].homeScore).toBe(2);
+    expect(queue[0].awayScore).toBe(1);
   });
 
   it('reuses the same idempotency key when re-enqueued instead of duplicating', () => {

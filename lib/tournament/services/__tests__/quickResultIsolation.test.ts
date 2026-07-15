@@ -65,10 +65,36 @@ describe('Quick Result — public and downstream isolation (source-level)', () =
     expect(source).not.toContain('เผยแพร่ผล');
   });
 
-  it('Submit is only reachable through the Preview state in the Matchday page (client-enforced flow)', () => {
+  it('the Submit button is unavailable in the UI without a valid preview token (client-side UX, not the security boundary)', () => {
     const source = readSource('app/admin/tournament/venues/[venueId]/matchday/page.tsx');
-    // The submit/confirm button only renders inside the `preview && !previewStale` branch.
-    expect(source).toMatch(/!preview \|\| previewStale \?[\s\S]*ดูตัวอย่าง[\s\S]*:\s*\([\s\S]*ยืนยันส่งผลเบื้องต้น/);
+    // The submit/confirm button only renders inside the
+    // `preview && !previewStale && previewToken` branch.
+    expect(source).toMatch(/!preview \|\| previewStale \|\| !previewToken \?[\s\S]*ดูตัวอย่าง[\s\S]*:\s*\([\s\S]*ยืนยันส่งผลเบื้องต้น/);
+  });
+
+  it('mandatory Preview is enforced server-side: submitQuickResult verifies a signed preview token, not merely trusting a boolean', () => {
+    const source = readSource('lib/tournament/services/quickResult.ts');
+    expect(source).toContain('QUICK_RESULT_PREVIEW_REQUIRED');
+    expect(source).toContain('verifyPreviewToken(params.previewToken)');
+    expect(source).toContain('QUICK_RESULT_PREVIEW_MISMATCH');
+    // The mismatch check binds tournament, match, venue, both scores, the
+    // match version, and the actor — not just "a token was present".
+    expect(source).toMatch(/claims\.tournamentId === params\.tournamentId/);
+    expect(source).toMatch(/claims\.matchId === params\.matchId/);
+    expect(source).toMatch(/claims\.venueId === params\.venueId/);
+    expect(source).toMatch(/claims\.homeScore === homeScore/);
+    expect(source).toMatch(/claims\.awayScore === awayScore/);
+    expect(source).toMatch(/claims\.matchVersion === params\.expectedVersion/);
+    expect(source).toMatch(/claims\.actorUserId === params\.actorUserId/);
+  });
+
+  it('the preview token secret is read lazily, never at module load, so a missing secret cannot break build-time page compilation', () => {
+    const source = readSource('lib/tournament/services/previewToken.ts');
+    // getSecret() must be called from inside functions (issue/verify), not
+    // as a top-level `if (!secret) throw` at module scope.
+    expect(source).not.toMatch(/^const secret = process\.env/m);
+    expect(source).not.toMatch(/^if \(!.*secret.*\) throw/m);
+    expect(source).toContain('function getSecret()');
   });
 });
 
