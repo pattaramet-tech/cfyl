@@ -18,8 +18,19 @@ interface ScheduleMatch {
   match_number: string | number;
 }
 
+interface ScheduleResponse {
+  tournament_slug: string;
+  status: string;
+  is_official: boolean;
+  source: string;
+  competition_dates: { start: string; end: string };
+  total_matches: number;
+  data: ScheduleMatch[];
+}
+
 export default function ScheduleDisplayPage() {
   const [matches, setMatches] = useState<ScheduleMatch[]>([]);
+  const [scheduleMetadata, setScheduleMetadata] = useState<ScheduleResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [filterVenue, setFilterVenue] = useState('');
@@ -42,13 +53,15 @@ export default function ScheduleDisplayPage() {
           throw new Error(`Failed to load schedule: ${res.status}`);
         }
 
-        const data = await res.json();
+        const data: ScheduleResponse = await res.json();
         setMatches(data.data || []);
+        setScheduleMetadata(data);
         setError('');
       } catch (err) {
         console.error('Failed to load schedule:', err);
         setError(err instanceof Error ? err.message : 'Failed to load schedule');
         setMatches([]);
+        setScheduleMetadata(null);
       } finally {
         setLoading(false);
       }
@@ -65,6 +78,9 @@ export default function ScheduleDisplayPage() {
 
   const handleExportCSV = () => {
     const rows: (string | number)[][] = [
+      ['Schedule Status', 'Official', 'Source', ''],
+      [scheduleMetadata?.status || 'unknown', scheduleMetadata?.is_official ? 'YES' : 'NO', scheduleMetadata?.source || 'unknown', ''],
+      [''],
       ['Date', 'Time', 'Category', 'Venue', 'Court', 'Home Team', 'Away Team', 'Round'],
     ];
 
@@ -102,7 +118,33 @@ export default function ScheduleDisplayPage() {
   return (
     <div className="min-h-screen bg-gray-50 p-4 sm:p-6">
       <div className="mx-auto max-w-6xl">
-        <h1 className="text-3xl font-bold text-gray-900">Match Schedule</h1>
+        <div className="flex items-center gap-3 mb-2">
+          <h1 className="text-3xl font-bold text-gray-900">Match Schedule</h1>
+          {scheduleMetadata && !scheduleMetadata.is_official && (
+            <span className="inline-block bg-yellow-400 text-yellow-900 px-3 py-1 rounded font-bold text-sm border-2 border-yellow-600">
+              ร่างโปรแกรม
+            </span>
+          )}
+        </div>
+
+        {scheduleMetadata && !scheduleMetadata.is_official && (
+          <div className="mt-4 rounded-lg bg-yellow-50 border-4 border-yellow-500 p-6 print:block print:break-inside-avoid">
+            <div className="flex gap-4 items-start">
+              <div className="text-4xl">⚠️</div>
+              <div className="flex-1">
+                <h2 className="text-xl font-bold text-yellow-900">
+                  ร่างโปรแกรมแข่งขัน — ข้อมูลตัวอย่างสำหรับทดสอบระบบ
+                </h2>
+                <p className="text-yellow-800 font-semibold mt-2">
+                  Draft / Placeholder Schedule — Sample data for system testing only
+                </p>
+                <p className="mt-3 text-yellow-900 text-sm">
+                  ยังไม่ใช่โปรแกรมการแข่งขันอย่างเป็นทางการ • Not the official competition schedule
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
 
         <div className="mt-4 rounded-lg bg-blue-50 border-2 border-blue-300 p-6">
           <h2 className="text-xl font-bold text-blue-900">📅 Competition Schedule</h2>
@@ -113,7 +155,15 @@ export default function ScheduleDisplayPage() {
             <strong>Competition Dates:</strong> 1–11 August 2026
           </p>
           <p className="mt-3 text-blue-700 text-sm">
-            Schedule loaded from tournament data. Teams are resolved from current draw assignments.
+            {scheduleMetadata && !scheduleMetadata.is_official ? (
+              <>
+                <strong>กำลังแสดงข้อมูลตัวอย่างจากระบบสำรอง</strong> — Teams are resolved from current draw assignments.
+              </>
+            ) : (
+              <>
+                <strong>Official Schedule:</strong> Teams are resolved from current draw assignments.
+              </>
+            )}
           </p>
         </div>
 
@@ -270,6 +320,19 @@ export default function ScheduleDisplayPage() {
           .bg-gray-100 {
             background: white;
             border: 1px solid #e5e7eb;
+          }
+          .bg-yellow-50 {
+            background: #fef3c7 !important;
+            border-color: #d97706 !important;
+          }
+          .text-yellow-900 {
+            color: #78350f !important;
+          }
+          .text-yellow-800 {
+            color: #92400e !important;
+          }
+          .border-yellow-500 {
+            border-color: #eab308 !important;
           }
         }
       `}</style>

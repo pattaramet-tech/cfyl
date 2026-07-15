@@ -1,4 +1,8 @@
 {
+  "status": "draft",
+  "is_official": false,
+  "source": "fallback",
+  "label": "Sample schedule for system testing only",
   "tournament_slug": "cfyl-2026-meeting",
   "competition_dates": {
     "start": "2026-08-01",
