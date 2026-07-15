@@ -1,0 +1,111 @@
+{
+  "tournament_slug": "cfyl-2026-meeting",
+  "competition_dates": {
+    "start": "2026-08-01",
+    "end": "2026-08-11"
+  },
+  "matches": [
+    {
+      "id": "m1",
+      "category_code": "B-U12",
+      "venue_code": "V1",
+      "date": "2026-08-01",
+      "time": "09:00",
+      "home_slot": "A-S1",
+      "away_slot": "A-S2",
+      "court": 1,
+      "round": "Group Stage",
+      "match_number": 1
+    },
+    {
+      "id": "m2",
+      "category_code": "B-U12",
+      "venue_code": "V1",
+      "date": "2026-08-01",
+      "time": "09:30",
+      "home_slot": "A-S3",
+      "away_slot": "A-S4",
+      "court": 2,
+      "round": "Group Stage",
+      "match_number": 2
+    },
+    {
+      "id": "m3",
+      "category_code": "B-U12",
+      "venue_code": "V1",
+      "date": "2026-08-01",
+      "time": "10:00",
+      "home_slot": "B-S1",
+      "away_slot": "B-S2",
+      "court": 1,
+      "round": "Group Stage",
+      "match_number": 3
+    },
+    {
+      "id": "m4",
+      "category_code": "G-U14",
+      "venue_code": "V1",
+      "date": "2026-08-01",
+      "time": "14:00",
+      "home_slot": "A-S1",
+      "away_slot": "A-S2",
+      "court": 1,
+      "round": "Group Stage",
+      "match_number": 1
+    },
+    {
+      "id": "m5",
+      "category_code": "B-U14",
+      "venue_code": "V2",
+      "date": "2026-08-01",
+      "time": "09:00",
+      "home_slot": "A-S1",
+      "away_slot": "A-S2",
+      "court": 1,
+      "round": "Group Stage",
+      "match_number": 1
+    },
+    {
+      "id": "m6",
+      "category_code": "B-U12",
+      "venue_code": "V1",
+      "date": "2026-08-02",
+      "time": "09:00",
+      "home_slot": "A-S1",
+      "away_slot": "B-S1",
+      "court": 1,
+      "round": "Group Stage",
+      "match_number": 4
+    },
+    {
+      "id": "m7",
+      "category_code": "B-U12",
+      "venue_code": "V1",
+      "date": "2026-08-02",
+      "time": "09:30",
+      "home_slot": "A-S2",
+      "away_slot": "B-S2",
+      "court": 2,
+      "round": "Group Stage",
+      "match_number": 5
+    },
+    {
+      "id": "m8",
+      "category_code": "B-U12",
+      "venue_code": "V1",
+      "date": "2026-08-03",
+      "time": "10:00",
+      "home_slot": "Winner M1",
+      "away_slot": "Winner M2",
+      "court": 1,
+      "round": "Knockout",
+      "match_number": "QF1"
+    }
+  ],
+  "notes": {
+    "source": "Tournament Phase 2 Meeting Schedule - Fallback/Draft",
+    "status": "ready_for_import",
+    "last_updated": "2026-07-15T00:00:00Z",
+    "import_instructions": "Replace matches array with official schedule after import from venue source"
+  }
+}

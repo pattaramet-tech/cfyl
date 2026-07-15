@@ -1,0 +1,48 @@
+{
+  "tournament": {
+    "id": "cfyl-2026-meeting",
+    "name": "CFYL 2026 Draw Meeting",
+    "slug": "cfyl-2026-meeting"
+  },
+  "venues": [
+    { "id": "v1", "name": "V1", "code": "V1", "slug": "field-1" },
+    { "id": "v2", "name": "V2", "code": "V2", "slug": "field-2" },
+    { "id": "v3", "name": "V3", "code": "V3", "slug": "field-3" },
+    { "id": "v4", "name": "V4", "code": "V4", "slug": "field-4" }
+  ],
+  "categories": [
+    { "slug": "b-u12", "code": "B-U12", "name": "Boys U12", "gender": "male", "venue_id": "v1", "teams_count": 26, "groups_count": 8, "group_sizes": [3, 3, 3, 3, 3, 3, 4, 4] },
+    { "slug": "g-u14", "code": "G-U14", "name": "Girls U14", "gender": "female", "venue_id": "v1", "teams_count": 6, "groups_count": 2, "group_sizes": [3, 3] },
+    { "slug": "b-u14", "code": "B-U14", "name": "Boys U14", "gender": "male", "venue_id": "v2", "teams_count": 29, "groups_count": 8, "group_sizes": [4, 4, 4, 4, 4, 3, 3, 3] },
+    { "slug": "g-u16", "code": "G-U16", "name": "Girls U16", "gender": "female", "venue_id": "v2", "teams_count": 10, "groups_count": 3, "group_sizes": [4, 3, 3] },
+    { "slug": "b-u16", "code": "B-U16", "name": "Boys U16", "gender": "male", "venue_id": "v3", "teams_count": 27, "groups_count": 8, "group_sizes": [4, 4, 4, 4, 3, 4, 2, 2] },
+    { "slug": "g-u18", "code": "G-U18", "name": "Girls U18", "gender": "female", "venue_id": "v3", "teams_count": 7, "groups_count": 2, "group_sizes": [4, 3] },
+    { "slug": "b-u18", "code": "B-U18", "name": "Boys U18", "gender": "male", "venue_id": "v4", "teams_count": 33, "groups_count": 8, "group_sizes": [5, 4, 4, 4, 4, 4, 2, 2] }
+  ],
+  "groups": {
+    "b-u12": ["A", "B", "C", "D", "E", "F", "G", "H"],
+    "g-u14": ["A", "B"],
+    "b-u14": ["A", "B", "C", "D", "E", "F", "G", "H"],
+    "g-u16": ["A", "B", "C"],
+    "b-u16": ["A", "B", "C", "D", "E", "F", "G", "H"],
+    "g-u18": ["A", "B"],
+    "b-u18": ["A", "B", "C", "D", "E", "F", "G", "H"]
+  },
+  "draw_assignments": {},
+  "notes": {
+    "g-u16": "อันดับ 1 และ 2 ของแต่ละกลุ่มเข้ารอบ รวม 6 ทีม | ทีมอันดับ 3 ทั้ง 3 กลุ่มจับฉลากเลือก 2 ทีมเข้าสู่รอบ 8 ทีม"
+  },
+  "generated_at": "2026-07-15T00:00:00Z",
+  "meeting": {
+    "date": "2026-07-16",
+    "time": "11:00",
+    "freeze_time": "09:30",
+    "purpose": "Draw meeting - assign teams to groups for competition"
+  },
+  "competition": {
+    "start_date": "2026-08-01",
+    "end_date": "2026-08-11",
+    "status": "schedule_not_imported",
+    "note": "Match dates/times to be populated after official venue schedule import"
+  }
+}
