@@ -3,6 +3,12 @@ import { getTournamentServiceClient } from '@/lib/tournament/db/supabase-tournam
 import { requireTournamentSuperAdmin } from '@/lib/tournament/services/auth';
 import { logTournamentAdminAction } from '@/lib/tournament/services/audit';
 import {
+  buildDrawSelectedConfigs,
+  DRAW_SELECTED_SOURCE_TYPE,
+  validateDrawSelectedSourceRef,
+} from '@/lib/tournament/scheduling/drawSelected';
+import { resolveScheduleSourceTeamId } from '@/lib/tournament/scheduling/resolveScheduleSource';
+import {
   courtKey,
   groupKey,
   groupSlotKey,
@@ -75,6 +81,19 @@ interface TeamRow {
   team_code: string;
 }
 
+interface QualificationRuleRow {
+  category_id: string;
+  best_third_placed_count: number;
+  best_third_placed_method: string;
+}
+
+interface DrawSelectedRuleConfig {
+  categoryId: string;
+  categoryCode: string;
+  bestThirdPlacedCount: number;
+  bestThirdPlacedMethod: string;
+}
+
 interface ExistingMatchRow {
   id: string;
   match_code: string;
@@ -94,46 +113,6 @@ function asText(value: unknown): string {
 
 function upper(value: string): string {
   return value.trim().toUpperCase();
-}
-
-function sourceTeamId(params: {
-  sourceType: string;
-  sourceRef: string;
-  categoryId: string;
-  groupId: string | null;
-  teamsByCategoryAndCode: Map<string, TeamRow>;
-  groupMembersBySlot: Map<string, GroupMemberRow>;
-  existingSourceType: string | null;
-  existingSourceRef: string | null;
-  existingTeamId: string | null;
-}): string | null {
-  const {
-    sourceType,
-    sourceRef,
-    categoryId,
-    groupId,
-    teamsByCategoryAndCode,
-    groupMembersBySlot,
-    existingSourceType,
-    existingSourceRef,
-    existingTeamId,
-  } = params;
-
-  if (sourceType === 'team') {
-    return teamsByCategoryAndCode.get(teamKey(categoryId, sourceRef))?.id || null;
-  }
-  if (sourceType === 'group_slot' && groupId) {
-    const member = groupMembersBySlot.get(groupSlotKey(groupId, sourceRef));
-    if (member?.team_id) return member.team_id;
-  }
-  if (
-    existingSourceType === sourceType &&
-    upper(existingSourceRef || '') === upper(sourceRef) &&
-    existingTeamId
-  ) {
-    return existingTeamId;
-  }
-  return null;
 }
 
 export async function POST(request: NextRequest) {
@@ -179,7 +158,16 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const [rowsResult, categoriesResult, venuesResult, courtsResult, groupsResult, membersResult, teamsResult] =
+    const [
+      rowsResult,
+      categoriesResult,
+      venuesResult,
+      courtsResult,
+      groupsResult,
+      membersResult,
+      teamsResult,
+      qualificationRulesResult,
+    ] =
       await Promise.all([
         client
           .from('tournament_schedule_import_rows')
@@ -205,6 +193,10 @@ export async function POST(request: NextRequest) {
           .from('tournament_teams')
           .select('id, category_id, team_code')
           .eq('tournament_id', batch.tournament_id),
+        client
+          .from('tournament_qualification_rules')
+          .select('category_id, best_third_placed_count, best_third_placed_method')
+          .eq('tournament_id', batch.tournament_id),
       ]);
 
     const queryError = [
@@ -215,6 +207,7 @@ export async function POST(request: NextRequest) {
       groupsResult.error,
       membersResult.error,
       teamsResult.error,
+      qualificationRulesResult.error,
     ].find(Boolean);
 
     if (queryError) {
@@ -228,6 +221,23 @@ export async function POST(request: NextRequest) {
     const venueIds = new Set(venues.map((venue) => venue.id));
     const groups = (groupsResult.data || []) as GroupRow[];
     const groupIds = new Set(groups.map((group) => group.id));
+    const qualificationRules = ((qualificationRulesResult.data || []) as QualificationRuleRow[])
+      .map((rule) => {
+        const category = categories.find((entry) => entry.id === rule.category_id);
+        return category
+          ? {
+              categoryId: rule.category_id,
+              categoryCode: category.code,
+              bestThirdPlacedCount: rule.best_third_placed_count,
+              bestThirdPlacedMethod: rule.best_third_placed_method,
+            }
+          : null;
+      })
+      .filter((rule): rule is DrawSelectedRuleConfig => rule !== null);
+    const {
+      configsByRef: drawSelectedConfigsByRef,
+      configsByCategoryCode: drawSelectedConfigsByCategoryCode,
+    } = buildDrawSelectedConfigs(qualificationRules);
 
     const categoriesByCode = new Map(categories.map((category) => [upper(category.code), category]));
     const venuesByCode = new Map(venues.map((venue) => [upper(venue.code), venue]));
@@ -302,7 +312,39 @@ export async function POST(request: NextRequest) {
       }
 
       const existing = (existingData || null) as ExistingMatchRow | null;
-      const homeTeamId = sourceTeamId({
+      const drawSelectedRefsToValidate: Array<{ side: 'home' | 'away'; sourceRef: string }> = [];
+      if (normalized.home_source_type === DRAW_SELECTED_SOURCE_TYPE) {
+        drawSelectedRefsToValidate.push({ side: 'home', sourceRef: normalized.home_source_ref });
+      }
+      if (normalized.away_source_type === DRAW_SELECTED_SOURCE_TYPE) {
+        drawSelectedRefsToValidate.push({ side: 'away', sourceRef: normalized.away_source_ref });
+      }
+
+      const invalidDrawSelectedRef = drawSelectedRefsToValidate
+        .map((entry) => ({
+          side: entry.side,
+          validation: validateDrawSelectedSourceRef({
+            sourceRef: entry.sourceRef,
+            rowCategoryCode: normalized.category_code,
+            configsByRef: drawSelectedConfigsByRef,
+            configsByCategoryCode: drawSelectedConfigsByCategoryCode,
+          }),
+        }))
+        .find((entry) => !entry.validation.ok);
+
+      if (invalidDrawSelectedRef) {
+        failed += 1;
+        failures.push({
+          row: importRow.row_no,
+          match_code: normalized.match_code,
+          error:
+            invalidDrawSelectedRef.validation.errorMessage ||
+            `${invalidDrawSelectedRef.side} draw_selected source_ref is invalid`,
+        });
+        continue;
+      }
+
+      const homeTeamId = resolveScheduleSourceTeamId({
         sourceType: normalized.home_source_type,
         sourceRef: normalized.home_source_ref,
         categoryId: category.id,
@@ -313,7 +355,7 @@ export async function POST(request: NextRequest) {
         existingSourceRef: existing?.home_source_ref || null,
         existingTeamId: existing?.home_team_id || null,
       });
-      const awayTeamId = sourceTeamId({
+      const awayTeamId = resolveScheduleSourceTeamId({
         sourceType: normalized.away_source_type,
         sourceRef: normalized.away_source_ref,
         categoryId: category.id,

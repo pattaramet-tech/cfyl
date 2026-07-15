@@ -15,7 +15,7 @@ against any project yet.** Source of truth for every column/constraint is
 
 ## Run order
 
-Run all 11 files **in order**, once per project (Staging first, then Production). Each
+Run all 12 files **in order**, once per project (Staging first, then Production). Each
 file is idempotent (`create table if not exists`, `create index if not exists`,
 `drop policy if exists` before `create policy`), so a partial failure can be fixed and
 the same file re-run safely.
@@ -33,6 +33,7 @@ the same file re-run safely.
 | 9 | `009-rbac.sql` | `tournament_user_profiles`, `tournament_role_assignments`, `tournament_match_officials` |
 | 10 | `010-result-workflow.sql` | `tournament_match_attachments`, `tournament_result_submissions`, `tournament_result_versions`, `tournament_result_approvals` |
 | 11 | `011-scheduling-import-and-views.sql` | `tournament_schedule_batches`, `tournament_schedule_import_rows`, `tournament_schedule_versions`, deferred FK on `tournament_matches.schedule_batch_id`, `tournament.public_matches_view`, `tournament.public_players_view` |
+| 12 | `012-draw-selected-source-support.sql` | `draw_selected` source-type support on `tournament_matches`, qualification draw uniqueness guards, G-U16 qualification-rule backfill |
 
 **Why this order, not the Data Model doc's own section order**: `tournament_matches`
 (Data Model §2.8) references `tournament_knockout_rounds` (§2.15), so §2.15 is created
@@ -58,7 +59,7 @@ must exist first) and before testing anything through the client or `verify-foun
 2. Add `tournament` to **Exposed schemas**
 3. Save
 
-## After running all 11 files
+## After running all 12 files
 
 1. Confirm the `tournament` schema is in Exposed Schemas (previous section) — do this
    before the next two steps, or they'll fail with a schema-not-found error unrelated
@@ -91,7 +92,7 @@ must exist first) and before testing anything through the client or `verify-foun
 
 ## Prerequisites
 
-1. Phase 1 migrations (001–011) must be applied to the Tournament Supabase project.
+1. Phase 1 migrations (001–012) must be applied to the Tournament Supabase project.
 2. The `tournament` schema must be in **Project Settings → Data API → Exposed schemas**.
 3. `.env.local` must have:
    - `TOURNAMENT_SUPABASE_URL`

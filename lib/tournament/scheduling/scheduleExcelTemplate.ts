@@ -21,6 +21,7 @@ export const SCHEDULE_SOURCE_TYPES = [
   'team',
   'group_slot',
   'group_rank',
+  'draw_selected',
   'match_winner',
   'match_loser',
   'best_ranked',

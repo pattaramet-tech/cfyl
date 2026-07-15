@@ -8,6 +8,11 @@ import {
   type ScheduleSourceType,
   type ScheduleStage,
 } from './scheduleExcelTemplate';
+import {
+  DRAW_SELECTED_SOURCE_TYPE,
+  type DrawSelectedConfig,
+  validateDrawSelectedSourceRef,
+} from './drawSelected';
 
 export type ScheduleImportSeverity = 'warning' | 'error';
 
@@ -109,6 +114,8 @@ export interface ScheduleValidationContext {
   existingSlotOwners: Map<string, string>;
   existingVenueDayCounts: Map<string, number>;
   allKnownMatchCodes: Set<string>;
+  drawSelectedConfigsByRef: Map<string, DrawSelectedConfig>;
+  drawSelectedConfigsByCategoryCode: Map<string, DrawSelectedConfig[]>;
 }
 
 export interface ScheduleBatchSeen {
@@ -291,6 +298,24 @@ function validateSource(
 
   if (sourceType === 'group_rank' && !/^[A-Z0-9_-]+:\d+$/.test(sourceRef)) {
     addMessage(messages, 'error', 'E_GROUP_RANK_FORMAT', `${label}: group_rank ต้องอยู่ในรูปแบบ A:1`);
+  }
+
+  if (sourceType === DRAW_SELECTED_SOURCE_TYPE) {
+    const validation = validateDrawSelectedSourceRef({
+      sourceRef,
+      rowCategoryCode: row.category_code,
+      configsByRef: context.drawSelectedConfigsByRef,
+      configsByCategoryCode: context.drawSelectedConfigsByCategoryCode,
+    });
+
+    if (!validation.ok) {
+      addMessage(
+        messages,
+        'error',
+        validation.errorCode || 'E_DRAW_SELECTED',
+        `${label}: ${validation.errorMessage || 'draw_selected source_ref is invalid'}`
+      );
+    }
   }
 
   if (sourceType === 'match_winner' || sourceType === 'match_loser') {

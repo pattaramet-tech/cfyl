@@ -12,16 +12,22 @@ import {
   type ScheduleValidationContext,
 } from '../validateScheduleImportRow';
 
-const category = { id: 'category-1', code: 'B-U12', name: 'ชาย U12' };
-const venue = { id: 'venue-1', code: 'V1', name: 'สนาม 1' };
+const category = { id: 'category-1', code: 'B-U12', name: 'Boys U12' };
+const drawCategory = { id: 'category-2', code: 'G-U16', name: 'Girls U16' };
+const venue = { id: 'venue-1', code: 'V1', name: 'Field 1' };
 const court = { id: 'court-1', venue_id: venue.id, code: 'C1', name: 'Court 1' };
 const group = { id: 'group-1', category_id: category.id, code: 'A', name: 'Group A' };
 
-function makeContext(): ScheduleValidationContext {
+function makeContext(
+  overrides: Partial<ScheduleValidationContext> = {}
+): ScheduleValidationContext {
   return {
     tournamentStartDate: '2026-08-01',
     tournamentEndDate: '2026-08-11',
-    categoriesByCode: new Map([[category.code, category]]),
+    categoriesByCode: new Map([
+      [category.code, category],
+      [drawCategory.code, drawCategory],
+    ]),
     venuesByCode: new Map([[venue.code, venue]]),
     courtsByVenueAndCode: new Map([[courtKey(venue.id, court.code), court]]),
     groupsByCategoryAndCode: new Map([[groupKey(category.id, group.code), group]]),
@@ -31,11 +37,17 @@ function makeContext(): ScheduleValidationContext {
       groupSlotKey(group.id, 'A-S3'),
     ]),
     teamsByCategoryAndCode: new Map(),
-    primaryCategoryVenues: new Set([categoryVenueKey(category.id, venue.id)]),
+    primaryCategoryVenues: new Set([
+      categoryVenueKey(category.id, venue.id),
+      categoryVenueKey(drawCategory.id, venue.id),
+    ]),
     existingMatchesByCode: new Map(),
     existingSlotOwners: new Map(),
     existingVenueDayCounts: new Map(),
     allKnownMatchCodes: new Set(['B-U12-GA-001']),
+    drawSelectedConfigsByRef: new Map(),
+    drawSelectedConfigsByCategoryCode: new Map(),
+    ...overrides,
   };
 }
 
@@ -54,6 +66,39 @@ function validRow(overrides: Partial<RawScheduleImportRow> = {}): RawScheduleImp
     home_source_ref: 'A-S1',
     away_source_type: 'group_slot',
     away_source_ref: 'A-S2',
+    result_policy: 'single_step',
+    status: 'scheduled',
+    note: '',
+    ...overrides,
+  };
+}
+
+function drawConfig(sourceRef: string, drawPosition: number) {
+  return {
+    sourceRef,
+    categoryId: drawCategory.id,
+    categoryCode: drawCategory.code,
+    drawPosition,
+    qualificationSlot: 'group_third_place' as const,
+    slotsAvailable: 2,
+  };
+}
+
+function validDrawRow(overrides: Partial<RawScheduleImportRow> = {}): RawScheduleImportRow {
+  return {
+    match_code: 'G-U16-QF-001',
+    category_code: 'G-U16',
+    stage: 'quarter_final',
+    group_code: '',
+    venue_code: 'V1',
+    court_code: 'C1',
+    match_date: '2026-08-02',
+    start_time: '10:00',
+    match_no: 21,
+    home_source_type: 'group_rank',
+    home_source_ref: 'A:1',
+    away_source_type: 'draw_selected',
+    away_source_ref: 'G-U16-THIRD-DRAW-1',
     result_policy: 'single_step',
     status: 'scheduled',
     note: '',
@@ -144,5 +189,123 @@ describe('validateScheduleImportRow', () => {
     expect(result.action).toBe('update');
     expect(result.diff).toContainEqual({ field: 'match_time', before: '08:00', after: '08:30' });
     expect(result.messages.some((message) => message.code === 'W11')).toBe(true);
+  });
+
+  it('accepts supported G-U16 draw_selected references during preview validation', () => {
+    const context = makeContext({
+      drawSelectedConfigsByRef: new Map([
+        ['G-U16-THIRD-DRAW-1', drawConfig('G-U16-THIRD-DRAW-1', 1)],
+        ['G-U16-THIRD-DRAW-2', drawConfig('G-U16-THIRD-DRAW-2', 2)],
+      ]),
+      drawSelectedConfigsByCategoryCode: new Map([
+        [drawCategory.code, [drawConfig('G-U16-THIRD-DRAW-1', 1), drawConfig('G-U16-THIRD-DRAW-2', 2)]],
+      ]),
+    });
+
+    const result = validateScheduleImportRow(
+      validDrawRow(),
+      2,
+      context,
+      createScheduleBatchSeen()
+    );
+
+    expect(result.status).toBe('warning');
+    expect(result.messages.map((message) => message.code)).toEqual(['W8']);
+  });
+
+  it('rejects unknown G-U16 draw_selected references', () => {
+    const context = makeContext({
+      drawSelectedConfigsByRef: new Map([
+        ['G-U16-THIRD-DRAW-1', drawConfig('G-U16-THIRD-DRAW-1', 1)],
+        ['G-U16-THIRD-DRAW-2', drawConfig('G-U16-THIRD-DRAW-2', 2)],
+      ]),
+      drawSelectedConfigsByCategoryCode: new Map([
+        [drawCategory.code, [drawConfig('G-U16-THIRD-DRAW-1', 1), drawConfig('G-U16-THIRD-DRAW-2', 2)]],
+      ]),
+    });
+
+    const result = validateScheduleImportRow(
+      validDrawRow({ away_source_ref: 'G-U16-THIRD-DRAW-3' }),
+      2,
+      context,
+      createScheduleBatchSeen()
+    );
+
+    expect(result.status).toBe('error');
+    expect(result.messages.some((message) => message.code === 'E_DRAW_SELECTED_UNKNOWN')).toBe(
+      true
+    );
+  });
+
+  it('rejects draw_selected rows without a source_ref', () => {
+    const context = makeContext({
+      drawSelectedConfigsByRef: new Map([
+        ['G-U16-THIRD-DRAW-1', drawConfig('G-U16-THIRD-DRAW-1', 1)],
+        ['G-U16-THIRD-DRAW-2', drawConfig('G-U16-THIRD-DRAW-2', 2)],
+      ]),
+      drawSelectedConfigsByCategoryCode: new Map([
+        [drawCategory.code, [drawConfig('G-U16-THIRD-DRAW-1', 1), drawConfig('G-U16-THIRD-DRAW-2', 2)]],
+      ]),
+    });
+
+    const result = validateScheduleImportRow(
+      validDrawRow({ away_source_ref: '' }),
+      2,
+      context,
+      createScheduleBatchSeen()
+    );
+
+    expect(result.status).toBe('error');
+    expect(result.messages.some((message) => message.code === 'E_SOURCE_REF_AWAY')).toBe(true);
+  });
+
+  it('rejects draw_selected rows whose source_ref uses another source type format', () => {
+    const context = makeContext({
+      drawSelectedConfigsByRef: new Map([
+        ['G-U16-THIRD-DRAW-1', drawConfig('G-U16-THIRD-DRAW-1', 1)],
+        ['G-U16-THIRD-DRAW-2', drawConfig('G-U16-THIRD-DRAW-2', 2)],
+      ]),
+      drawSelectedConfigsByCategoryCode: new Map([
+        [drawCategory.code, [drawConfig('G-U16-THIRD-DRAW-1', 1), drawConfig('G-U16-THIRD-DRAW-2', 2)]],
+      ]),
+    });
+
+    const result = validateScheduleImportRow(
+      validDrawRow({ away_source_ref: 'A:1' }),
+      2,
+      context,
+      createScheduleBatchSeen()
+    );
+
+    expect(result.status).toBe('error');
+    expect(result.messages.some((message) => message.code === 'E_DRAW_SELECTED_FORMAT')).toBe(
+      true
+    );
+  });
+
+  it('rejects draw_selected references from a different category', () => {
+    const context = makeContext({
+      drawSelectedConfigsByRef: new Map([
+        ['G-U16-THIRD-DRAW-1', drawConfig('G-U16-THIRD-DRAW-1', 1)],
+      ]),
+      drawSelectedConfigsByCategoryCode: new Map([
+        [drawCategory.code, [drawConfig('G-U16-THIRD-DRAW-1', 1)]],
+      ]),
+    });
+
+    const result = validateScheduleImportRow(
+      validDrawRow({
+        category_code: 'B-U12',
+        match_code: 'B-U12-QF-001',
+      }),
+      2,
+      context,
+      createScheduleBatchSeen()
+    );
+
+    expect(result.status).toBe('error');
+    expect(result.messages.some((message) => message.code === 'E_DRAW_SELECTED_CATEGORY')).toBe(
+      true
+    );
   });
 });

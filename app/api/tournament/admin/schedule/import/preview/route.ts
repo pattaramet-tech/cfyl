@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getTournamentServiceClient } from '@/lib/tournament/db/supabase-tournament';
 import { requireTournamentSuperAdmin } from '@/lib/tournament/services/auth';
 import { logTournamentAdminAction } from '@/lib/tournament/services/audit';
+import { buildDrawSelectedConfigs } from '@/lib/tournament/scheduling/drawSelected';
 import {
   categoryVenueKey,
   courtKey,
@@ -46,9 +47,9 @@ interface VenueRow extends VenueRef {
   tournament_id: string;
 }
 
-interface CourtRow extends CourtRef {}
-interface GroupRow extends GroupRef {}
-interface TeamRow extends TeamRef {}
+type CourtRow = CourtRef;
+type GroupRow = GroupRef;
+type TeamRow = TeamRef;
 
 interface GroupMemberRow {
   group_id: string;
@@ -60,6 +61,19 @@ interface CategoryVenueRow {
   category_id: string;
   venue_id: string;
   is_primary: boolean;
+}
+
+interface QualificationRuleRow {
+  category_id: string;
+  best_third_placed_count: number;
+  best_third_placed_method: string;
+}
+
+interface DrawSelectedRuleConfig {
+  categoryId: string;
+  categoryCode: string;
+  bestThirdPlacedCount: number;
+  bestThirdPlacedMethod: string;
 }
 
 function asText(value: unknown): string {
@@ -126,6 +140,7 @@ export async function POST(request: NextRequest) {
       membersResult,
       teamsResult,
       categoryVenuesResult,
+      qualificationRulesResult,
       matchesResult,
     ] = await Promise.all([
       client
@@ -155,6 +170,10 @@ export async function POST(request: NextRequest) {
         .from('tournament_category_venues')
         .select('category_id, venue_id, is_primary'),
       client
+        .from('tournament_qualification_rules')
+        .select('category_id, best_third_placed_count, best_third_placed_method')
+        .eq('tournament_id', tournamentId),
+      client
         .from('tournament_matches')
         .select(
           'id, match_code, category_id, group_id, venue_id, court_id, match_date, match_time, match_no, stage, home_source_type, home_source_ref, away_source_type, away_source_ref, result_policy, status, note, schedule_status, version'
@@ -171,6 +190,7 @@ export async function POST(request: NextRequest) {
       membersResult.error,
       teamsResult.error,
       categoryVenuesResult.error,
+      qualificationRulesResult.error,
       matchesResult.error,
     ].find(Boolean);
 
@@ -199,7 +219,23 @@ export async function POST(request: NextRequest) {
     const categoryVenues = ((categoryVenuesResult.data || []) as CategoryVenueRow[]).filter(
       (mapping) => categoryIds.has(mapping.category_id) && venueIds.has(mapping.venue_id)
     );
+    const qualificationRules = ((qualificationRulesResult.data || []) as QualificationRuleRow[])
+      .filter((rule) => categoryIds.has(rule.category_id))
+      .map((rule) => {
+        const categoryRef = categories.find((category) => category.id === rule.category_id);
+        return categoryRef
+          ? {
+              categoryId: rule.category_id,
+              categoryCode: categoryRef.code,
+              bestThirdPlacedCount: rule.best_third_placed_count,
+              bestThirdPlacedMethod: rule.best_third_placed_method,
+            }
+          : null;
+      })
+      .filter((rule): rule is DrawSelectedRuleConfig => rule !== null);
     const existingMatches = (matchesResult.data || []) as ExistingScheduleMatch[];
+    const { configsByRef: drawSelectedConfigsByRef, configsByCategoryCode: drawSelectedConfigsByCategoryCode } =
+      buildDrawSelectedConfigs(qualificationRules);
 
     const categoriesByCode = new Map<string, CategoryRef>();
     categories.forEach((category) => categoriesByCode.set(category.code.trim().toUpperCase(), category));
@@ -269,6 +305,8 @@ export async function POST(request: NextRequest) {
       existingSlotOwners,
       existingVenueDayCounts,
       allKnownMatchCodes,
+      drawSelectedConfigsByRef,
+      drawSelectedConfigsByCategoryCode,
     };
 
     const seen = createScheduleBatchSeen();

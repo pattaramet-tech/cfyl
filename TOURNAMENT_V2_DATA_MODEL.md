@@ -298,10 +298,10 @@ create table tournament.tournament_matches (
   home_team_id uuid references tournament.tournament_teams(id) on delete set null,
   away_team_id uuid references tournament.tournament_teams(id) on delete set null,
   home_source_type text                    -- ใหม่ Scheduling Addendum: ที่มาของทีมฝั่ง Home ก่อน Resolve
-    check (home_source_type in ('team','group_slot','group_rank','match_winner','match_loser','best_ranked','bye','tbd')),
-  home_source_ref text,                     -- ใหม่: ค่าอ้างอิงตาม source_type เช่น 'A-S1' / 'A:1' / 'B-U12-R16-01' / 'third_place:1'
+    check (home_source_type in ('team','group_slot','group_rank','match_winner','match_loser','best_ranked','draw_selected','bye','tbd')),
+  home_source_ref text,                     -- ใหม่: ค่าอ้างอิงตาม source_type เช่น 'A-S1' / 'A:1' / 'B-U12-R16-01' / 'third_place:1' / 'G-U16-THIRD-DRAW-1'
   away_source_type text
-    check (away_source_type in ('team','group_slot','group_rank','match_winner','match_loser','best_ranked','bye','tbd')),
+    check (away_source_type in ('team','group_slot','group_rank','match_winner','match_loser','best_ranked','draw_selected','bye','tbd')),
   away_source_ref text,                     -- ใหม่
   sources_resolved_at timestamptz,          -- ใหม่: เวลาที่ home/away_team_id ถูกเติมจาก source_ref ล่าสุด (null = ยังไม่ resolve หรือยังเป็น TBD)
   regulation_home_score int,                -- DECISION LOCKED (D-09, 2026-07-14): แยกจากคะแนนจุดโทษชัดเจน (เดิมชื่อ home_score ซึ่งกำกวมว่ารวม Penalty หรือไม่)
