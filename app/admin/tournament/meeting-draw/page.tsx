@@ -343,6 +343,8 @@ export default function MeetingDrawBoardPage() {
                 : 'border-red-500 bg-red-50 text-red-800'
             }`}
             role="alert"
+            aria-live={message.startsWith('✓') ? 'polite' : 'assertive'}
+            aria-atomic="true"
           >
             {message}
           </div>
@@ -360,13 +362,14 @@ export default function MeetingDrawBoardPage() {
                 {fallbackData.categories.map((cat) => (
                   <button
                     key={cat.slug}
+                    type="button"
                     onClick={() => setSelectedCategory(cat.slug)}
                     aria-pressed={selectedCategory === cat.slug}
                     className={`rounded-md px-4 py-2.5 text-sm font-semibold transition-all duration-150 ${
                       selectedCategory === cat.slug
                         ? 'bg-blue-600 text-white shadow-md'
                         : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
-                    } min-w-20 text-center`}
+                    } min-w-20 text-center focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2`}
                   >
                     {cat.code}
                   </button>
@@ -435,6 +438,9 @@ export default function MeetingDrawBoardPage() {
                         const key = `${selectedCategory}-${slotCode}`;
                         const slot = slots[key];
                         const isAssigned = !!slot?.db_id;
+                        const isSaveDisabled = saving || !slot?.team_name || !slot?.team_code;
+                        const teamNameInputId = `${key}-team-name`;
+                        const teamCodeInputId = `${key}-team-code`;
 
                         return (
                           <div
@@ -447,9 +453,7 @@ export default function MeetingDrawBoardPage() {
                           >
                             {/* Slot Label */}
                             <div className="mb-3 flex items-center justify-between">
-                              <label className="text-sm font-semibold text-slate-700">
-                                {slotCode}
-                              </label>
+                              <p className="text-sm font-semibold text-slate-700">{slotCode}</p>
                               {isAssigned && (
                                 <span className="inline-flex items-center gap-1 text-xs font-semibold text-green-700">
                                   <span className="h-1.5 w-1.5 rounded-full bg-green-600"></span>
@@ -459,39 +463,49 @@ export default function MeetingDrawBoardPage() {
                             </div>
 
                             {/* Input Fields */}
+                            <label htmlFor={teamNameInputId} className="sr-only">
+                              ชื่อทีมสำหรับ {slotCode}
+                            </label>
                             <input
+                              id={teamNameInputId}
                               type="text"
                               placeholder="ชื่อทีม"
                               value={slot?.team_name || ''}
                               onChange={(e) =>
                                 handleSlotChange(slotCode, 'team_name', e.target.value)
                               }
-                              className="mb-2 block w-full rounded-md border border-slate-300 px-3 py-2 text-sm placeholder-slate-400 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1 transition-colors"
+                              className="mb-2 block w-full rounded-md border border-slate-300 px-3 py-2 text-sm placeholder-slate-400 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1 focus-visible:border-blue-500"
                             />
 
+                            <label htmlFor={teamCodeInputId} className="sr-only">
+                              รหัสทีมสำหรับ {slotCode}
+                            </label>
                             <input
+                              id={teamCodeInputId}
                               type="text"
                               placeholder="รหัสทีม"
                               value={slot?.team_code || ''}
                               onChange={(e) =>
                                 handleSlotChange(slotCode, 'team_code', e.target.value)
                               }
-                              className="mb-3 block w-full rounded-md border border-slate-300 px-3 py-2 text-sm placeholder-slate-400 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1 transition-colors"
+                              className="mb-3 block w-full rounded-md border border-slate-300 px-3 py-2 text-sm placeholder-slate-400 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1 focus-visible:border-blue-500"
                             />
 
                             {/* Action Buttons */}
                             <div className="flex gap-2">
                               <button
+                                type="button"
                                 onClick={() => handleSaveSlot(group, i)}
-                                disabled={saving || !slot?.team_name}
-                                className="flex-1 rounded-md bg-blue-600 px-3 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:bg-slate-300 disabled:cursor-not-allowed transition-colors duration-150"
+                                disabled={isSaveDisabled}
+                                className="flex-1 rounded-md bg-blue-600 px-3 py-2 text-sm font-semibold text-white transition-colors duration-150 hover:bg-blue-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:bg-slate-300"
                               >
                                 บันทึก
                               </button>
                               <button
+                                type="button"
                                 onClick={() => handleClearSlot(group, i)}
                                 disabled={saving || !slot?.db_id}
-                                className="flex-1 rounded-md bg-slate-200 px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-300 disabled:bg-slate-200 disabled:text-slate-400 disabled:cursor-not-allowed transition-colors duration-150"
+                                className="flex-1 rounded-md bg-slate-200 px-3 py-2 text-sm font-semibold text-slate-700 transition-colors duration-150 hover:bg-slate-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-400"
                               >
                                 ล้าง
                               </button>
@@ -511,19 +525,21 @@ export default function MeetingDrawBoardPage() {
                 href="/tournament/meeting-draw"
                 target="_blank"
                 rel="noopener noreferrer"
-                className="rounded-md bg-indigo-600 px-6 py-2.5 text-sm font-semibold text-white hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 transition-colors duration-150 text-center"
+                className="rounded-md bg-indigo-600 px-6 py-2.5 text-center text-sm font-semibold text-white transition-colors duration-150 hover:bg-indigo-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-offset-2"
               >
                 📊 เปิด Projector Display
               </a>
               <button
+                type="button"
                 onClick={handleExportCSV}
-                className="rounded-md bg-emerald-600 px-6 py-2.5 text-sm font-semibold text-white hover:bg-emerald-700 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-2 transition-colors duration-150"
+                className="rounded-md bg-emerald-600 px-6 py-2.5 text-sm font-semibold text-white transition-colors duration-150 hover:bg-emerald-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2"
               >
                 📥 Export CSV
               </button>
               <button
+                type="button"
                 onClick={handleExportJSON}
-                className="rounded-md bg-emerald-600 px-6 py-2.5 text-sm font-semibold text-white hover:bg-emerald-700 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-2 transition-colors duration-150"
+                className="rounded-md bg-emerald-600 px-6 py-2.5 text-sm font-semibold text-white transition-colors duration-150 hover:bg-emerald-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2"
               >
                 📦 Export JSON
               </button>
