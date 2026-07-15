@@ -14,9 +14,42 @@ interface ScheduleMatch {
   away_slot: string;
   home_team?: string;
   away_team?: string;
-  court: number;
+  court: string | number;
   round: string;
   match_number: string | number;
+}
+
+interface TournamentRow {
+  id: string;
+  start_date: string | null;
+  end_date: string | null;
+}
+
+interface DbMatchRow {
+  id: string;
+  match_code: string;
+  match_no: number | null;
+  match_date: string | null;
+  match_time: string | null;
+  category_id: string;
+  venue_id: string | null;
+  court_id: string | null;
+  home_team_id: string | null;
+  away_team_id: string | null;
+  home_source_ref: string | null;
+  away_source_ref: string | null;
+  stage: string;
+  schedule_status: string;
+}
+
+interface CodeRow {
+  id: string;
+  code: string;
+}
+
+interface TeamRow {
+  id: string;
+  name: string;
 }
 
 type SupabaseClient = ReturnType<typeof getTournamentServiceClient>;
@@ -27,15 +60,12 @@ async function resolveTeamForSlot(
   categoryCode: string,
   slotCode: string
 ): Promise<string | undefined> {
-  // If slot is a placeholder like "Winner M1" or "TBD", don't resolve
   if (slotCode.startsWith('Winner ') || slotCode === 'TBD' || !slotCode.includes('-')) {
     return undefined;
   }
 
   try {
     const groupCode = slotCode.split('-')[0];
-
-    // Get category by tournament_id + code
     const { data: category } = await client
       .from('tournament_categories')
       .select('id')
@@ -46,7 +76,6 @@ async function resolveTeamForSlot(
 
     if (!category) return undefined;
 
-    // Get group by tournament_id + category_id + code
     const { data: group } = await client
       .from('tournament_groups')
       .select('id')
@@ -57,7 +86,6 @@ async function resolveTeamForSlot(
 
     if (!group) return undefined;
 
-    // Get assignment for this group + slot
     const { data: assignment } = await client
       .from('tournament_draw_assignments')
       .select('team_id, tournament_teams!inner(name)')
@@ -74,10 +102,98 @@ async function resolveTeamForSlot(
     }
 
     return undefined;
-  } catch (err) {
-    console.error('[SCHEDULE_RESOLVE] Error resolving team:', err);
+  } catch (error) {
+    console.error('[SCHEDULE_RESOLVE] Error resolving team:', error);
     return undefined;
   }
+}
+
+async function loadImportedSchedule(params: {
+  client: SupabaseClient;
+  tournament: TournamentRow;
+  categoryCode: string | null;
+  venueCode: string | null;
+  date: string | null;
+}): Promise<ScheduleMatch[] | null> {
+  const { client, tournament, categoryCode, venueCode, date } = params;
+
+  const [categoriesResult, venuesResult, courtsResult, teamsResult] = await Promise.all([
+    client
+      .from('tournament_categories')
+      .select('id, code')
+      .eq('tournament_id', tournament.id)
+      .is('deleted_at', null),
+    client.from('tournament_venues').select('id, code').eq('tournament_id', tournament.id),
+    client.from('tournament_courts').select('id, code'),
+    client.from('tournament_teams').select('id, name').eq('tournament_id', tournament.id),
+  ]);
+
+  const referenceError = [
+    categoriesResult.error,
+    venuesResult.error,
+    courtsResult.error,
+    teamsResult.error,
+  ].find(Boolean);
+  if (referenceError) {
+    console.error('[SCHEDULE_GET] reference query failed:', referenceError.message);
+    return null;
+  }
+
+  const categories = (categoriesResult.data || []) as CodeRow[];
+  const venues = (venuesResult.data || []) as CodeRow[];
+  const categoriesById = new Map(categories.map((item) => [item.id, item.code]));
+  const categoryIdsByCode = new Map(categories.map((item) => [item.code.trim().toUpperCase(), item.id]));
+  const venuesById = new Map(venues.map((item) => [item.id, item.code]));
+  const venueIdsByCode = new Map(venues.map((item) => [item.code.trim().toUpperCase(), item.id]));
+  const courtsById = new Map(((courtsResult.data || []) as CodeRow[]).map((item) => [item.id, item.code]));
+  const teamsById = new Map(((teamsResult.data || []) as TeamRow[]).map((item) => [item.id, item.name]));
+
+  let query = client
+    .from('tournament_matches')
+    .select(
+      'id, match_code, match_no, match_date, match_time, category_id, venue_id, court_id, home_team_id, away_team_id, home_source_ref, away_source_ref, stage, schedule_status'
+    )
+    .eq('tournament_id', tournament.id)
+    .is('deleted_at', null)
+    .order('match_date', { ascending: true })
+    .order('match_time', { ascending: true })
+    .order('match_no', { ascending: true });
+
+  if (categoryCode) {
+    const categoryId = categoryIdsByCode.get(categoryCode.trim().toUpperCase());
+    if (!categoryId) return [];
+    query = query.eq('category_id', categoryId);
+  }
+  if (venueCode) {
+    const venueId = venueIdsByCode.get(venueCode.trim().toUpperCase());
+    if (!venueId) return [];
+    query = query.eq('venue_id', venueId);
+  }
+  if (date) query = query.eq('match_date', date);
+
+  const { data: matchData, error: matchError } = await query;
+  if (matchError) {
+    console.error('[SCHEDULE_GET] imported schedule query failed:', matchError.message);
+    return null;
+  }
+
+  const matches = (matchData || []) as DbMatchRow[];
+  if (matches.length === 0) return [];
+
+  return matches.map((match) => ({
+    id: match.id,
+    category_code: categoriesById.get(match.category_id) || 'UNKNOWN',
+    venue_code: match.venue_id ? venuesById.get(match.venue_id) || 'TBD' : 'TBD',
+    date: match.match_date || '',
+    time: match.match_time || '',
+    home_slot: match.home_source_ref || 'TBD',
+    away_slot: match.away_source_ref || 'TBD',
+    home_team: match.home_team_id ? teamsById.get(match.home_team_id) : undefined,
+    away_team: match.away_team_id ? teamsById.get(match.away_team_id) : undefined,
+    court: match.court_id ? courtsById.get(match.court_id) || '' : '',
+    round: match.stage,
+    match_number: match.match_no || match.match_code,
+  }));
 }
 
 export async function GET(request: NextRequest) {
@@ -88,48 +204,72 @@ export async function GET(request: NextRequest) {
     const date = request.nextUrl.searchParams.get('date');
 
     if (!tournamentSlug) {
-      return NextResponse.json(
-        { error: 'tournament_slug required' },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: 'tournament_slug required' }, { status: 400 });
     }
 
     const client = getTournamentServiceClient();
-
-    // Resolve tournament by slug
-    const { data: tournament } = await client
+    const { data: tournamentData, error: tournamentError } = await client
       .from('tournaments')
-      .select('id')
+      .select('id, start_date, end_date')
       .eq('slug', tournamentSlug.trim().toLowerCase())
       .is('deleted_at', null)
       .single();
 
-    if (!tournament) {
-      return NextResponse.json(
-        { error: 'Tournament not found' },
-        { status: 404 }
-      );
+    if (tournamentError || !tournamentData) {
+      return NextResponse.json({ error: 'Tournament not found' }, { status: 404 });
     }
 
-    // Get schedule from fallback data
-    let matches: ScheduleMatch[] = scheduleData.matches.map((m) => ({ ...m }));
+    const tournament = tournamentData as TournamentRow;
+    const importedMatches = await loadImportedSchedule({
+      client,
+      tournament,
+      categoryCode,
+      venueCode,
+      date,
+    });
 
-    // Apply filters
+    if (importedMatches && importedMatches.length > 0) {
+      const { data: statuses } = await client
+        .from('tournament_matches')
+        .select('schedule_status')
+        .eq('tournament_id', tournament.id)
+        .is('deleted_at', null);
+      const allPublished =
+        (statuses || []).length > 0 &&
+        (statuses || []).every((row: { schedule_status: string }) => row.schedule_status === 'published');
+
+      return NextResponse.json({
+        tournament_slug: tournamentSlug,
+        status: allPublished ? 'OFFICIAL' : 'VALIDATED_DRAFT',
+        is_official: allPublished,
+        source: {
+          type: 'tournament_database',
+          fallback: false,
+          note: allPublished
+            ? 'Published Tournament V2 schedule'
+            : 'Imported and validated Tournament V2 schedule awaiting publish',
+        },
+        competition_dates: {
+          start: tournament.start_date,
+          end: tournament.end_date,
+        },
+        total_matches: importedMatches.length,
+        data: importedMatches,
+      });
+    }
+
+    let matches: ScheduleMatch[] = scheduleData.matches.map((match) => ({ ...match }));
     if (categoryCode) {
-      matches = matches.filter((m) => m.category_code === categoryCode.trim().toUpperCase());
+      matches = matches.filter((match) => match.category_code === categoryCode.trim().toUpperCase());
     }
-
     if (venueCode) {
-      matches = matches.filter((m) => m.venue_code === venueCode.trim().toUpperCase());
+      matches = matches.filter((match) => match.venue_code === venueCode.trim().toUpperCase());
     }
-
     if (date) {
-      matches = matches.filter((m) => m.date === date);
+      matches = matches.filter((match) => match.date === date);
     }
 
-    // Resolve team names for each slot
     const resolvedMatches: ScheduleMatch[] = [];
-
     for (const match of matches) {
       const homeTeam = await resolveTeamForSlot(
         client,
@@ -137,19 +277,13 @@ export async function GET(request: NextRequest) {
         match.category_code,
         match.home_slot
       );
-
       const awayTeam = await resolveTeamForSlot(
         client,
         tournament.id,
         match.category_code,
         match.away_slot
       );
-
-      resolvedMatches.push({
-        ...match,
-        home_team: homeTeam,
-        away_team: awayTeam,
-      });
+      resolvedMatches.push({ ...match, home_team: homeTeam, away_team: awayTeam });
     }
 
     return NextResponse.json({
@@ -161,11 +295,8 @@ export async function GET(request: NextRequest) {
       total_matches: resolvedMatches.length,
       data: resolvedMatches,
     });
-  } catch (err) {
-    console.error('[SCHEDULE_GET] error:', err instanceof Error ? err.message : err);
-    return NextResponse.json(
-      { error: 'Internal server error' },
-      { status: 500 }
-    );
+  } catch (error) {
+    console.error('[SCHEDULE_GET] error:', error instanceof Error ? error.message : error);
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }
