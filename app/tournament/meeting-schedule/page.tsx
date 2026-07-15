@@ -13,19 +13,36 @@ interface ScheduleMatch {
   away_slot: string;
   home_team?: string;
   away_team?: string;
-  court: number;
+  court: string | number;
   round: string;
   match_number: string | number;
+}
+
+interface ScheduleSource {
+  type: string;
+  fallback?: boolean;
+  note?: string;
 }
 
 interface ScheduleResponse {
   tournament_slug: string;
   status: string;
   is_official: boolean;
-  source: string;
-  competition_dates: { start: string; end: string };
+  source: string | ScheduleSource;
+  competition_dates: { start: string | null; end: string | null };
   total_matches: number;
   data: ScheduleMatch[];
+}
+
+function sourceType(source: ScheduleResponse['source'] | undefined): string {
+  if (!source) return 'unknown';
+  return typeof source === 'string' ? source : source.type;
+}
+
+function sourceLabel(source: ScheduleResponse['source'] | undefined): string {
+  if (!source) return 'unknown';
+  if (typeof source === 'string') return source;
+  return source.note || source.type;
 }
 
 export default function ScheduleDisplayPage() {
@@ -39,6 +56,7 @@ export default function ScheduleDisplayPage() {
 
   useEffect(() => {
     const loadSchedule = async () => {
+      setLoading(true);
       try {
         const params = new URLSearchParams({
           tournament_slug: fallbackData.tournament.slug,
@@ -47,19 +65,18 @@ export default function ScheduleDisplayPage() {
           ...(filterDate && { date: filterDate }),
         });
 
-        const res = await fetch(`/api/tournament/public/schedule?${params.toString()}`);
+        const response = await fetch(`/api/tournament/public/schedule?${params.toString()}`, {
+          cache: 'no-store',
+        });
+        if (!response.ok) throw new Error(`Failed to load schedule: ${response.status}`);
 
-        if (!res.ok) {
-          throw new Error(`Failed to load schedule: ${res.status}`);
-        }
-
-        const data: ScheduleResponse = await res.json();
+        const data: ScheduleResponse = await response.json();
         setMatches(data.data || []);
         setScheduleMetadata(data);
         setError('');
-      } catch (err) {
-        console.error('Failed to load schedule:', err);
-        setError(err instanceof Error ? err.message : 'Failed to load schedule');
+      } catch (reason) {
+        console.error('Failed to load schedule:', reason);
+        setError(reason instanceof Error ? reason.message : 'Failed to load schedule');
         setMatches([]);
         setScheduleMetadata(null);
       } finally {
@@ -79,7 +96,12 @@ export default function ScheduleDisplayPage() {
   const handleExportCSV = () => {
     const rows: (string | number)[][] = [
       ['Schedule Status', 'Official', 'Source', ''],
-      [scheduleMetadata?.status || 'unknown', scheduleMetadata?.is_official ? 'YES' : 'NO', scheduleMetadata?.source || 'unknown', ''],
+      [
+        scheduleMetadata?.status || 'unknown',
+        scheduleMetadata?.is_official ? 'YES' : 'NO',
+        sourceLabel(scheduleMetadata?.source),
+        '',
+      ],
       [''],
       ['Date', 'Time', 'Category', 'Venue', 'Court', 'Home Team', 'Away Team', 'Round'],
     ];
@@ -97,211 +119,215 @@ export default function ScheduleDisplayPage() {
       ]);
     });
 
-    const csvContent = rows
-      .map((row) => row.map(escapeCsvCell).join(','))
-      .join('\r\n');
-
+    const csvContent = rows.map((row) => row.map(escapeCsvCell).join(',')).join('\r\n');
     const blob = new Blob(['﻿', csvContent], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement('a');
     const url = URL.createObjectURL(blob);
-    link.setAttribute('href', url);
-    link.setAttribute('download', `schedule-${new Date().toISOString().slice(0, 10)}.csv`);
+    link.href = url;
+    link.download = `schedule-${new Date().toISOString().slice(0, 10)}.csv`;
     link.click();
+    URL.revokeObjectURL(url);
   };
 
-  const getTeamDisplay = (teamName: string | undefined, slotCode: string): string => {
-    return teamName || slotCode;
-  };
+  const uniqueDates = Array.from(new Set(matches.map((match) => match.date).filter(Boolean))).sort();
+  const currentSourceType = sourceType(scheduleMetadata?.source);
+  const isDatabaseSchedule = currentSourceType === 'tournament_database';
+  const isFallbackSchedule = !!scheduleMetadata && !isDatabaseSchedule;
+  const isValidatedDraft = isDatabaseSchedule && !scheduleMetadata?.is_official;
 
-  const uniqueDates = Array.from(new Set(matches.map((m) => m.date))).sort();
+  const statusBadge = scheduleMetadata?.is_official
+    ? { label: 'ตารางทางการ', className: 'bg-emerald-100 text-emerald-800 border-emerald-300' }
+    : isValidatedDraft
+      ? { label: 'นำเข้าแล้ว · รอ Publish', className: 'bg-blue-100 text-blue-800 border-blue-300' }
+      : { label: 'ข้อมูลตัวอย่าง', className: 'bg-amber-100 text-amber-900 border-amber-300' };
 
   return (
-    <div className="min-h-screen bg-gray-50 p-4 sm:p-6">
+    <div className="min-h-screen bg-slate-50 p-4 sm:p-6">
       <div className="mx-auto max-w-6xl">
-        <div className="flex items-center gap-3 mb-2">
-          <h1 className="text-3xl font-bold text-gray-900">Match Schedule</h1>
-          {scheduleMetadata && !scheduleMetadata.is_official && (
-            <span className="inline-block bg-yellow-400 text-yellow-900 px-3 py-1 rounded font-bold text-sm border-2 border-yellow-600">
-              ร่างโปรแกรม
-            </span>
-          )}
-        </div>
+        <header className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200">
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div>
+              <div className="flex flex-wrap items-center gap-3">
+                <h1 className="text-3xl font-bold text-slate-900">ตารางการแข่งขัน</h1>
+                {scheduleMetadata && (
+                  <span className={`rounded-full border px-3 py-1 text-xs font-bold ${statusBadge.className}`}>
+                    {statusBadge.label}
+                  </span>
+                )}
+              </div>
+              <p className="mt-2 text-slate-600">Chonburi Futsal Youth League · Tournament V2</p>
+            </div>
+            <a
+              href="/tournament/meeting-draw"
+              className="no-print rounded-lg border border-blue-600 px-4 py-2 text-sm font-semibold text-blue-700 hover:bg-blue-50"
+            >
+              ดูผลจับฉลาก
+            </a>
+          </div>
 
-        {scheduleMetadata && !scheduleMetadata.is_official && (
-          <div className="mt-4 rounded-lg bg-yellow-50 border-4 border-yellow-500 p-6 print:block print:break-inside-avoid">
-            <div className="flex gap-4 items-start">
-              <div className="text-4xl">⚠️</div>
-              <div className="flex-1">
-                <h2 className="text-xl font-bold text-yellow-900">
-                  ร่างโปรแกรมแข่งขัน — ข้อมูลตัวอย่างสำหรับทดสอบระบบ
-                </h2>
-                <p className="text-yellow-800 font-semibold mt-2">
-                  Draft / Placeholder Schedule — Sample data for system testing only
+          {scheduleMetadata && (
+            <div className="mt-5 grid gap-3 border-t border-slate-200 pt-5 sm:grid-cols-3">
+              <div className="rounded-lg bg-slate-50 p-3">
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">ช่วงแข่งขัน</p>
+                <p className="mt-1 font-semibold text-slate-800">
+                  {scheduleMetadata.competition_dates?.start || '—'} ถึง {scheduleMetadata.competition_dates?.end || '—'}
                 </p>
-                <p className="mt-3 text-yellow-900 text-sm">
-                  ยังไม่ใช่โปรแกรมการแข่งขันอย่างเป็นทางการ • Not the official competition schedule
+              </div>
+              <div className="rounded-lg bg-slate-50 p-3">
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">จำนวนแมตช์</p>
+                <p className="mt-1 font-semibold text-slate-800">{scheduleMetadata.total_matches} นัด</p>
+              </div>
+              <div className="rounded-lg bg-slate-50 p-3">
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">แหล่งข้อมูล</p>
+                <p className="mt-1 font-semibold text-slate-800">
+                  {isDatabaseSchedule ? 'Tournament V2 Database' : 'Fallback Schedule'}
                 </p>
               </div>
             </div>
+          )}
+        </header>
+
+        {isFallbackSchedule && (
+          <div className="mt-5 rounded-xl border-l-4 border-amber-500 bg-amber-50 p-5 text-amber-900 print:block print:break-inside-avoid">
+            <h2 className="font-bold">ข้อมูลตัวอย่างสำหรับทดสอบระบบ</h2>
+            <p className="mt-1 text-sm">ยังไม่มีตารางที่ Import เข้าสู่ Tournament V2 ข้อมูลชุดนี้ยังไม่ใช่โปรแกรมการแข่งขันอย่างเป็นทางการ</p>
           </div>
         )}
 
-        <div className="mt-4 rounded-lg bg-blue-50 border-2 border-blue-300 p-6">
-          <h2 className="text-xl font-bold text-blue-900">📅 Competition Schedule</h2>
-          <p className="mt-2 text-blue-800">
-            <strong>Draw Meeting:</strong> 16 July 2026, 11:00 (Freeze: 09:30)
-          </p>
-          <p className="mt-2 text-blue-800">
-            <strong>Competition Dates:</strong> 1–11 August 2026
-          </p>
-          <p className="mt-3 text-blue-700 text-sm">
-            {scheduleMetadata && !scheduleMetadata.is_official ? (
-              <>
-                <strong>กำลังแสดงข้อมูลตัวอย่างจากระบบสำรอง</strong> — Teams are resolved from current draw assignments.
-              </>
-            ) : (
-              <>
-                <strong>Official Schedule:</strong> Teams are resolved from current draw assignments.
-              </>
-            )}
-          </p>
-        </div>
+        {isValidatedDraft && (
+          <div className="mt-5 rounded-xl border-l-4 border-blue-500 bg-blue-50 p-5 text-blue-900 print:block print:break-inside-avoid">
+            <h2 className="font-bold">ตารางถูก Import และผ่าน Validation แล้ว</h2>
+            <p className="mt-1 text-sm">ข้อมูลมาจาก Tournament V2 Database แต่ยังอยู่ระหว่างตรวจสอบก่อน Publish เป็นตารางทางการ</p>
+          </div>
+        )}
 
-        <div className="mt-8">
-          <h3 className="text-lg font-bold text-gray-900 mb-4">Filters</h3>
-          <div className="flex gap-4 flex-wrap no-print">
+        <section className="no-print mt-6 rounded-xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
+          <h2 className="text-sm font-bold uppercase tracking-wide text-slate-600">ตัวกรอง</h2>
+          <div className="mt-3 flex flex-wrap gap-3">
             <select
               value={filterCategory}
-              onChange={(e) => setFilterCategory(e.target.value)}
-              className="rounded border border-gray-300 px-4 py-2"
+              onChange={(event) => setFilterCategory(event.target.value)}
+              className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm"
             >
-              <option value="">All Categories</option>
-              {fallbackData.categories.map((c) => (
-                <option key={c.slug} value={c.code}>
-                  {c.code} - {c.name}
+              <option value="">ทุกประเภทการแข่งขัน</option>
+              {fallbackData.categories.map((category) => (
+                <option key={category.slug} value={category.code}>
+                  {category.code} - {category.name}
                 </option>
               ))}
             </select>
 
             <select
               value={filterVenue}
-              onChange={(e) => setFilterVenue(e.target.value)}
-              className="rounded border border-gray-300 px-4 py-2"
+              onChange={(event) => setFilterVenue(event.target.value)}
+              className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm"
             >
-              <option value="">All Venues</option>
-              {fallbackData.venues.map((v) => (
-                <option key={v.id} value={v.code}>
-                  {v.name}
-                </option>
+              <option value="">ทุกสนาม</option>
+              {fallbackData.venues.map((venue) => (
+                <option key={venue.id} value={venue.code}>{venue.name}</option>
               ))}
             </select>
 
             <select
               value={filterDate}
-              onChange={(e) => setFilterDate(e.target.value)}
-              className="rounded border border-gray-300 px-4 py-2"
+              onChange={(event) => setFilterDate(event.target.value)}
+              className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm"
             >
-              <option value="">All Dates</option>
-              {uniqueDates.map((d) => (
-                <option key={d} value={d}>
-                  {new Date(d).toLocaleDateString('en-US', {
+              <option value="">ทุกวันแข่งขัน</option>
+              {uniqueDates.map((date) => (
+                <option key={date} value={date}>
+                  {new Date(`${date}T00:00:00`).toLocaleDateString('th-TH', {
                     weekday: 'short',
-                    month: 'short',
                     day: 'numeric',
+                    month: 'short',
+                    year: 'numeric',
                   })}
                 </option>
               ))}
             </select>
           </div>
-        </div>
+        </section>
 
         {error && (
-          <div className="mt-8 rounded-lg bg-red-50 border border-red-300 p-4 text-red-700">
-            <p className="font-semibold">Error loading schedule:</p>
-            <p className="text-sm">{error}</p>
+          <div role="alert" className="mt-6 rounded-xl border border-red-300 bg-red-50 p-4 text-red-800">
+            <p className="font-semibold">โหลดตารางแข่งขันไม่สำเร็จ</p>
+            <p className="mt-1 text-sm">{error}</p>
           </div>
         )}
 
-        {loading && (
-          <div className="mt-8 text-center text-gray-600">
-            <p>Loading schedule...</p>
-          </div>
-        )}
+        {loading && <div className="mt-8 text-center text-slate-600">กำลังโหลดตารางแข่งขัน...</div>}
 
         {!loading && !error && matches.length === 0 && (
-          <div className="mt-8 rounded-lg bg-gray-100 border border-gray-300 p-6 text-center">
-            <p className="text-gray-700 font-semibold">No matches found</p>
-            <p className="mt-2 text-gray-600 text-sm">Try adjusting your filters or check back later.</p>
+          <div className="mt-8 rounded-xl border border-dashed border-slate-300 bg-white p-8 text-center text-slate-600">
+            ไม่พบแมตช์ตามตัวกรองที่เลือก
           </div>
         )}
 
         {!loading && !error && matches.length > 0 && (
-          <div className="mt-8 space-y-6">
+          <div className="mt-7 space-y-6">
             {uniqueDates.map((date) => {
-              const dateMatches = matches.filter((m) => m.date === date);
+              const dateMatches = matches.filter((match) => match.date === date);
               if (dateMatches.length === 0) return null;
 
               return (
-                <div key={date} className="rounded-lg bg-white p-6 shadow">
-                  <h3 className="text-lg font-bold text-gray-900 mb-4">
-                    {new Date(date).toLocaleDateString('en-US', {
-                      weekday: 'long',
-                      month: 'long',
-                      day: 'numeric',
-                      year: 'numeric',
-                    })}
-                  </h3>
+                <section key={date} className="overflow-hidden rounded-xl bg-white shadow-sm ring-1 ring-slate-200">
+                  <div className="border-b border-slate-200 bg-slate-900 px-5 py-4 text-white">
+                    <h2 className="font-bold">
+                      {new Date(`${date}T00:00:00`).toLocaleDateString('th-TH', {
+                        weekday: 'long',
+                        day: 'numeric',
+                        month: 'long',
+                        year: 'numeric',
+                      })}
+                    </h2>
+                    <p className="mt-1 text-xs text-slate-300">{dateMatches.length} คู่</p>
+                  </div>
 
-                  <div className="space-y-3">
+                  <div className="divide-y divide-slate-100">
                     {dateMatches.map((match) => (
-                      <div
-                        key={match.id}
-                        className="border border-gray-200 rounded p-4 bg-gray-50 hover:bg-gray-100 transition-colors"
-                      >
-                        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-                          <div className="flex-1">
-                            <div className="text-sm text-gray-500 mb-2">
-                              {match.time} | {match.venue_code} Court {match.court} | {match.category_code}
-                            </div>
-                            <div className="text-lg font-semibold text-gray-900">
-                              {getTeamDisplay(match.home_team, match.home_slot)}
-                            </div>
-                          </div>
-
-                          <div className="text-center text-gray-400 font-semibold">vs</div>
-
-                          <div className="flex-1 text-right">
-                            <div className="text-lg font-semibold text-gray-900">
-                              {getTeamDisplay(match.away_team, match.away_slot)}
-                            </div>
-                            <div className="text-sm text-gray-500 mt-2">
-                              {match.round}
-                              {typeof match.match_number === 'string'
-                                ? ` ${match.match_number}`
-                                : ` M${match.match_number}`}
-                            </div>
-                          </div>
+                      <article key={match.id} className="grid gap-4 p-5 sm:grid-cols-[145px_1fr_54px_1fr] sm:items-center">
+                        <div className="text-sm text-slate-600">
+                          <div className="text-lg font-bold text-slate-900">{match.time || '—'}</div>
+                          <div className="mt-1">{match.venue_code}{match.court ? ` · Court ${match.court}` : ''}</div>
+                          <div className="mt-1 text-xs">{match.category_code} · {match.round}</div>
                         </div>
-                      </div>
+
+                        <div className="sm:text-right">
+                          <p className="font-bold text-slate-900">{match.home_team || match.home_slot}</p>
+                          {match.home_team && <p className="mt-1 text-xs text-slate-500">{match.home_slot}</p>}
+                        </div>
+
+                        <div className="text-center text-sm font-bold text-slate-400">VS</div>
+
+                        <div>
+                          <p className="font-bold text-slate-900">{match.away_team || match.away_slot}</p>
+                          {match.away_team && <p className="mt-1 text-xs text-slate-500">{match.away_slot}</p>}
+                          <p className="mt-1 text-xs text-slate-400">
+                            {typeof match.match_number === 'number' ? `Match ${match.match_number}` : match.match_number}
+                          </p>
+                        </div>
+                      </article>
                     ))}
                   </div>
-                </div>
+                </section>
               );
             })}
           </div>
         )}
 
-        <div className="mt-8 flex gap-4 flex-wrap no-print">
+        <div className="no-print mt-7 flex flex-wrap gap-3">
           <button
+            type="button"
             onClick={() => window.print()}
-            className="rounded bg-gray-600 px-6 py-3 font-semibold text-white hover:bg-gray-700 transition-colors"
+            className="rounded-lg bg-slate-700 px-5 py-2.5 text-sm font-semibold text-white hover:bg-slate-800"
           >
             Print / PDF
           </button>
           <button
+            type="button"
             onClick={handleExportCSV}
             disabled={matches.length === 0}
-            className="rounded bg-green-600 px-6 py-3 font-semibold text-white hover:bg-green-700 transition-colors disabled:bg-gray-400 disabled:cursor-not-allowed"
+            className="rounded-lg bg-emerald-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-slate-300"
           >
             Export CSV
           </button>
@@ -310,30 +336,8 @@ export default function ScheduleDisplayPage() {
 
       <style>{`
         @media print {
-          .no-print {
-            display: none;
-          }
-          body {
-            background: white;
-          }
-          .bg-gray-50,
-          .bg-gray-100 {
-            background: white;
-            border: 1px solid #e5e7eb;
-          }
-          .bg-yellow-50 {
-            background: #fef3c7 !important;
-            border-color: #d97706 !important;
-          }
-          .text-yellow-900 {
-            color: #78350f !important;
-          }
-          .text-yellow-800 {
-            color: #92400e !important;
-          }
-          .border-yellow-500 {
-            border-color: #eab308 !important;
-          }
+          .no-print { display: none !important; }
+          body { background: white; }
         }
       `}</style>
     </div>
