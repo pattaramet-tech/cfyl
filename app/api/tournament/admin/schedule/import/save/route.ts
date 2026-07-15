@@ -2,21 +2,35 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getTournamentServiceClient } from '@/lib/tournament/db/supabase-tournament';
 import { requireTournamentSuperAdmin } from '@/lib/tournament/services/auth';
 import { logTournamentAdminAction } from '@/lib/tournament/services/audit';
-import {
-  buildDrawSelectedConfigs,
-  DRAW_SELECTED_SOURCE_TYPE,
-  validateDrawSelectedSourceRef,
-} from '@/lib/tournament/scheduling/drawSelected';
+import { buildDrawSelectedConfigs } from '@/lib/tournament/scheduling/drawSelected';
 import { resolveScheduleSourceTeamId } from '@/lib/tournament/scheduling/resolveScheduleSource';
 import {
+  buildScheduleImportDiff,
+  categoryVenueKey,
   courtKey,
+  createScheduleBatchSeen,
   groupKey,
   groupSlotKey,
+  scheduleSlotKey,
   teamKey,
+  validateScheduleImportRow,
+  venueDayKey,
+  matchNoKey,
+  groupStagePairKey,
+  type CategoryRef,
+  type CourtRef,
+  type ExistingScheduleMatch,
+  type GroupRef,
   type NormalizedScheduleImportRow,
+  type RawScheduleImportRow,
+  type ScheduleValidationContext,
+  type TeamRef,
+  type VenueRef,
 } from '@/lib/tournament/scheduling/validateScheduleImportRow';
 
 export const dynamic = 'force-dynamic';
+
+const PUBLISHED_LOCK_MESSAGE = 'Published fixture changes require the D-28 revision confirmation workflow.';
 
 interface SaveRequestBody {
   batchId?: unknown;
@@ -31,6 +45,7 @@ interface BatchRow {
   valid_rows: number;
   warning_rows: number;
   error_rows: number;
+  save_result: SaveResultSummary | null;
 }
 
 interface StoredPayload {
@@ -47,38 +62,10 @@ interface ImportRow {
   messages: unknown;
 }
 
-interface CategoryRow {
-  id: string;
-  code: string;
-}
-
-interface VenueRow {
-  id: string;
-  code: string;
-}
-
-interface CourtRow {
-  id: string;
-  venue_id: string;
-  code: string;
-}
-
-interface GroupRow {
-  id: string;
-  category_id: string;
-  code: string;
-}
-
 interface GroupMemberRow {
   group_id: string;
   slot_code: string;
   team_id: string | null;
-}
-
-interface TeamRow {
-  id: string;
-  category_id: string;
-  team_code: string;
 }
 
 interface QualificationRuleRow {
@@ -94,17 +81,32 @@ interface DrawSelectedRuleConfig {
   bestThirdPlacedMethod: string;
 }
 
-interface ExistingMatchRow {
-  id: string;
-  match_code: string;
-  version: number | null;
-  home_team_id: string | null;
-  away_team_id: string | null;
-  home_source_type: string | null;
-  home_source_ref: string | null;
-  away_source_type: string | null;
-  away_source_ref: string | null;
-  sources_resolved_at: string | null;
+interface CategoryVenueRow {
+  category_id: string;
+  venue_id: string;
+  is_primary: boolean;
+}
+
+interface VersionRow {
+  category_id: string;
+  stage: string;
+  version: number;
+}
+
+interface SaveFailure {
+  row: number;
+  match_code: string | null;
+  error: string;
+  code?: string;
+}
+
+interface SaveResultSummary {
+  created: number;
+  updated: number;
+  unchanged: number;
+  skipped: number;
+  failed: number;
+  failures: SaveFailure[];
 }
 
 function asText(value: unknown): string {
@@ -113,6 +115,18 @@ function asText(value: unknown): string {
 
 function upper(value: string): string {
   return value.trim().toUpperCase();
+}
+
+async function markBatchFailed(
+  client: ReturnType<typeof getTournamentServiceClient>,
+  batchId: string,
+  reason: string
+): Promise<void> {
+  await client
+    .from('tournament_schedule_batches')
+    .update({ status: 'failed', failed_at: new Date().toISOString(), failure_reason: reason })
+    .eq('id', batchId)
+    .eq('status', 'saving');
 }
 
 export async function POST(request: NextRequest) {
@@ -133,32 +147,68 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'batchId is required' }, { status: 400 });
   }
 
-  try {
-    const client = getTournamentServiceClient();
-    const { data: batchData, error: batchError } = await client
+  const client = getTournamentServiceClient();
+
+  // Atomic claim: only one concurrent request can flip preview -> saving.
+  const { data: claimedData, error: claimError } = await client
+    .from('tournament_schedule_batches')
+    .update({ status: 'saving' })
+    .eq('id', batchId)
+    .eq('batch_type', 'fixture_import')
+    .eq('status', 'preview')
+    .select('id, tournament_id, file_name, status, total_rows, valid_rows, warning_rows, error_rows, save_result')
+    .maybeSingle();
+
+  if (claimError) {
+    console.error('[SCHEDULE_IMPORT_SAVE] claim failed:', claimError.message);
+    return NextResponse.json({ error: 'โหลด Import Batch ไม่สำเร็จ' }, { status: 500 });
+  }
+
+  if (!claimedData) {
+    // Claim failed: batch is missing, or already saving/saved/failed/rolled_back.
+    const { data: currentData, error: currentError } = await client
       .from('tournament_schedule_batches')
-      .select('id, tournament_id, file_name, status, total_rows, valid_rows, warning_rows, error_rows')
+      .select('id, tournament_id, file_name, status, total_rows, valid_rows, warning_rows, error_rows, save_result')
       .eq('id', batchId)
       .eq('batch_type', 'fixture_import')
       .maybeSingle();
 
-    if (batchError) {
-      console.error('[SCHEDULE_IMPORT_SAVE] batch query failed:', batchError.message);
+    if (currentError) {
       return NextResponse.json({ error: 'โหลด Import Batch ไม่สำเร็จ' }, { status: 500 });
     }
-    if (!batchData) {
+    if (!currentData) {
       return NextResponse.json({ error: 'ไม่พบ Import Batch' }, { status: 404 });
     }
 
-    const batch = batchData as BatchRow;
-    if (batch.status !== 'preview') {
+    const current = currentData as BatchRow;
+    if (current.status === 'saved') {
+      // Retry after success: return the same result, do not write again.
+      return NextResponse.json({
+        data: {
+          batchId,
+          status: 'saved',
+          idempotent: true,
+          ...(current.save_result || { created: 0, updated: 0, unchanged: 0, skipped: 0, failed: 0, failures: [] }),
+        },
+      });
+    }
+    if (current.status === 'saving') {
+      return NextResponse.json({ error: 'Import Batch นี้กำลังถูกบันทึกโดยคำขออื่นอยู่' }, { status: 409 });
+    }
+    if (current.status === 'failed') {
       return NextResponse.json(
-        { error: batch.status === 'saved' ? 'Import Batch นี้ถูกบันทึกไปแล้ว' : 'Import Batch นี้ไม่พร้อมบันทึก' },
+        { error: 'Import Batch นี้บันทึกไม่สำเร็จก่อนหน้านี้ กรุณาสร้าง Batch ใหม่' },
         { status: 409 }
       );
     }
+    return NextResponse.json({ error: 'Import Batch นี้ไม่พร้อมบันทึก' }, { status: 409 });
+  }
 
+  const batch = claimedData as BatchRow;
+
+  try {
     const [
+      tournamentResult,
       rowsResult,
       categoriesResult,
       venuesResult,
@@ -166,40 +216,57 @@ export async function POST(request: NextRequest) {
       groupsResult,
       membersResult,
       teamsResult,
+      categoryVenuesResult,
       qualificationRulesResult,
-    ] =
-      await Promise.all([
-        client
-          .from('tournament_schedule_import_rows')
-          .select('id, row_no, status, action, match_code, raw_payload, messages')
-          .eq('batch_id', batchId)
-          .order('row_no', { ascending: true }),
-        client
-          .from('tournament_categories')
-          .select('id, code')
-          .eq('tournament_id', batch.tournament_id)
-          .is('deleted_at', null),
-        client
-          .from('tournament_venues')
-          .select('id, code')
-          .eq('tournament_id', batch.tournament_id),
-        client.from('tournament_courts').select('id, venue_id, code'),
-        client
-          .from('tournament_groups')
-          .select('id, category_id, code')
-          .eq('tournament_id', batch.tournament_id),
-        client.from('tournament_group_members').select('group_id, slot_code, team_id'),
-        client
-          .from('tournament_teams')
-          .select('id, category_id, team_code')
-          .eq('tournament_id', batch.tournament_id),
-        client
-          .from('tournament_qualification_rules')
-          .select('category_id, best_third_placed_count, best_third_placed_method')
-          .eq('tournament_id', batch.tournament_id),
-      ]);
+      matchesResult,
+      versionsResult,
+    ] = await Promise.all([
+      client
+        .from('tournaments')
+        .select('id, start_date, end_date')
+        .eq('id', batch.tournament_id)
+        .maybeSingle(),
+      client
+        .from('tournament_schedule_import_rows')
+        .select('id, row_no, status, action, match_code, raw_payload, messages')
+        .eq('batch_id', batchId)
+        .order('row_no', { ascending: true }),
+      client
+        .from('tournament_categories')
+        .select('id, code')
+        .eq('tournament_id', batch.tournament_id)
+        .is('deleted_at', null),
+      client
+        .from('tournament_venues')
+        .select('id, code')
+        .eq('tournament_id', batch.tournament_id),
+      client.from('tournament_courts').select('id, venue_id, code'),
+      client
+        .from('tournament_groups')
+        .select('id, category_id, code')
+        .eq('tournament_id', batch.tournament_id),
+      client.from('tournament_group_members').select('group_id, slot_code, team_id'),
+      client
+        .from('tournament_teams')
+        .select('id, category_id, team_code')
+        .eq('tournament_id', batch.tournament_id),
+      client.from('tournament_category_venues').select('category_id, venue_id, is_primary'),
+      client
+        .from('tournament_qualification_rules')
+        .select('category_id, best_third_placed_count, best_third_placed_method')
+        .eq('tournament_id', batch.tournament_id),
+      client
+        .from('tournament_matches')
+        .select(
+          'id, match_code, category_id, group_id, venue_id, court_id, match_date, match_time, match_no, stage, home_source_type, home_source_ref, away_source_type, away_source_ref, result_policy, status, note, schedule_status, version'
+        )
+        .eq('tournament_id', batch.tournament_id)
+        .is('deleted_at', null),
+      client.from('tournament_schedule_versions').select('category_id, stage, version'),
+    ]);
 
     const queryError = [
+      tournamentResult.error,
       rowsResult.error,
       categoriesResult.error,
       venuesResult.error,
@@ -207,20 +274,37 @@ export async function POST(request: NextRequest) {
       groupsResult.error,
       membersResult.error,
       teamsResult.error,
+      categoryVenuesResult.error,
       qualificationRulesResult.error,
+      matchesResult.error,
+      versionsResult.error,
     ].find(Boolean);
 
-    if (queryError) {
-      console.error('[SCHEDULE_IMPORT_SAVE] reference query failed:', queryError.message);
+    if (queryError || !tournamentResult.data) {
+      console.error('[SCHEDULE_IMPORT_SAVE] reference query failed:', queryError?.message);
+      await markBatchFailed(client, batchId, queryError?.message || 'reference query failed');
       return NextResponse.json({ error: 'โหลดข้อมูลสำหรับบันทึกไม่สำเร็จ' }, { status: 500 });
     }
 
+    const tournament = tournamentResult.data as { id: string; start_date: string | null; end_date: string | null };
     const importRows = (rowsResult.data || []) as ImportRow[];
-    const categories = (categoriesResult.data || []) as CategoryRow[];
-    const venues = (venuesResult.data || []) as VenueRow[];
+    const categories = (categoriesResult.data || []) as CategoryRef[];
+    const categoryIds = new Set(categories.map((category) => category.id));
+    const venues = (venuesResult.data || []) as VenueRef[];
     const venueIds = new Set(venues.map((venue) => venue.id));
-    const groups = (groupsResult.data || []) as GroupRow[];
+    const groups = (groupsResult.data || []) as GroupRef[];
     const groupIds = new Set(groups.map((group) => group.id));
+    const courts = ((courtsResult.data || []) as CourtRef[]).filter((court) => venueIds.has(court.venue_id));
+    const members = ((membersResult.data || []) as GroupMemberRow[]).filter((member) =>
+      groupIds.has(member.group_id)
+    );
+    const teams = ((teamsResult.data || []) as TeamRef[]).filter((team) => categoryIds.has(team.category_id));
+    const categoryVenues = ((categoryVenuesResult.data || []) as CategoryVenueRow[]).filter(
+      (mapping) => categoryIds.has(mapping.category_id) && venueIds.has(mapping.venue_id)
+    );
+    const existingMatches = (matchesResult.data || []) as ExistingScheduleMatch[];
+    const versionRows = (versionsResult.data || []) as VersionRow[];
+
     const qualificationRules = ((qualificationRulesResult.data || []) as QualificationRuleRow[])
       .map((rule) => {
         const category = categories.find((entry) => entry.id === rule.category_id);
@@ -239,33 +323,111 @@ export async function POST(request: NextRequest) {
       configsByCategoryCode: drawSelectedConfigsByCategoryCode,
     } = buildDrawSelectedConfigs(qualificationRules);
 
-    const categoriesByCode = new Map(categories.map((category) => [upper(category.code), category]));
-    const venuesByCode = new Map(venues.map((venue) => [upper(venue.code), venue]));
-    const courtsByVenueAndCode = new Map<string, CourtRow>();
-    ((courtsResult.data || []) as CourtRow[])
-      .filter((court) => venueIds.has(court.venue_id))
-      .forEach((court) => courtsByVenueAndCode.set(courtKey(court.venue_id, court.code), court));
-
-    const groupsByCategoryAndCode = new Map<string, GroupRow>();
+    const categoriesByCode = new Map<string, CategoryRef>();
+    categories.forEach((category) => categoriesByCode.set(upper(category.code), category));
+    const venuesByCode = new Map<string, VenueRef>();
+    venues.forEach((venue) => venuesByCode.set(upper(venue.code), venue));
+    const courtsByVenueAndCode = new Map<string, CourtRef>();
+    courts.forEach((court) => courtsByVenueAndCode.set(courtKey(court.venue_id, court.code), court));
+    const groupsByCategoryAndCode = new Map<string, GroupRef>();
     groups.forEach((group) => groupsByCategoryAndCode.set(groupKey(group.category_id, group.code), group));
-
+    const groupSlots = new Set<string>();
     const groupMembersBySlot = new Map<string, GroupMemberRow>();
-    ((membersResult.data || []) as GroupMemberRow[])
-      .filter((member) => groupIds.has(member.group_id))
-      .forEach((member) =>
-        groupMembersBySlot.set(groupSlotKey(member.group_id, member.slot_code), member)
-      );
+    members.forEach((member) => {
+      groupSlots.add(groupSlotKey(member.group_id, member.slot_code));
+      groupMembersBySlot.set(groupSlotKey(member.group_id, member.slot_code), member);
+    });
+    const teamsByCategoryAndCode = new Map<string, TeamRef>();
+    teams.forEach((team) => teamsByCategoryAndCode.set(teamKey(team.category_id, team.team_code), team));
+    const primaryCategoryVenues = new Set<string>();
+    categoryVenues
+      .filter((mapping) => mapping.is_primary)
+      .forEach((mapping) => primaryCategoryVenues.add(categoryVenueKey(mapping.category_id, mapping.venue_id)));
 
-    const teamsByCategoryAndCode = new Map<string, TeamRow>();
-    ((teamsResult.data || []) as TeamRow[]).forEach((team) =>
-      teamsByCategoryAndCode.set(teamKey(team.category_id, team.team_code), team)
-    );
+    const existingMatchesByCode = new Map<string, ExistingScheduleMatch>();
+    const existingSlotOwners = new Map<string, string>();
+    const existingVenueDayCounts = new Map<string, number>();
+    const existingPairOwners = new Map<string, string>();
+    const existingMatchNoOwners = new Map<string, string>();
+
+    existingMatches.forEach((match) => {
+      const matchCode = upper(match.match_code);
+      existingMatchesByCode.set(matchCode, { ...match, match_code: matchCode });
+      if (match.venue_id && match.match_date) {
+        const dayKey = venueDayKey(match.venue_id, match.match_date);
+        existingVenueDayCounts.set(dayKey, (existingVenueDayCounts.get(dayKey) || 0) + 1);
+      }
+      if (match.venue_id && match.match_date && match.match_time) {
+        existingSlotOwners.set(
+          scheduleSlotKey(match.venue_id, match.court_id, match.match_date, match.match_time),
+          matchCode
+        );
+      }
+      if (
+        match.stage === 'group' &&
+        match.group_id &&
+        match.home_source_type &&
+        match.home_source_ref &&
+        match.away_source_type &&
+        match.away_source_ref
+      ) {
+        existingPairOwners.set(
+          groupStagePairKey(
+            match.category_id,
+            match.stage,
+            match.group_id,
+            match.home_source_type,
+            match.home_source_ref,
+            match.away_source_type,
+            match.away_source_ref
+          ),
+          matchCode
+        );
+      }
+      if (match.match_no !== null && match.match_no !== undefined) {
+        existingMatchNoOwners.set(matchNoKey(match.category_id, match.stage, match.match_no), matchCode);
+      }
+    });
+
+    const allKnownMatchCodes = new Set(existingMatchesByCode.keys());
+    importRows.forEach((row) => {
+      if (row.match_code) allKnownMatchCodes.add(upper(row.match_code));
+    });
+
+    const context: ScheduleValidationContext = {
+      tournamentStartDate: tournament.start_date,
+      tournamentEndDate: tournament.end_date,
+      categoriesByCode,
+      venuesByCode,
+      courtsByVenueAndCode,
+      groupsByCategoryAndCode,
+      groupSlots,
+      teamsByCategoryAndCode,
+      primaryCategoryVenues,
+      existingMatchesByCode,
+      existingSlotOwners,
+      existingVenueDayCounts,
+      existingPairOwners,
+      existingMatchNoOwners,
+      allKnownMatchCodes,
+      drawSelectedConfigsByRef,
+      drawSelectedConfigsByCategoryCode,
+    };
+
+    const seen = createScheduleBatchSeen();
+    const maxVersionByKey = new Map<string, number>();
+    versionRows.forEach((row) => {
+      const key = `${row.category_id}|${row.stage}`;
+      maxVersionByKey.set(key, Math.max(maxVersionByKey.get(key) || 0, row.version));
+    });
+    const affectedCategoryStages = new Set<string>();
 
     let created = 0;
     let updated = 0;
+    let unchanged = 0;
     let skipped = 0;
     let failed = 0;
-    const failures: Array<{ row: number; match_code: string | null; error: string }> = [];
+    const failures: SaveFailure[] = [];
 
     for (const importRow of importRows) {
       if (importRow.status === 'error' || importRow.action === 'skip') {
@@ -273,18 +435,37 @@ export async function POST(request: NextRequest) {
         continue;
       }
 
-      const normalized = importRow.raw_payload?.normalized;
-      if (!normalized) {
+      const storedNormalized = importRow.raw_payload?.normalized;
+      if (!storedNormalized) {
         failed += 1;
         failures.push({ row: importRow.row_no, match_code: importRow.match_code, error: 'ไม่พบ normalized payload' });
         continue;
       }
 
+      // Revalidate against current database state — the same rules Preview
+      // applied, re-run here because the database may have changed since Preview.
+      const revalidated = validateScheduleImportRow(
+        storedNormalized as unknown as RawScheduleImportRow,
+        importRow.row_no,
+        context,
+        seen
+      );
+      if (revalidated.status === 'error') {
+        failed += 1;
+        failures.push({
+          row: importRow.row_no,
+          match_code: revalidated.match_code,
+          error: revalidated.messages.filter((message) => message.severity === 'error').map((message) => message.message).join('; '),
+        });
+        continue;
+      }
+
+      const normalized = revalidated.normalized;
       const category = categoriesByCode.get(upper(normalized.category_code));
       const venue = venuesByCode.get(upper(normalized.venue_code));
       if (!category || !venue) {
         failed += 1;
-        failures.push({ row: importRow.row_no, match_code: importRow.match_code, error: 'Category หรือ Venue ไม่พร้อมใช้งาน' });
+        failures.push({ row: importRow.row_no, match_code: normalized.match_code, error: 'Category หรือ Venue ไม่พร้อมใช้งาน' });
         continue;
       }
 
@@ -295,51 +476,28 @@ export async function POST(request: NextRequest) {
         ? groupsByCategoryAndCode.get(groupKey(category.id, normalized.group_code))
         : undefined;
 
-      const { data: existingData, error: existingError } = await client
-        .from('tournament_matches')
-        .select(
-          'id, match_code, version, home_team_id, away_team_id, home_source_type, home_source_ref, away_source_type, away_source_ref, sources_resolved_at'
-        )
-        .eq('tournament_id', batch.tournament_id)
-        .eq('match_code', normalized.match_code)
-        .is('deleted_at', null)
-        .maybeSingle();
+      const existing = existingMatchesByCode.get(upper(normalized.match_code)) || undefined;
+      const diff = buildScheduleImportDiff(
+        existing,
+        normalized,
+        category.id,
+        group?.id || null,
+        venue.id,
+        court?.id || null
+      );
 
-      if (existingError) {
-        failed += 1;
-        failures.push({ row: importRow.row_no, match_code: normalized.match_code, error: existingError.message });
+      if (existing && diff.length === 0) {
+        unchanged += 1;
         continue;
       }
 
-      const existing = (existingData || null) as ExistingMatchRow | null;
-      const drawSelectedRefsToValidate: Array<{ side: 'home' | 'away'; sourceRef: string }> = [];
-      if (normalized.home_source_type === DRAW_SELECTED_SOURCE_TYPE) {
-        drawSelectedRefsToValidate.push({ side: 'home', sourceRef: normalized.home_source_ref });
-      }
-      if (normalized.away_source_type === DRAW_SELECTED_SOURCE_TYPE) {
-        drawSelectedRefsToValidate.push({ side: 'away', sourceRef: normalized.away_source_ref });
-      }
-
-      const invalidDrawSelectedRef = drawSelectedRefsToValidate
-        .map((entry) => ({
-          side: entry.side,
-          validation: validateDrawSelectedSourceRef({
-            sourceRef: entry.sourceRef,
-            rowCategoryCode: normalized.category_code,
-            configsByRef: drawSelectedConfigsByRef,
-            configsByCategoryCode: drawSelectedConfigsByCategoryCode,
-          }),
-        }))
-        .find((entry) => !entry.validation.ok);
-
-      if (invalidDrawSelectedRef) {
+      if (existing && existing.schedule_status === 'published') {
         failed += 1;
         failures.push({
           row: importRow.row_no,
           match_code: normalized.match_code,
-          error:
-            invalidDrawSelectedRef.validation.errorMessage ||
-            `${invalidDrawSelectedRef.side} draw_selected source_ref is invalid`,
+          error: PUBLISHED_LOCK_MESSAGE,
+          code: 'E_PUBLISHED_LOCKED',
         });
         continue;
       }
@@ -353,7 +511,7 @@ export async function POST(request: NextRequest) {
         groupMembersBySlot,
         existingSourceType: existing?.home_source_type || null,
         existingSourceRef: existing?.home_source_ref || null,
-        existingTeamId: existing?.home_team_id || null,
+        existingTeamId: null,
       });
       const awayTeamId = resolveScheduleSourceTeamId({
         sourceType: normalized.away_source_type,
@@ -364,7 +522,7 @@ export async function POST(request: NextRequest) {
         groupMembersBySlot,
         existingSourceType: existing?.away_source_type || null,
         existingSourceRef: existing?.away_source_ref || null,
-        existingTeamId: existing?.away_team_id || null,
+        existingTeamId: null,
       });
 
       const now = new Date().toISOString();
@@ -385,13 +543,10 @@ export async function POST(request: NextRequest) {
         home_source_ref: normalized.home_source_ref,
         away_source_type: normalized.away_source_type,
         away_source_ref: normalized.away_source_ref,
-        sources_resolved_at:
-          homeTeamId || awayTeamId ? now : existing?.sources_resolved_at || null,
+        sources_resolved_at: homeTeamId || awayTeamId ? now : null,
         result_policy: normalized.result_policy,
         result_type:
-          normalized.home_source_type === 'bye' || normalized.away_source_type === 'bye'
-            ? 'bye'
-            : 'normal',
+          normalized.home_source_type === 'bye' || normalized.away_source_type === 'bye' ? 'bye' : 'normal',
         status: normalized.status,
         note: normalized.note || null,
         schedule_batch_id: batchId,
@@ -438,21 +593,49 @@ export async function POST(request: NextRequest) {
           .eq('id', importRow.id);
         created += 1;
       }
+
+      affectedCategoryStages.add(`${category.id}|${normalized.stage}`);
     }
 
+    // Create schedule version records for categories/stages touched by this batch.
+    // Never published automatically; never created for unchanged-only rows or
+    // rows rejected under the published-fixture lock.
+    const versionInserts = Array.from(affectedCategoryStages).map((key) => {
+      const [categoryId, stage] = key.split('|');
+      const nextVersion = (maxVersionByKey.get(key) || 0) + 1;
+      return {
+        category_id: categoryId,
+        stage,
+        version: nextVersion,
+        status: 'validated',
+        batch_id: batchId,
+        note: `Schedule import batch ${batchId}`,
+      };
+    });
+
+    if (versionInserts.length > 0) {
+      const { error: versionInsertError } = await client.from('tournament_schedule_versions').insert(versionInserts);
+      if (versionInsertError) {
+        console.error('[SCHEDULE_IMPORT_SAVE] version insert failed:', versionInsertError.message);
+        // Non-fatal: matches are already saved. Log and continue to finalize the batch.
+      }
+    }
+
+    const saveResult: SaveResultSummary = { created, updated, unchanged, skipped, failed, failures };
     const savedAt = new Date().toISOString();
     const { error: finishError } = await client
       .from('tournament_schedule_batches')
-      .update({ status: 'saved', saved_at: savedAt })
+      .update({ status: 'saved', saved_at: savedAt, save_result: saveResult })
       .eq('id', batchId)
-      .eq('status', 'preview');
+      .eq('status', 'saving');
 
     if (finishError) {
       console.error('[SCHEDULE_IMPORT_SAVE] batch finalization failed:', finishError.message);
+      await markBatchFailed(client, batchId, finishError.message);
       return NextResponse.json(
         {
           error: 'บันทึก Match แล้ว แต่เปลี่ยนสถานะ Batch ไม่สำเร็จ กรุณาตรวจ Audit Log',
-          data: { batchId, created, updated, skipped, failed, failures },
+          data: { batchId, ...saveResult },
         },
         { status: 500 }
       );
@@ -465,25 +648,20 @@ export async function POST(request: NextRequest) {
       entityType: 'schedule_batch',
       entityId: batchId,
       entityLabel: batch.file_name,
-      newData: { created, updated, skipped, failed, failures },
+      newData: saveResult,
     });
 
     return NextResponse.json({
       data: {
         batchId,
         status: 'saved',
-        created,
-        updated,
-        skipped,
-        failed,
-        failures,
+        ...saveResult,
       },
     });
   } catch (error) {
-    console.error(
-      '[SCHEDULE_IMPORT_SAVE] unexpected error:',
-      error instanceof Error ? error.message : error
-    );
+    const message = error instanceof Error ? error.message : String(error);
+    console.error('[SCHEDULE_IMPORT_SAVE] unexpected error:', message);
+    await markBatchFailed(client, batchId, message);
     return NextResponse.json({ error: 'เกิดข้อผิดพลาดระหว่างบันทึกตารางแข่งขัน' }, { status: 500 });
   }
 }
