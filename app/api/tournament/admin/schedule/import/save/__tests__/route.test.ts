@@ -102,19 +102,26 @@ vi.mock('@/lib/tournament/db/supabase-tournament', () => ({
   getTournamentServiceClient: () => state.client,
 }));
 
+const authState = vi.hoisted(() => ({
+  authorized: true as boolean,
+}));
+
 vi.mock('@/lib/tournament/services/auth', () => ({
   requireTournamentSuperAdmin: async () => ({
     authenticated: true,
-    authorized: true,
+    authorized: authState.authorized,
     userId: 'admin-1',
     email: 'admin@test.com',
+    error: authState.authorized ? undefined : 'Not a tournament_super_admin',
   }),
 }));
 
 import { POST } from '../route';
 
-function makeRequest(batchId: string): NextRequest {
-  return { json: async () => ({ batchId }) } as unknown as NextRequest;
+function makeRequest(batchId: string, confirmPublishedRevision?: boolean): NextRequest {
+  return {
+    json: async () => ({ batchId, ...(confirmPublishedRevision !== undefined ? { confirmPublishedRevision } : {}) }),
+  } as unknown as NextRequest;
 }
 
 const normalizedRow = {
@@ -183,9 +190,36 @@ function buildDb(overrides: { batchStatus?: string; existingMatch?: Row } = {}):
   return db;
 }
 
+function publishedMatch(overrides: Row = {}): Row {
+  return {
+    id: 'match-1',
+    tournament_id: 'tour-1',
+    match_code: 'B-U12-GA-001',
+    category_id: 'cat-1',
+    group_id: 'group-1',
+    venue_id: 'venue-1',
+    court_id: 'court-1',
+    match_date: '2026-08-01',
+    match_time: '08:00',
+    match_no: 1,
+    stage: 'group',
+    home_source_type: 'group_slot',
+    home_source_ref: 'A-S1',
+    away_source_type: 'group_slot',
+    away_source_ref: 'A-S2',
+    result_policy: 'single_step',
+    status: 'scheduled',
+    note: null,
+    schedule_status: 'published',
+    version: 3,
+    ...overrides,
+  };
+}
+
 describe('POST /api/tournament/admin/schedule/import/save', () => {
   beforeEach(() => {
     state.client = null;
+    authState.authorized = true;
   });
 
   it('creates a new match on first save', async () => {
@@ -270,42 +304,192 @@ describe('POST /api/tournament/admin/schedule/import/save', () => {
     expect(db.tournament_matches[0].version).toBe(3);
   });
 
-  it('rejects a changed published fixture and leaves the original row untouched', async () => {
-    const db = buildDb({
-      existingMatch: {
-        id: 'match-1',
-        tournament_id: 'tour-1',
-        match_code: 'B-U12-GA-001',
-        category_id: 'cat-1',
-        group_id: 'group-1',
-        venue_id: 'venue-1',
-        court_id: 'court-1',
-        match_date: '2026-08-01',
-        match_time: '08:00',
-        match_no: 1,
-        stage: 'group',
-        home_source_type: 'group_slot',
-        home_source_ref: 'A-S1',
-        away_source_type: 'group_slot',
-        away_source_ref: 'A-S2',
-        result_policy: 'single_step',
-        status: 'scheduled',
-        note: null,
-        schedule_status: 'published',
-        version: 3,
-      },
-    });
+  it('rejects a changed published fixture without confirmation (409), leaving the batch and match untouched', async () => {
+    const db = buildDb({ existingMatch: publishedMatch() });
     state.client = createMockClient(db);
 
     const response = await POST(makeRequest('batch-1'));
     const body = await response.json();
 
-    expect(response.status).toBe(200);
-    expect(body.data.failed).toBe(1);
-    expect(body.data.failures[0].code).toBe('E_PUBLISHED_LOCKED');
+    expect(response.status).toBe(409);
+    expect(body.code).toBe('PUBLISHED_REVISION_CONFIRMATION_REQUIRED');
+    expect(body.publishedMatchCodes).toEqual(['B-U12-GA-001']);
     expect(db.tournament_matches[0].match_time).toBe('08:00');
     expect(db.tournament_matches[0].schedule_status).toBe('published');
     expect(db.tournament_matches[0].version).toBe(3);
+    // Batch remains eligible for a later confirmed Save — never claimed as 'saving'.
+    expect(db.tournament_schedule_batches[0].status).toBe('preview');
+  });
+
+  it('applies a confirmed published revision: match becomes revision_required, not auto-published', async () => {
+    const db = buildDb({ existingMatch: publishedMatch() });
+    state.client = createMockClient(db);
+
+    const response = await POST(makeRequest('batch-1', true));
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.data.updated).toBe(1);
+    expect(body.data.revisionsConfirmed).toBe(1);
+    expect(db.tournament_matches[0].match_time).toBe('08:30');
+    expect(db.tournament_matches[0].schedule_status).toBe('revision_required');
+    expect(db.tournament_matches[0].version).toBe(4);
+  });
+
+  it('creates a revision_required schedule version for a confirmed published revision', async () => {
+    const db = buildDb({ existingMatch: publishedMatch() });
+    state.client = createMockClient(db);
+
+    await POST(makeRequest('batch-1', true));
+
+    expect(db.tournament_schedule_versions).toHaveLength(1);
+    expect(db.tournament_schedule_versions[0]).toMatchObject({
+      category_id: 'cat-1',
+      stage: 'group',
+      status: 'revision_required',
+      batch_id: 'batch-1',
+    });
+  });
+
+  it('does not modify a previously published schedule version when confirming a revision', async () => {
+    const db = buildDb({ existingMatch: publishedMatch() });
+    db.tournament_schedule_versions.push({
+      id: 'version-published-1',
+      category_id: 'cat-1',
+      stage: 'group',
+      version: 1,
+      status: 'published',
+      batch_id: 'earlier-batch',
+    });
+    state.client = createMockClient(db);
+
+    await POST(makeRequest('batch-1', true));
+
+    const publishedVersion = db.tournament_schedule_versions.find((v) => v.id === 'version-published-1');
+    expect(publishedVersion?.status).toBe('published');
+    const newVersion = db.tournament_schedule_versions.find((v) => v.id !== 'version-published-1');
+    expect(newVersion).toMatchObject({ status: 'revision_required', version: 2 });
+  });
+
+  it('records a per-match audit entry with before/after data for a confirmed revision', async () => {
+    const db = buildDb({ existingMatch: publishedMatch() });
+    state.client = createMockClient(db);
+
+    await POST(makeRequest('batch-1', true));
+
+    const entry = db.tournament_audit_logs.find(
+      (log) => log.action === 'schedule.import.confirm_published_revision'
+    );
+    expect(entry).toBeDefined();
+    expect(entry?.entity_id).toBe('match-1');
+    expect((entry?.old_data as Row)?.schedule_status).toBe('published');
+    expect((entry?.new_data as Row)?.schedule_status).toBe('revision_required');
+    expect((entry?.old_data as Row)?.match).toBeDefined();
+    expect((entry?.new_data as Row)?.match).toBeDefined();
+  });
+
+  it('handles a mixed batch: confirmed published row and a non-published row both save correctly', async () => {
+    const db = buildDb({ existingMatch: publishedMatch() });
+    db.tournament_schedule_import_rows.push({
+      id: 'row-2',
+      batch_id: 'batch-1',
+      row_no: 3,
+      status: 'valid',
+      action: 'create',
+      match_code: 'B-U12-GA-002',
+      raw_payload: {
+        normalized: {
+          ...normalizedRow,
+          match_code: 'B-U12-GA-002',
+          match_no: 2,
+          start_time: '10:00',
+          home_source_ref: 'A-S3',
+          away_source_ref: 'A-S4',
+        },
+      },
+      messages: [],
+    });
+    db.tournament_group_members.push(
+      { group_id: 'group-1', slot_code: 'A-S3', team_id: null },
+      { group_id: 'group-1', slot_code: 'A-S4', team_id: null }
+    );
+    state.client = createMockClient(db);
+
+    const response = await POST(makeRequest('batch-1', true));
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.data.created).toBe(1);
+    expect(body.data.updated).toBe(1);
+    expect(body.data.revisionsConfirmed).toBe(1);
+    expect(db.tournament_matches).toHaveLength(2);
+    const newMatch = db.tournament_matches.find((m) => m.match_code === 'B-U12-GA-002');
+    expect(newMatch?.schedule_status).toBe('validated');
+    const revisedMatch = db.tournament_matches.find((m) => m.match_code === 'B-U12-GA-001');
+    expect(revisedMatch?.schedule_status).toBe('revision_required');
+  });
+
+  it('rejects confirmation from a user who is not authorized as tournament_super_admin', async () => {
+    authState.authorized = false;
+    const db = buildDb({ existingMatch: publishedMatch() });
+    state.client = createMockClient(db);
+
+    const response = await POST(makeRequest('batch-1', true));
+
+    expect(response.status).toBe(403);
+    expect(db.tournament_matches[0].schedule_status).toBe('published');
+  });
+
+  it('does not let confirmation bypass fresh revalidation against current database state', async () => {
+    const db = buildDb({ existingMatch: publishedMatch() });
+    // Simulate the venue having been removed since Preview ran.
+    db.tournament_venues = [];
+    state.client = createMockClient(db);
+
+    const response = await POST(makeRequest('batch-1', true));
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.data.failed).toBe(1);
+    expect(db.tournament_matches[0].match_time).toBe('08:00');
+    expect(db.tournament_matches[0].schedule_status).toBe('published');
+  });
+
+  it('returns the idempotent stored result on retry after a confirmed revision save', async () => {
+    const db = buildDb({ existingMatch: publishedMatch() });
+    state.client = createMockClient(db);
+
+    await POST(makeRequest('batch-1', true));
+    const second = await POST(makeRequest('batch-1', true));
+    const secondBody = await second.json();
+
+    expect(second.status).toBe(200);
+    expect(secondBody.data.idempotent).toBe(true);
+    expect(secondBody.data.revisionsConfirmed).toBe(1);
+    // No duplicate write: still exactly one match, one version.
+    expect(db.tournament_matches).toHaveLength(1);
+    expect(db.tournament_schedule_versions).toHaveLength(1);
+  });
+
+  it('allows only one writer when a confirmed save races against an already-saving batch', async () => {
+    const db = buildDb({ batchStatus: 'saving', existingMatch: publishedMatch() });
+    state.client = createMockClient(db);
+
+    const response = await POST(makeRequest('batch-1', true));
+
+    expect(response.status).toBe(409);
+    expect(db.tournament_matches[0].schedule_status).toBe('published');
+  });
+
+  it('does not require confirmation for a normal import with no published changes', async () => {
+    const db = buildDb();
+    state.client = createMockClient(db);
+
+    const response = await POST(makeRequest('batch-1', false));
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.data.created).toBe(1);
   });
 
   it('updates a changed non-published fixture successfully', async () => {
