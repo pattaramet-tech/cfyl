@@ -1,0 +1,317 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { NextRequest } from 'next/server';
+
+type Row = Record<string, unknown>;
+type Db = Record<string, Row[]>;
+
+function createMockClient(db: Db) {
+  function builder(table: string) {
+    let mode: 'select' | 'update' | 'insert' = 'select';
+    let patch: Row | null = null;
+    let insertRows: Row[] = [];
+    const filters: Array<['eq' | 'is' | 'in', string, unknown]> = [];
+
+    const rows = (): Row[] => db[table] || (db[table] = []);
+
+    function matches(row: Row): boolean {
+      return filters.every(([op, col, val]) => {
+        if (op === 'eq') return row[col] === val;
+        if (op === 'is') return (row[col] ?? null) === val;
+        if (op === 'in') return (val as unknown[]).includes(row[col]);
+        return true;
+      });
+    }
+
+    function execute(): { data: Row[]; error: null } {
+      if (mode === 'update') {
+        const matched = rows().filter(matches);
+        matched.forEach((row) => Object.assign(row, patch));
+        return { data: matched, error: null };
+      }
+      if (mode === 'insert') {
+        const created = insertRows.map((row) => {
+          const withId: Row = { id: `mock-${Math.random().toString(36).slice(2)}`, ...row };
+          rows().push(withId);
+          return withId;
+        });
+        return { data: created, error: null };
+      }
+      return { data: rows().filter(matches), error: null };
+    }
+
+    const api = {
+      select() {
+        return api;
+      },
+      eq(col: string, val: unknown) {
+        filters.push(['eq', col, val]);
+        return api;
+      },
+      is(col: string, val: unknown) {
+        filters.push(['is', col, val]);
+        return api;
+      },
+      in(col: string, val: unknown[]) {
+        filters.push(['in', col, val]);
+        return api;
+      },
+      order() {
+        return api;
+      },
+      update(p: Row) {
+        mode = 'update';
+        patch = p;
+        return api;
+      },
+      insert(p: Row | Row[]) {
+        mode = 'insert';
+        insertRows = Array.isArray(p) ? p : [p];
+        return api;
+      },
+      maybeSingle() {
+        const { data, error } = execute();
+        return Promise.resolve({ data: data.length ? data[0] : null, error });
+      },
+      single() {
+        const { data, error } = execute();
+        return Promise.resolve({ data: data.length ? data[0] : null, error });
+      },
+      then(resolve: (value: { data: Row[]; error: null }) => unknown, reject?: (reason: unknown) => unknown) {
+        return Promise.resolve(execute()).then(resolve, reject);
+      },
+    };
+    return api;
+  }
+
+  return {
+    from(table: string) {
+      return builder(table);
+    },
+  };
+}
+
+const state = vi.hoisted(() => ({ client: null as ReturnType<typeof createMockClient> | null }));
+const authState = vi.hoisted(() => ({ authorized: true as boolean }));
+
+vi.mock('@/lib/tournament/db/supabase-tournament', () => ({
+  getTournamentServiceClient: () => state.client,
+}));
+
+vi.mock('@/lib/tournament/services/auth', () => ({
+  requireTournamentResultOperator: async () => ({
+    authenticated: true,
+    authorized: authState.authorized,
+    userId: 'operator-1',
+    email: 'operator@test.com',
+    error: authState.authorized ? undefined : 'Not authorized',
+  }),
+}));
+
+import { POST } from '../route';
+
+function makeRequest(body: Record<string, unknown>): NextRequest {
+  return { json: async () => body } as unknown as NextRequest;
+}
+
+function makeParams(matchId: string) {
+  return { params: Promise.resolve({ matchId }) };
+}
+
+function buildDb(matchOverrides: Row = {}): Db {
+  return {
+    tournaments: [{ id: 'tour-1', slug: 'cfyl-2026', deleted_at: null }],
+    tournament_matches: [
+      {
+        id: 'match-1',
+        tournament_id: 'tour-1',
+        category_id: 'cat-1',
+        venue_id: 'venue-1',
+        court_id: 'court-1',
+        match_code: 'B-U12-GA-001',
+        match_no: 1,
+        match_date: '2026-08-01',
+        match_time: '08:30',
+        home_team_id: 'team-a',
+        away_team_id: 'team-b',
+        status: 'scheduled',
+        result_workflow_status: 'not_started',
+        result_type: 'normal',
+        version: 3,
+        deleted_at: null,
+        ...matchOverrides,
+      },
+    ],
+    tournament_teams: [
+      { id: 'team-a', name: 'Home School' },
+      { id: 'team-b', name: 'Away School' },
+    ],
+    tournament_venues: [{ id: 'venue-1', name: 'Field 1' }],
+    tournament_courts: [{ id: 'court-1', name: 'Court 1' }],
+    tournament_categories: [{ id: 'cat-1', code: 'B-U12', name: 'Boys U12' }],
+    tournament_result_submissions: [],
+    tournament_result_versions: [],
+    tournament_audit_logs: [],
+  };
+}
+
+const previewBody = {
+  tournament_slug: 'cfyl-2026',
+  venue_id: 'venue-1',
+  home_score: 2,
+  away_score: 1,
+  preview: true,
+};
+
+const submitBody = {
+  tournament_slug: 'cfyl-2026',
+  venue_id: 'venue-1',
+  home_score: 2,
+  away_score: 1,
+  expected_version: 3,
+  idempotency_key: 'idem-key-1',
+  session_id: 'session-abc',
+  device_metadata: { user_agent: 'test-agent', platform: 'test' },
+};
+
+describe('POST /api/tournament/admin/matches/[matchId]/quick-result', () => {
+  beforeEach(() => {
+    state.client = null;
+    authState.authorized = true;
+  });
+
+  it('returns 403 for an unauthorized caller', async () => {
+    authState.authorized = false;
+    const db = buildDb();
+    state.client = createMockClient(db);
+
+    const response = await POST(makeRequest(submitBody), makeParams('match-1'));
+
+    expect(response.status).toBe(403);
+    expect(db.tournament_result_submissions).toHaveLength(0);
+  });
+
+  it('preview writes no final submission', async () => {
+    const db = buildDb();
+    state.client = createMockClient(db);
+
+    const response = await POST(makeRequest(previewBody), makeParams('match-1'));
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.data.preview).toBe(true);
+    expect(body.data.home_team_name).toBe('Home School');
+    expect(db.tournament_result_submissions).toHaveLength(0);
+    expect(db.tournament_matches[0].version).toBe(3);
+  });
+
+  it('valid preview followed by submit succeeds and remains provisional', async () => {
+    const db = buildDb();
+    state.client = createMockClient(db);
+
+    const previewResponse = await POST(makeRequest(previewBody), makeParams('match-1'));
+    expect(previewResponse.status).toBe(200);
+
+    const submitResponse = await POST(makeRequest(submitBody), makeParams('match-1'));
+    const submitPayload = await submitResponse.json();
+
+    expect(submitResponse.status).toBe(200);
+    expect(submitPayload.data.provisional).toBe(true);
+    expect(submitPayload.data.status).toBe('submitted');
+    expect(db.tournament_matches[0].result_workflow_status).toBe('not_started');
+  });
+
+  it('returns the stored result for a duplicate idempotency key with the same payload', async () => {
+    const db = buildDb();
+    state.client = createMockClient(db);
+
+    await POST(makeRequest(submitBody), makeParams('match-1'));
+    const second = await POST(makeRequest(submitBody), makeParams('match-1'));
+    const secondBody = await second.json();
+
+    expect(second.status).toBe(200);
+    expect(secondBody.data.idempotent).toBe(true);
+    expect(db.tournament_result_submissions).toHaveLength(1);
+  });
+
+  it('rejects a duplicate idempotency key used with a different payload', async () => {
+    const db = buildDb();
+    state.client = createMockClient(db);
+
+    await POST(makeRequest(submitBody), makeParams('match-1'));
+    const response = await POST(makeRequest({ ...submitBody, home_score: 9 }), makeParams('match-1'));
+
+    expect(response.status).toBe(400);
+    expect(db.tournament_result_submissions).toHaveLength(1);
+  });
+
+  it('returns 409 for a stale match version', async () => {
+    const db = buildDb({ version: 7 });
+    state.client = createMockClient(db);
+
+    const response = await POST(makeRequest(submitBody), makeParams('match-1'));
+    const body = await response.json();
+
+    expect(response.status).toBe(409);
+    expect(body.code).toBe('QUICK_RESULT_VERSION_CONFLICT');
+    expect(db.tournament_result_submissions).toHaveLength(0);
+  });
+
+  it('allows only one successful writer for concurrent submissions', async () => {
+    const db = buildDb();
+    state.client = createMockClient(db);
+
+    const first = await POST(makeRequest({ ...submitBody, idempotency_key: 'key-A' }), makeParams('match-1'));
+    const second = await POST(makeRequest({ ...submitBody, idempotency_key: 'key-B' }), makeParams('match-1'));
+
+    expect(first.status).toBe(200);
+    expect(second.status).toBe(409);
+    expect(db.tournament_result_submissions).toHaveLength(1);
+  });
+
+  it('records audit entry with actor, session, and device metadata', async () => {
+    const db = buildDb();
+    state.client = createMockClient(db);
+
+    await POST(makeRequest(submitBody), makeParams('match-1'));
+
+    const entry = db.tournament_audit_logs.find((log) => log.action === 'tournament.quick_result.submit');
+    expect(entry).toBeDefined();
+    expect(entry?.admin_id).toBe('operator-1');
+    expect(entry?.admin_email).toBe('operator@test.com');
+    const newData = entry?.new_data as Row;
+    expect(newData.session_id).toBe('session-abc');
+    expect(newData.device_metadata).toMatchObject({ user_agent: 'test-agent' });
+    expect(newData.idempotency_key).toBe('idem-key-1');
+  });
+
+  it('blocks submission when a placeholder side is unresolved', async () => {
+    const db = buildDb({ away_team_id: null });
+    state.client = createMockClient(db);
+
+    const response = await POST(makeRequest(submitBody), makeParams('match-1'));
+    const body = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(body.code).toBe('AWAY_TEAM_UNRESOLVED');
+  });
+
+  it('rejects a wrong venue for the match', async () => {
+    const db = buildDb();
+    state.client = createMockClient(db);
+
+    const response = await POST(makeRequest({ ...submitBody, venue_id: 'venue-OTHER' }), makeParams('match-1'));
+    expect(response.status).toBe(400);
+  });
+
+  it('does not set result_workflow_status to published and does not create scorer/card records', async () => {
+    const db = buildDb();
+    state.client = createMockClient(db);
+
+    await POST(makeRequest(submitBody), makeParams('match-1'));
+
+    expect(db.tournament_matches[0].result_workflow_status).not.toBe('published');
+    expect(db.tournament_match_goals).toBeUndefined();
+    expect(db.tournament_match_cards).toBeUndefined();
+    expect(db.tournament_suspension_events).toBeUndefined();
+  });
+});
