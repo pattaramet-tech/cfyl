@@ -15,7 +15,7 @@ against any project yet.** Source of truth for every column/constraint is
 
 ## Run order
 
-Run all 14 files **in order**, once per project (Staging first, then Production). Each
+Run all 15 files **in order**, once per project (Staging first, then Production). Each
 file is idempotent (`create table if not exists`, `create index if not exists`,
 `drop policy if exists` before `create policy`), so a partial failure can be fixed and
 the same file re-run safely.
@@ -36,6 +36,7 @@ the same file re-run safely.
 | 12 | `012-draw-selected-source-support.sql` | `draw_selected` source-type support on `tournament_matches`, qualification draw uniqueness guards (`uniq_tqualdraw_active_category_slot`, `uniq_tqualcand_selected_order`), G-U16 qualification-rule backfill |
 | 13 | `013-schedule-batch-atomic-save.sql` | Adds `'saving'`/`'failed'` to `tournament_schedule_batches.status`, adds `failed_at`/`failure_reason` columns |
 | 13a | `013a-schedule-import-save-result-and-rollback.sql` | Adds `tournament_schedule_batches.save_result` (missing from every prior migration despite the Save route depending on it), adds `'rolling_back'` to `status` and `rollback_failure_reason`, adds `tournament_schedule_import_rows.before_payload`/`applied_match_version`/`applied_match_updated_at`, and creates the `tournament.rollback_schedule_import_batch()` RPC. A separate, additive repair migration — does not modify the already-applied 013 retroactively. |
+| 13b | `013b-schedule-rollback-concurrency-fix.sql` | `CREATE OR REPLACE FUNCTION` only, no column changes. Fixes two bugs verified in 013a's rollback RPC (see "Rollback workflow" below): a TOCTOU/lost-update race between its conflict-check and apply passes, and a conflict-triggered `status='failed'` write that a subsequent `RAISE EXCEPTION` silently rolled back. Does not modify the already-applied 013a retroactively. |
 
 **Why this order, not the Data Model doc's own section order**: `tournament_matches`
 (Data Model §2.8) references `tournament_knockout_rounds` (§2.15), so §2.15 is created
@@ -61,7 +62,7 @@ must exist first) and before testing anything through the client or `verify-foun
 2. Add `tournament` to **Exposed schemas**
 3. Save
 
-## After running all 14 files
+## After running all 15 files
 
 1. Confirm the `tournament` schema is in Exposed Schemas (previous section) — do this
    before the next two steps, or they'll fail with a schema-not-found error unrelated
@@ -167,10 +168,78 @@ rejected as "changed since import" against its own history. Covered by a dedicat
 → *"allows rolling back an earlier batch after a later batch on the same Match was
 already rolled back."*
 
-### Results of the latest run against CFYL-Tournament-Staging — ✅ all 13 scenarios passed
+### Rollback concurrency + conflict-persistence fix (migration 013b)
 
-Migration 013a is applied to `CFYL-Tournament-Staging`. With it in place,
-`npm run verify:tournament-schedule-import-runtime` passed end to end:
+A final review of PR #6 (after the "runtime gate passed" milestone below) found two real
+bugs in 013a's `rollback_schedule_import_batch()`, both fixed by
+`scripts/tournament-v2/013b-schedule-rollback-concurrency-fix.sql` (`CREATE OR REPLACE
+FUNCTION` only — no column changes, does not modify 013a retroactively):
+
+1. **TOCTOU / lost-update race.** The conflict-check pass read each matched Match's
+   version/updated_at with a plain `SELECT` (no lock); the apply pass mutated it in a
+   separate statement. Nothing prevented a concurrent write to that same Match (e.g. an
+   ordinary admin edit via the regular match editor) from landing in the gap between the
+   two passes and being silently overwritten. **Fixed**: every matched Match is now
+   locked with `SELECT ... FOR UPDATE`, acquired in deterministic `matched_match_id`
+   order (reduces deadlock risk against another concurrent rollback touching overlapping
+   Matches) and held for the rest of the transaction — closing the gap entirely. The
+   apply-pass `DELETE`/`UPDATE` is additionally made conditional on the exact expected
+   `version`/`updated_at`, with a `GET DIAGNOSTICS ... ROW_COUNT` check that fails closed
+   (raises, aborting the whole transaction) if the expected row was not the one mutated —
+   defense in depth for "should never happen given the lock, but if it does, do not
+   proceed silently."
+2. **Conflict state never persisted.** On conflict, 013a did
+   `UPDATE ... SET status = 'failed', rollback_failure_reason = ...` and then `RAISE
+   EXCEPTION`. Since the whole function call is one Postgres transaction, the unhandled
+   exception rolled back that same update — the batch silently reverted to `'saved'` and
+   the failure reason was never actually stored, contradicting 013a's own documented
+   behavior. **Fixed**: the conflict path no longer raises. It commits `status='failed'`
+   + `rollback_failure_reason` + `failed_at` as part of the function's own normal,
+   non-erroring return, and returns a structured JSON payload
+   (`{status:'failed', errorCode:'SCHEDULE_ROLLBACK_CONFLICT', conflicts:[...]}`) instead
+   — `app/api/tournament/admin/schedule/import/batches/[batchId]/rollback/route.ts` now
+   detects this structured response and maps it to HTTP 409, the same as before. Only
+   genuinely unexpected failures (batch not found, wrong status, the ROW_COUNT anomaly
+   above) still raise and roll back atomically. Claiming a batch (`saved -> rolling_back`)
+   also now clears any stale `rollback_failure_reason`/`failed_at` left over from an
+   earlier failed attempt.
+
+`mockRollbackRpc.ts` was updated to match: it now commits the failed batch state and
+returns a structured conflict object instead of simulating the conflict by mutating state
+and then returning a Postgres-style `error` (which would silently reintroduce exactly the
+bug above into the test suite, since a real `error` from supabase-js means the whole
+transaction was rolled back). New tests assert `status='failed'`,
+`rollback_failure_reason`, and `failed_at` all persist after a conflict, that the route
+maps the structured response to HTTP 409, and that no Match is partially
+deleted/restored. Static tests
+(`scripts/tournament-v2/__tests__/013bMigrationStatic.test.ts`) confirm the `FOR UPDATE`
+lock, deterministic lock ordering, the conflict path returning rather than raising after
+the failed-state update, and the conditional `DELETE`/`UPDATE` version/updated_at checks
+are all present in the SQL source text.
+
+The runtime verifier gained two new scenarios for this fix (not yet run against Staging —
+013b has not been applied there yet):
+
+- **Conflict persistence**: create and update a disposable Match through Schedule
+  Import, mutate that Match directly afterward (simulating an unrelated admin edit),
+  call the real rollback RPC, and confirm it returns a structured conflict (not an
+  exception), the batch's `status='failed'`/`rollback_failure_reason`/`failed_at` all
+  persist on re-query, and the external edit survived completely untouched (no partial
+  rollback).
+- **Real concurrent race**: fires a real rollback call and a real, unconditional direct
+  Match edit via `Promise.all` (no `await` between them, so both requests reach Postgres
+  as genuinely independent, concurrent transactions — real locking arbitrates the
+  outcome, nothing is simulated). Accepts either safe ordering (the concurrent edit
+  commits first and rollback reports a conflict, or the rollback locks first and
+  completes, with the edit applying afterward) — the only invariant asserted is that the
+  concurrent edit's value is present in the *final* Match state in both cases, proving a
+  committed concurrent edit is never silently overwritten.
+
+### Results of the run against CFYL-Tournament-Staging before 013b existed — all 13 scenarios passed
+
+Migration 013a is applied to `CFYL-Tournament-Staging`. With it (but not yet 013b) in
+place, `npm run verify:tournament-schedule-import-runtime` passed end to end for every
+scenario that existed at the time:
 
 | Check | Result |
 |---|---|
@@ -194,7 +263,14 @@ directly against `tournament_matches.match_code`, which Save always persists upp
 via `normalizeScheduleImportRow`'s `upper(raw.match_code)`. The exact-equality lookup
 silently missed. Fixed by normalizing the lookup value the same way before querying.
 
-**PR #6 runtime gate passed; ready for final review.**
+**Status update — a subsequent final review found the two real Rollback bugs described
+above, which this "all 13 scenarios passed" run predates and could not have caught (no
+concurrency scenario existed yet, and the conflict-persistence assertions only checked
+the in-memory response, not a re-query of the batch row).** Migration 013b, the code
+fixes, and two new verifier scenarios covering exactly these bugs are now prepared and
+unit/static-tested, but **not yet run against real Staging** — that requires the owner
+to apply 013b there first. Do not treat the runtime gate as passed again until that run
+actually happens and succeeds, including the two new scenarios above.
 
 ---
 
