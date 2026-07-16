@@ -107,19 +107,75 @@ function makePostRequest(body: Record<string, unknown>): NextRequest {
   return { json: async () => body } as unknown as NextRequest;
 }
 
+// One published, official round-robin per group (A/B/C), engineered so that
+// team-1/team-2/team-3 finish exactly 3rd in their respective group — this
+// makes them the Standings Engine's computed G-U16 third-place candidates,
+// matching the team IDs already referenced by validBody below.
+function groupResultMatches(params: {
+  groupId: string;
+  first: string;
+  second: string;
+  third: string;
+}): Row[] {
+  const base = {
+    tournament_id: 'tour-1',
+    category_id: 'cat-1',
+    group_id: params.groupId,
+    status: 'finished',
+    result_workflow_status: 'published',
+    decided_by: 'regulation',
+    deleted_at: null,
+  };
+  return [
+    { id: `${params.groupId}-m1`, home_team_id: params.first, away_team_id: params.second, regulation_home_score: 2, regulation_away_score: 0, winner_team_id: params.first, ...base },
+    { id: `${params.groupId}-m2`, home_team_id: params.first, away_team_id: params.third, regulation_home_score: 2, regulation_away_score: 0, winner_team_id: params.first, ...base },
+    { id: `${params.groupId}-m3`, home_team_id: params.second, away_team_id: params.third, regulation_home_score: 1, regulation_away_score: 0, winner_team_id: params.second, ...base },
+  ];
+}
+
 function buildDb(overrides: { existingDraw?: Row } = {}): Db {
   return {
     tournaments: [{ id: 'tour-1', slug: 'cfyl-2026', status: 'active', deleted_at: null }],
     tournament_categories: [{ id: 'cat-1', tournament_id: 'tour-1', code: 'G-U16', deleted_at: null }],
     tournament_qualification_rules: [
-      { tournament_id: 'tour-1', category_id: 'cat-1', best_third_placed_count: 2, best_third_placed_method: 'draw' },
+      {
+        tournament_id: 'tour-1',
+        category_id: 'cat-1',
+        qualify_rank_per_group: 2,
+        best_third_placed_count: 2,
+        best_third_placed_method: 'draw',
+        cross_group_comparison: false,
+      },
+    ],
+    tournament_groups: [
+      { id: 'group-a', tournament_id: 'tour-1', category_id: 'cat-1', code: 'A' },
+      { id: 'group-b', tournament_id: 'tour-1', category_id: 'cat-1', code: 'B' },
+      { id: 'group-c', tournament_id: 'tour-1', category_id: 'cat-1', code: 'C' },
     ],
     tournament_teams: [
-      { id: 'team-1', tournament_id: 'tour-1', category_id: 'cat-1', team_code: 'A3', name: 'Group A 3rd' },
-      { id: 'team-2', tournament_id: 'tour-1', category_id: 'cat-1', team_code: 'B3', name: 'Group B 3rd' },
-      { id: 'team-3', tournament_id: 'tour-1', category_id: 'cat-1', team_code: 'C3', name: 'Group C 3rd' },
+      { id: 'team-a1', tournament_id: 'tour-1', category_id: 'cat-1', team_code: 'A1', name: 'Group A 1st', deleted_at: null },
+      { id: 'team-a2', tournament_id: 'tour-1', category_id: 'cat-1', team_code: 'A2', name: 'Group A 2nd', deleted_at: null },
+      { id: 'team-1', tournament_id: 'tour-1', category_id: 'cat-1', team_code: 'A3', name: 'Group A 3rd', deleted_at: null },
+      { id: 'team-b1', tournament_id: 'tour-1', category_id: 'cat-1', team_code: 'B1', name: 'Group B 1st', deleted_at: null },
+      { id: 'team-b2', tournament_id: 'tour-1', category_id: 'cat-1', team_code: 'B2', name: 'Group B 2nd', deleted_at: null },
+      { id: 'team-2', tournament_id: 'tour-1', category_id: 'cat-1', team_code: 'B3', name: 'Group B 3rd', deleted_at: null },
+      { id: 'team-c1', tournament_id: 'tour-1', category_id: 'cat-1', team_code: 'C1', name: 'Group C 1st', deleted_at: null },
+      { id: 'team-c2', tournament_id: 'tour-1', category_id: 'cat-1', team_code: 'C2', name: 'Group C 2nd', deleted_at: null },
+      { id: 'team-3', tournament_id: 'tour-1', category_id: 'cat-1', team_code: 'C3', name: 'Group C 3rd', deleted_at: null },
     ],
-    tournament_group_members: [],
+    tournament_group_members: [
+      { group_id: 'group-a', team_id: 'team-a1' },
+      { group_id: 'group-a', team_id: 'team-a2' },
+      { group_id: 'group-a', team_id: 'team-1' },
+      { group_id: 'group-b', team_id: 'team-b1' },
+      { group_id: 'group-b', team_id: 'team-b2' },
+      { group_id: 'group-b', team_id: 'team-2' },
+      { group_id: 'group-c', team_id: 'team-c1' },
+      { group_id: 'group-c', team_id: 'team-c2' },
+      { group_id: 'group-c', team_id: 'team-3' },
+    ],
+    tournament_match_cards: [],
+    tournament_standing_overrides: [],
     tournament_matches: [
       {
         id: 'match-qf-1',
@@ -149,6 +205,9 @@ function buildDb(overrides: { existingDraw?: Row } = {}): Db {
         sources_resolved_at: null,
         deleted_at: null,
       },
+      ...groupResultMatches({ groupId: 'group-a', first: 'team-a1', second: 'team-a2', third: 'team-1' }),
+      ...groupResultMatches({ groupId: 'group-b', first: 'team-b1', second: 'team-b2', third: 'team-2' }),
+      ...groupResultMatches({ groupId: 'group-c', first: 'team-c1', second: 'team-c2', third: 'team-3' }),
     ],
     tournament_qualification_draws: overrides.existingDraw ? [overrides.existingDraw] : [],
     tournament_qualification_draw_candidates: [],
@@ -313,5 +372,36 @@ describe('qualification-draws route', () => {
 
     expect(response.status).toBe(400);
     expect(db.tournament_qualification_draws).toHaveLength(0);
+  });
+
+  it('GET returns no candidates and the Thai incomplete message when Standings are not yet complete (no silent fallback to all teams)', async () => {
+    const db = buildDb();
+    // Remove group C's results — Standings can no longer compute a resolved
+    // third place for every group, so the candidate pool must be empty, not
+    // silently substituted with "all teams in category".
+    db.tournament_matches = db.tournament_matches.filter((row) => !String(row.id).startsWith('group-c-'));
+    state.client = createMockClient(db);
+
+    const response = await GET(makeGetRequest({ tournament_slug: 'cfyl-2026', category_code: 'G-U16' }));
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.data.candidate_options).toHaveLength(0);
+    expect(body.data.candidates_incomplete_reason).toBe(
+      'ยังไม่สามารถระบุทีมอันดับ 3 ได้ เนื่องจากผลการแข่งขันยังไม่ครบหรือยังไม่เผยแพร่'
+    );
+  });
+
+  it('POST rejects a candidate_team_ids submission that does not match the Standings-computed eligible teams', async () => {
+    const db = buildDb();
+    // Substitute a team that is NOT the Standings-computed 3rd place of any
+    // group (team-a1 finished 1st in group A, not eligible).
+    state.client = createMockClient(db);
+
+    const response = await POST(
+      makePostRequest({ ...validBody, candidate_team_ids: ['team-a1', 'team-2', 'team-3'], preview: true })
+    );
+
+    expect(response.status).toBe(400);
   });
 });

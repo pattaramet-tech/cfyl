@@ -92,6 +92,28 @@ const team2 = { id: 'team-2', tournament_id: 'tour-1', category_id: 'cat-1', tea
 const team3 = { id: 'team-3', tournament_id: 'tour-1', category_id: 'cat-1', team_code: 'C3', name: 'Group C 3rd' };
 const otherCategoryTeam = { id: 'team-x', tournament_id: 'tour-1', category_id: 'cat-2', team_code: 'X1', name: 'Other Cat Team' };
 
+// Standings-computable fixture: each of team-1/team-2/team-3 must genuinely
+// finish 3rd (via a published, official round-robin) in its own group — this
+// is now the ONLY legitimate source for the "eligible candidate" checks that
+// getQualificationDrawState / save / preview all perform, replacing the old
+// "all teams in category" placeholder source.
+function groupResultMatches(groupId: string, first: string, second: string, third: string): Row[] {
+  const base = {
+    tournament_id: 'tour-1',
+    category_id: 'cat-1',
+    group_id: groupId,
+    status: 'finished',
+    result_workflow_status: 'published',
+    decided_by: 'regulation',
+    deleted_at: null,
+  };
+  return [
+    { id: `${groupId}-m1`, home_team_id: first, away_team_id: second, regulation_home_score: 2, regulation_away_score: 0, winner_team_id: first, ...base },
+    { id: `${groupId}-m2`, home_team_id: first, away_team_id: third, regulation_home_score: 2, regulation_away_score: 0, winner_team_id: first, ...base },
+    { id: `${groupId}-m3`, home_team_id: second, away_team_id: third, regulation_home_score: 1, regulation_away_score: 0, winner_team_id: second, ...base },
+  ];
+}
+
 function buildDb(overrides: { existingMatches?: Row[]; existingDraw?: Row; tournamentStatus?: string } = {}): Db {
   const db: Db = {
     tournaments: [{ id: 'tour-1', slug: 'cfyl-2026', status: overrides.tournamentStatus || 'active', deleted_at: null }],
@@ -99,15 +121,46 @@ function buildDb(overrides: { existingMatches?: Row[]; existingDraw?: Row; tourn
       { id: 'cat-1', tournament_id: 'tour-1', code: 'G-U16', deleted_at: null },
       { id: 'cat-2', tournament_id: 'tour-1', code: 'B-U12', deleted_at: null },
     ],
-    tournament_qualification_rules: [
-      { tournament_id: 'tour-1', category_id: 'cat-1', best_third_placed_count: 2, best_third_placed_method: 'draw' },
+    tournament_groups: [
+      { id: 'group-a', tournament_id: 'tour-1', category_id: 'cat-1', code: 'A' },
+      { id: 'group-b', tournament_id: 'tour-1', category_id: 'cat-1', code: 'B' },
+      { id: 'group-c', tournament_id: 'tour-1', category_id: 'cat-1', code: 'C' },
     ],
-    tournament_teams: [team1, team2, team3, otherCategoryTeam],
+    tournament_qualification_rules: [
+      {
+        tournament_id: 'tour-1',
+        category_id: 'cat-1',
+        qualify_rank_per_group: 2,
+        best_third_placed_count: 2,
+        best_third_placed_method: 'draw',
+        cross_group_comparison: false,
+      },
+    ],
+    tournament_teams: [
+      team1,
+      team2,
+      team3,
+      otherCategoryTeam,
+      { id: 'team-a1', tournament_id: 'tour-1', category_id: 'cat-1', team_code: 'A1', name: 'Group A 1st' },
+      { id: 'team-a2', tournament_id: 'tour-1', category_id: 'cat-1', team_code: 'A2', name: 'Group A 2nd' },
+      { id: 'team-b1', tournament_id: 'tour-1', category_id: 'cat-1', team_code: 'B1', name: 'Group B 1st' },
+      { id: 'team-b2', tournament_id: 'tour-1', category_id: 'cat-1', team_code: 'B2', name: 'Group B 2nd' },
+      { id: 'team-c1', tournament_id: 'tour-1', category_id: 'cat-1', team_code: 'C1', name: 'Group C 1st' },
+      { id: 'team-c2', tournament_id: 'tour-1', category_id: 'cat-1', team_code: 'C2', name: 'Group C 2nd' },
+    ],
     tournament_group_members: [
+      { group_id: 'group-a', team_id: 'team-a1' },
+      { group_id: 'group-a', team_id: 'team-a2' },
       { group_id: 'group-a', team_id: 'team-1' },
+      { group_id: 'group-b', team_id: 'team-b1' },
+      { group_id: 'group-b', team_id: 'team-b2' },
       { group_id: 'group-b', team_id: 'team-2' },
+      { group_id: 'group-c', team_id: 'team-c1' },
+      { group_id: 'group-c', team_id: 'team-c2' },
       { group_id: 'group-c', team_id: 'team-3' },
     ],
+    tournament_match_cards: [],
+    tournament_standing_overrides: [],
     tournament_matches: overrides.existingMatches || [
       {
         id: 'match-qf-1',
@@ -152,6 +205,9 @@ function buildDb(overrides: { existingMatches?: Row[]; existingDraw?: Row; tourn
         sources_resolved_at: null,
         deleted_at: null,
       },
+      ...groupResultMatches('group-a', 'team-a1', 'team-a2', 'team-1'),
+      ...groupResultMatches('group-b', 'team-b1', 'team-b2', 'team-2'),
+      ...groupResultMatches('group-c', 'team-c1', 'team-c2', 'team-3'),
     ],
     tournament_qualification_draws: overrides.existingDraw ? [overrides.existingDraw] : [],
     tournament_qualification_draw_candidates: [],
