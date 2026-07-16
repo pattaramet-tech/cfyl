@@ -11,6 +11,7 @@
   },
   "include": [
     "./verify-foundation.ts",
+    "./verify-schedule-import-runtime.ts",
     "../../lib/tournament/db/**/*.ts"
   ]
 }

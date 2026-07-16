@@ -52,7 +52,7 @@
 | D-22 | เจ้าหน้าที่อาสาสมัครเข้าระบบผ่าน QR Code | 🟡 รอตัดสินใจ | (a) Shortcut ไปหน้า Login ปกติ | Phase 5b |
 | D-24 | Schedule Capacity and Rest Validation | ✅ DECIDED (2026-07-14) | `venue_max_matches_per_day = 8` (Error); `minimum_rest_minutes`/`max_matches_per_team_per_day` = ไม่ Validate ใน MVP (Future Enhancement) | Phase 4b ปลดล็อก |
 | D-25 | Import Batch Rollback Permission | 🟡 รอตัดสินใจ | (a) `tournament_super_admin` เท่านั้น | Phase 4b |
-| D-28 | Auto-downgrade Schedule Status | 🟡 รอตัดสินใจ | (b) ต้องมีคนกดยืนยัน | Phase 4b, Phase 4c |
+| D-28 | Published Schedule Revision Workflow (Auto-downgrade Schedule Status) | ✅ DECIDED (2026-07-15) | (b) ต้องมีคนกดยืนยันก่อนถึงจะ Downgrade `published` → `revision_required` | Phase 4b, Phase 4c ปลดล็อก |
 | D-26 | จำนวน Version ย้อนหลังของ Schedule | 🟢 Can Defer | ไม่จำกัด | ไม่ Block งานใด |
 | D-29 | G-U16 Third-place Qualification by Draw | ✅ DECIDED (2026-07-14) | จับฉลากเลือก 2 จาก 3 ทีมอันดับ 3 เข้ารอบ 8 ทีม (ไม่ใช้คะแนน/GD/GF) | Phase 6/Phase 7 — เฉพาะ Category G-U16 |
 | Q27 | Full Auto Scheduler ใน MVP รอบนี้ | ⚪ RESOLVED | ไม่ทำใน MVP (เก็บไว้เป็น Future Phase) | — (ปิดแล้ว) |
@@ -64,7 +64,7 @@
 1. **รอบที่ 1 — Architecture Lock**: D-01, D-02, D-03, D-15 → ✅ **เสร็จสิ้นแล้ว (2026-07-14)**
 2. **รอบที่ 2 — Business Rules**: D-04, D-05, D-06, D-07, D-09 → ✅ **เสร็จสิ้นแล้วทั้งหมด (2026-07-14)** (+ D-29 เพิ่มใหม่ในรอบนี้)
 3. **รอบที่ 3 — Venue Operations**: D-16 → ✅ **เสร็จสิ้นแล้ว (2026-07-14)** | D-17, D-18, D-19, D-20, D-21, D-22 → 🟡 ยังไม่ตอบ (ไม่ Block Phase 1)
-4. **รอบที่ 4 — Scheduling/Draw**: D-24 → ✅ **เสร็จสิ้นแล้ว (2026-07-14)** | D-25, D-26, D-28 → 🟡 ยังไม่ตอบ (ไม่ Block Phase 1)
+4. **รอบที่ 4 — Scheduling/Draw**: D-24, D-28 → ✅ **เสร็จสิ้นแล้ว (D-24: 2026-07-14, D-28: 2026-07-15)** | D-25, D-26 → 🟡 ยังไม่ตอบ (ไม่ Block Phase 1)
 5. **รอบที่ 5 — Public/Operational**: D-10, D-11, D-12, D-13, D-14 → 🔴 ยังไม่เริ่ม (ไม่ Block Phase 1)
 
 **Blocker ก่อนเริ่ม Phase 1**: **ไม่มีเหลือแล้ว** — รอบที่ 1, 2 และ D-16/D-24 จากรอบที่ 3-4 เสร็จสิ้นครบถ้วน Decision ที่เหลือทั้งหมด (13 ข้อ) เป็นกลุ่ม REQUIRED BEFORE FEATURE PHASE ที่ตอบได้ระหว่างทางก่อนถึง Phase ที่เกี่ยวข้องจริง ไม่จำเป็นต้องตอบก่อนเริ่ม Phase 1
@@ -606,8 +606,8 @@
   - **(b) รอ Manual Confirm**: ควบคุมได้มากกว่า แต่เพิ่มขั้นตอน UX อีกหนึ่งจุดที่ผู้จัดโปรแกรมต้องกดยืนยัน
 - **Phase ที่ถูก Block**: Phase 4b (Excel Import), Phase 4c (Draw Assignment Import)
 - **Owner ที่ควรตอบ**: เจ้าของระบบ + ผู้จัดโปรแกรมแข่งขันจริง
-- **Final Decision**: _(รอตัดสินใจ)_
-- **Decision Date**: _(รอตัดสินใจ)_
+- **Final Decision**: ✅ **(b) ต้องมีคนกดยืนยันก่อนถึงจะ Downgrade สถานะ (Manual Confirmation Required)** — ห้าม Auto-downgrade `published` → `revision_required` โดยไม่มีการยืนยันจาก Authorized Admin (`tournament_super_admin`) อย่างชัดเจน Import ต้อง Detect การเปลี่ยนแปลงต่อ Published Fixture, แสดง W11 พร้อม Diff เต็ม, บล็อก Save ปกติ (HTTP 409) จนกว่าจะมีการยืนยันแยกต่างหาก (`confirmPublishedRevision: true`) หลังยืนยันแล้วเปลี่ยนเฉพาะคู่ที่แก้ไขจริงเป็น `revision_required` (ไม่ Auto-publish ซ้ำ) — Fixture ที่ไม่เปลี่ยนแปลงคงสถานะ `published` เดิมไว้ไม่แตะต้อง
+- **Decision Date**: 2026-07-15
 
 ---
 
@@ -729,7 +729,7 @@
 | Q25 | D-25 | 🟡 รอตัดสินใจ |
 | Q26 | D-26 | 🟢 Can Defer |
 | Q27 | RESOLVED (ปิดแล้ว) | ⚪ RESOLVED |
-| Q28 | D-28 | 🟡 รอตัดสินใจ |
+| Q28 | D-28 | ✅ DECIDED |
 | — | D-29 (ใหม่) | ✅ DECIDED |
 
 **หัวข้อบังคับ 12 ข้อจากคำสั่งงานรอบก่อนหน้า — ยังครอบคลุมครบถ้วน**:

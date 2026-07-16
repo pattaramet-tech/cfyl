@@ -47,12 +47,12 @@ const NAV_GROUPS: NavGroup[] = [
     ],
   },
   {
-    title: 'Tournament',
+    title: 'Tournament V2',
     items: [
-      { href: '/admin/seasons', label: 'Seasons', icon: '🗓️' },
-      { href: '/admin/tournament-groups', label: 'Tournaments', icon: '🏆' },
-      { href: '/admin/tournament-fixtures', label: 'Tournament Fixtures', icon: '📅' },
-      { href: '/admin/tournament-bracket', label: 'Tournament Bracket', icon: '🏐' },
+      { href: '/admin/tournament', label: 'Tournament Center', icon: '🏆' },
+      { href: '/admin/tournament/setup', label: 'Setup & Venues', icon: '⚙️' },
+      { href: '/admin/tournament/meeting-draw', label: 'Meeting Draw', icon: '🎲' },
+      { href: '/admin/tournament/schedule/import', label: 'Import Schedule', icon: '📅' },
     ],
   },
   {
@@ -71,7 +71,7 @@ const NAV_GROUPS: NavGroup[] = [
 ];
 
 function isActivePath(pathname: string, href: string): boolean {
-  if (href === '/admin/dashboard') return pathname === href;
+  if (href === '/admin/dashboard' || href === '/admin/tournament') return pathname === href;
   return pathname === href || pathname.startsWith(`${href}/`);
 }
 

@@ -201,6 +201,67 @@ async function seed() {
     }
     console.log('[SEED] ✓ Mappings upserted');
 
+    console.log('[SEED] Ensuring G-U16 qualification draw rule...');
+    const { data: gU16Category, error: gU16CategoryError } = await client
+      .from('tournament_categories')
+      .select('id')
+      .eq('tournament_id', tournamentId)
+      .eq('code', 'G-U16')
+      .maybeSingle();
+
+    if (gU16CategoryError) {
+      throw new Error(`Failed to look up G-U16 category: ${gU16CategoryError.message}`);
+    }
+    if (!gU16Category) {
+      throw new Error('Failed to find G-U16 category after category upsert');
+    }
+
+    const { data: existingQualificationRules, error: existingQualificationRulesError } = await client
+      .from('tournament_qualification_rules')
+      .select('id')
+      .eq('tournament_id', tournamentId)
+      .eq('category_id', gU16Category.id);
+
+    if (existingQualificationRulesError) {
+      throw new Error(
+        `Failed to look up G-U16 qualification rules: ${existingQualificationRulesError.message}`
+      );
+    }
+
+    const qualificationRulePayload = {
+      tournament_id: tournamentId,
+      category_id: gU16Category.id,
+      qualify_rank_per_group: 2,
+      best_third_placed_count: 2,
+      best_third_placed_method: 'draw',
+      cross_group_comparison: false,
+    };
+
+    if ((existingQualificationRules || []).length === 0) {
+      const { error: qualificationRuleInsertError } = await client
+        .from('tournament_qualification_rules')
+        .insert(qualificationRulePayload);
+
+      if (qualificationRuleInsertError) {
+        throw new Error(
+          `Failed to insert G-U16 qualification rule: ${qualificationRuleInsertError.message}`
+        );
+      }
+    } else {
+      const { error: qualificationRuleUpdateError } = await client
+        .from('tournament_qualification_rules')
+        .update(qualificationRulePayload)
+        .eq('tournament_id', tournamentId)
+        .eq('category_id', gU16Category.id);
+
+      if (qualificationRuleUpdateError) {
+        throw new Error(
+          `Failed to update G-U16 qualification rule: ${qualificationRuleUpdateError.message}`
+        );
+      }
+    }
+    console.log('[SEED] ✓ G-U16 qualification draw rule ready');
+
     console.log('[SEED] Creating tournament groups...');
     let groupsCreated = 0;
     for (const category of CATEGORIES) {
