@@ -249,7 +249,7 @@ describe('POST /api/tournament/admin/schedule/import/batches/[batchId]/rollback'
     expect(restored.updated_by).toBe('admin-0');
   });
 
-  it('blocks rollback when the Match has been edited since this batch applied it', async () => {
+  it('blocks rollback when the Match has been edited since this batch applied it, and persists the conflict (not undone by a raised exception)', async () => {
     const db = buildDb({
       matches: [baseMatch({ version: 5, updated_at: '2026-08-05T00:00:00.000Z' })],
     });
@@ -260,8 +260,29 @@ describe('POST /api/tournament/admin/schedule/import/batches/[batchId]/rollback'
 
     expect(response.status).toBe(409);
     expect(body.code).toBe('SCHEDULE_ROLLBACK_CONFLICT');
+    expect(body.conflicts).toHaveLength(1);
     expect(db.tournament_matches[0].version).toBe(5);
+    // The whole point of migration 013b: this must actually persist, not be rolled back
+    // by a subsequently-raised exception (013a's bug — see mockRollbackRpc.ts's header
+    // comment for why the mock would silently reintroduce that bug if it threw here
+    // instead of returning normally).
     expect(db.tournament_schedule_batches[0].status).toBe('failed');
+    expect(db.tournament_schedule_batches[0].rollback_failure_reason).toBeTruthy();
+    expect(db.tournament_schedule_batches[0].rollback_failure_reason).toContain('MATCH_CHANGED_SINCE_IMPORT');
+    expect(db.tournament_schedule_batches[0].failed_at).toBeTruthy();
+  });
+
+  it('clears a stale rollback_failure_reason/failed_at from an earlier failed attempt when a batch is successfully claimed', async () => {
+    const db = buildDb();
+    (db.tournament_schedule_batches[0] as Row).rollback_failure_reason = 'stale conflict from a previous attempt';
+    (db.tournament_schedule_batches[0] as Row).failed_at = '2020-01-01T00:00:00.000Z';
+    state.client = createMockClient(db);
+
+    const response = await POST(makeRequest(), makeParams('batch-1'));
+
+    expect(response.status).toBe(200);
+    expect(db.tournament_schedule_batches[0].rollback_failure_reason).toBeFalsy();
+    expect(db.tournament_schedule_batches[0].failed_at).toBeFalsy();
   });
 
   it('blocks rollback of a currently published Match', async () => {

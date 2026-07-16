@@ -1161,10 +1161,91 @@ async function scenarioSaveUpdate(ctx: Ctx, m1RawRow: RawScheduleImportRow): Pro
 }
 
 // ============================================================================
+// A third, independent disposable Match (M3) — used by the conflict-persistence and
+// concurrent-race scenarios below, which run AFTER M1/M2 have already been deleted by
+// the rollback-of-create scenario further down, and need their own fresh Match so they
+// don't depend on ordering against that earlier chain.
+// ============================================================================
+
+function buildThirdRawRow(ctx: Ctx): RawScheduleImportRow {
+  return {
+    match_code: `${RUN_TAG}-M3`,
+    category_code: ctx.categoryCode,
+    stage: 'round_of_16',
+    group_code: '',
+    venue_code: 'V1',
+    court_code: 'C1',
+    match_date: '2026-06-01',
+    start_time: '11:00',
+    match_no: 3,
+    home_source_type: 'team',
+    home_source_ref: 'TA',
+    away_source_type: 'team',
+    away_source_ref: 'TB',
+    result_policy: 'single_step',
+    status: 'scheduled',
+    note: `runtime verify ${RUN_TAG}`,
+  };
+}
+
+async function createSingleRowBatch(ctx: Ctx, raw: RawScheduleImportRow): Promise<{ batchId: string; result: ValidatedScheduleImportRow }> {
+  const { context } = await loadScheduleContext(ctx.client, ctx.tournamentId);
+  const seen = createScheduleBatchSeen();
+  const result = validateScheduleImportRow(raw, 2, context, seen);
+  assert(result.status !== 'error', `expected row to validate without error, got '${result.status}': ${JSON.stringify(result.messages)}`);
+
+  const { data: batchData, error: batchError } = await ctx.client
+    .from('tournament_schedule_batches')
+    .insert({
+      tournament_id: ctx.tournamentId,
+      batch_type: 'fixture_import',
+      file_name: `runtime-verify-extra-${RUN_TAG}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}.xlsx`,
+      status: 'preview',
+      total_rows: 1,
+      valid_rows: result.status === 'valid' ? 1 : 0,
+      warning_rows: result.status === 'warning' ? 1 : 0,
+      error_rows: 0,
+      uploaded_by: ACTOR_ID,
+    })
+    .select('id')
+    .single();
+  if (batchError || !batchData) throw new Error(`extra batch insert failed: ${batchError?.message}`);
+  const batchId = batchData.id as string;
+  ctx.batchIds.push(batchId);
+
+  const { error: rowInsertError } = await ctx.client.from('tournament_schedule_import_rows').insert({
+    batch_id: batchId,
+    row_no: result.row,
+    raw_payload: {
+      raw,
+      normalized: result.normalized,
+      diff: result.diff,
+      old_match: null,
+      requires_revision_confirmation: result.requiresRevisionConfirmation,
+    },
+    match_code: result.match_code || null,
+    status: result.status,
+    messages: result.messages,
+    matched_match_id: result.existingMatchId,
+    action: result.action,
+  });
+  if (rowInsertError) throw new Error(`extra batch row insert failed: ${rowInsertError.message}`);
+
+  return { batchId, result };
+}
+
+// ============================================================================
 // Rollback — calls the real tournament.rollback_schedule_import_batch() RPC
 // directly (see header comment). This exercises the real Postgres function,
 // not a reimplementation, since the entire rollback contract lives there.
 // ============================================================================
+
+interface RollbackConflict {
+  row: number;
+  match_code: string | null;
+  matched_match_id: string;
+  reason: string;
+}
 
 interface RollbackResponse {
   batchId: string;
@@ -1172,6 +1253,8 @@ interface RollbackResponse {
   idempotent: boolean;
   revertedCreated?: number;
   revertedUpdated?: number;
+  errorCode?: string;
+  conflicts?: RollbackConflict[];
 }
 
 async function performRollback(ctx: Ctx, batchId: string): Promise<RollbackResponse> {
@@ -1182,10 +1265,14 @@ async function performRollback(ctx: Ctx, batchId: string): Promise<RollbackRespo
   if (error) {
     if (error.message.includes('does not exist')) {
       throw new Error(
-        `Rollback RPC (or a column it depends on) does not exist — Migration 013a has not been applied to ` +
+        `Rollback RPC (or a column it depends on) does not exist — Migration 013b has not been applied to ` +
           `this Staging project yet. Raw error: ${error.message}`
       );
     }
+    // Migration 013b: a detected conflict is no longer a Postgres error — it commits
+    // status='failed' normally and returns a structured payload (see below). `error`
+    // here is reserved for genuinely unexpected failures (batch not found, wrong
+    // status, internal ROW_COUNT anomalies).
     throw new Error(error.message);
   }
   return data as RollbackResponse;
@@ -1244,6 +1331,122 @@ async function scenarioRollbackIdempotentAndAudit(ctx: Ctx, batchId: string): Pr
     .eq('action', 'schedule.import.rollback');
   if (error) throw new Error(`audit log re-fetch failed: ${error.message}`);
   assert((logs || []).length === 1, `expected exactly 1 rollback audit log entry (idempotent retry must not write a second), got ${logs?.length}`);
+}
+
+// ============================================================================
+// Migration 013b regression coverage: conflict persistence + real concurrency.
+// ============================================================================
+
+async function scenarioConflictPersistence(ctx: Ctx): Promise<string> {
+  const createRaw = buildThirdRawRow(ctx);
+  const { batchId: createBatchId } = await createSingleRowBatch(ctx, createRaw);
+  const createSaveResult = await performSave(ctx, createBatchId);
+  assert(createSaveResult.created === 1, `expected 1 created match for M3, got ${createSaveResult.created}`);
+  const m3Id = await getMatchIdByCode(ctx, createRaw.match_code as string);
+
+  // A second batch updates M3 — this is the batch we will attempt (and expect) to fail
+  // to roll back below.
+  const updateRaw: RawScheduleImportRow = { ...createRaw, start_time: '11:30' };
+  const { batchId: updateBatchId } = await createSingleRowBatch(ctx, updateRaw);
+  const updateSaveResult = await performSave(ctx, updateBatchId);
+  assert(updateSaveResult.updated === 1, `expected 1 updated match for M3, got ${updateSaveResult.updated}`);
+
+  // Simulate an external edit to M3 AFTER the update batch applied — e.g. an admin
+  // using the ordinary match editor, completely unrelated to Schedule Import. This is
+  // exactly the real threat model migration 013b's FOR UPDATE lock (and this specific,
+  // sequential — not concurrent — scenario) protects against.
+  const { data: beforeExternalEdit, error: beforeErr } = await ctx.client
+    .from('tournament_matches')
+    .select('version')
+    .eq('id', m3Id)
+    .single();
+  if (beforeErr || !beforeExternalEdit) throw new Error(`M3 re-fetch before external edit failed: ${beforeErr?.message}`);
+  const externalEditNote = `external-edit-${RUN_TAG}`;
+  const { error: externalEditErr } = await ctx.client
+    .from('tournament_matches')
+    .update({ note: externalEditNote, version: (beforeExternalEdit.version as number) + 1, updated_at: new Date().toISOString() })
+    .eq('id', m3Id);
+  if (externalEditErr) throw new Error(`external edit to M3 failed: ${externalEditErr.message}`);
+
+  const result = await performRollback(ctx, updateBatchId);
+  assert(result.status === 'failed', `expected structured conflict status 'failed', got '${result.status}'`);
+  assert(result.errorCode === 'SCHEDULE_ROLLBACK_CONFLICT', `expected errorCode 'SCHEDULE_ROLLBACK_CONFLICT', got '${result.errorCode}'`);
+  assert(!!result.conflicts && result.conflicts.length > 0, 'expected at least one conflict entry in the structured response');
+
+  const { data: batchRow, error: batchError } = await ctx.client
+    .from('tournament_schedule_batches')
+    .select('status, rollback_failure_reason, failed_at')
+    .eq('id', updateBatchId)
+    .single();
+  if (batchError || !batchRow) throw new Error(`update batch re-fetch failed: ${batchError?.message}`);
+  // The whole point of migration 013b: this must actually persist, not be silently
+  // undone by a subsequently-raised exception (013a's bug).
+  assert(batchRow.status === 'failed', `expected batch status 'failed' to persist, got '${batchRow.status}'`);
+  assert(!!batchRow.rollback_failure_reason, 'expected rollback_failure_reason to persist');
+  assert(!!batchRow.failed_at, 'expected failed_at to persist');
+
+  const { data: m3After, error: m3Error } = await ctx.client.from('tournament_matches').select('note').eq('id', m3Id).single();
+  if (m3Error || !m3After) throw new Error(`M3 re-fetch after rollback attempt failed: ${m3Error?.message}`);
+  assert(
+    m3After.note === externalEditNote,
+    `expected the external edit to survive the failed rollback untouched (no partial restore), got note='${m3After.note}'`
+  );
+
+  return m3Id;
+}
+
+async function scenarioConcurrentRollbackVsEdit(ctx: Ctx, m3Id: string): Promise<void> {
+  // A fresh, valid 'saved' update batch to race a rollback attempt against — the update
+  // batch from scenarioConflictPersistence is now 'failed' (terminal, like Save's own
+  // 'failed' state) and cannot be reused.
+  const raceRaw: RawScheduleImportRow = { ...buildThirdRawRow(ctx), start_time: '12:00' };
+  const { batchId: raceBatchId } = await createSingleRowBatch(ctx, raceRaw);
+  const raceSaveResult = await performSave(ctx, raceBatchId);
+  assert(raceSaveResult.updated === 1, `expected 1 updated match for the concurrency race batch, got ${raceSaveResult.updated}`);
+
+  const { data: beforeRace, error: beforeErr } = await ctx.client.from('tournament_matches').select('version').eq('id', m3Id).single();
+  if (beforeErr || !beforeRace) throw new Error(`M3 re-fetch before race failed: ${beforeErr?.message}`);
+  const concurrentEditNote = `concurrent-edit-${RUN_TAG}`;
+
+  // Fire both concurrently — no await between them — so both HTTP requests reach
+  // Postgres as genuinely independent, concurrent transactions/connections; which one
+  // wins the row lock is left to real Postgres locking, not simulated. The concurrent
+  // edit is deliberately unconditional (no WHERE version check), matching the ordinary,
+  // non-optimistically-locked match-editing pattern used elsewhere in this codebase —
+  // exactly the real-world scenario migration 013b's FOR UPDATE lock must protect.
+  const [rollbackResult, editOutcome] = await Promise.all([
+    performRollback(ctx, raceBatchId),
+    ctx.client
+      .from('tournament_matches')
+      .update({ note: concurrentEditNote, version: (beforeRace.version as number) + 1, updated_at: new Date().toISOString() })
+      .eq('id', m3Id)
+      .select('id')
+      .single(),
+  ]);
+
+  if (editOutcome.error) throw new Error(`concurrent edit to M3 failed: ${editOutcome.error.message}`);
+
+  if (rollbackResult.status === 'rolled_back') {
+    // Ordering B: rollback locked and completed first; the concurrent edit applied
+    // afterward (once the lock released) and is therefore the final state.
+    assert(rollbackResult.revertedUpdated === 1, `expected revertedUpdated 1 on the rollback-first ordering, got ${rollbackResult.revertedUpdated}`);
+  } else {
+    // Ordering A: the concurrent edit committed first; rollback correctly detected the
+    // version drift and refused (structured conflict) rather than overwriting it.
+    assert(rollbackResult.status === 'failed', `expected rollback to either succeed or report a structured conflict, got status '${rollbackResult.status}'`);
+    assert(
+      rollbackResult.errorCode === 'SCHEDULE_ROLLBACK_CONFLICT',
+      `expected errorCode 'SCHEDULE_ROLLBACK_CONFLICT' on the edit-first ordering, got '${rollbackResult.errorCode}'`
+    );
+  }
+
+  const { data: m3Final, error: m3Error } = await ctx.client.from('tournament_matches').select('note').eq('id', m3Id).single();
+  if (m3Error || !m3Final) throw new Error(`M3 final re-fetch failed: ${m3Error?.message}`);
+  assert(
+    m3Final.note === concurrentEditNote,
+    `expected the concurrent edit to be present in the final Match state regardless of ordering — a committed concurrent ` +
+      `edit must never be silently overwritten — got note='${m3Final.note}'`
+  );
 }
 
 // ============================================================================
@@ -1329,7 +1532,8 @@ async function main(): Promise<void> {
     firstSave: SaveResponse | null;
     updateBatch: { batchId: string; matchId: string } | null;
     createdMatchIds: string[];
-  } = { preview: null, firstSave: null, updateBatch: null, createdMatchIds: [] };
+    m3Id: string | null;
+  } = { preview: null, firstSave: null, updateBatch: null, createdMatchIds: [], m3Id: null };
 
   try {
     await run('Migration 012 indexes exist (uniq_tqualdraw_active_category_slot, uniq_tqualcand_selected_order)', () => checkMigration012Indexes(ctx));
@@ -1372,6 +1576,20 @@ async function main(): Promise<void> {
         scenarioRollbackCreate(ctx, createBatchId, createdMatchIds)
       );
       await run('9e. Rollback is idempotent on retry; exactly one audit log entry', () => scenarioRollbackIdempotentAndAudit(ctx, createBatchId));
+    }
+
+    await run(
+      '9f. Rollback conflict persists (status=failed, rollback_failure_reason, failed_at) — not undone by a raised exception',
+      async () => {
+        box.m3Id = await scenarioConflictPersistence(ctx);
+      }
+    );
+    if (box.m3Id) {
+      const m3Id = box.m3Id;
+      await run(
+        '9g. Real concurrent rollback vs. a concurrent Match edit — the committed edit is never silently overwritten',
+        () => scenarioConcurrentRollbackVsEdit(ctx, m3Id)
+      );
     }
   } finally {
     await run('10. Complete cleanup of all disposable rows', () => cleanup(ctx));

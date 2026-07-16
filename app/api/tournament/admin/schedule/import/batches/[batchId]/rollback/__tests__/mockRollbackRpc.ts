@@ -1,14 +1,25 @@
 /**
  * Faithful JS re-implementation of tournament.rollback_schedule_import_batch()
- * (scripts/tournament-v2/013a-schedule-import-save-result-and-rollback.sql), mirroring
- * its exact contract: atomic saved -> rolling_back claim, a conflict-check pass over
- * every row this batch actually mutated (identified by applied_match_version being
- * non-null), then either deleting (create rows, before_payload null) or restoring the
- * pre-import snapshot (update rows), finalizing as rolled_back, and writing one audit
- * log entry. Any conflict aborts before any mutation — no partial restore.
+ * (scripts/tournament-v2/013b-schedule-rollback-concurrency-fix.sql), mirroring its
+ * exact contract: atomic saved -> rolling_back claim (clearing any stale failure
+ * diagnostics from a previous attempt), a lock + conflict-check pass over every row
+ * this batch actually mutated (identified by applied_match_version being non-null,
+ * processed in deterministic matched_match_id order), then either deleting (create
+ * rows, before_payload null) or restoring the pre-import snapshot (update rows),
+ * finalizing as rolled_back, and writing one audit log entry.
+ *
+ * IMPORTANT: on conflict, the real RPC does NOT raise — an unhandled Postgres exception
+ * would roll back the status='failed' write it had just made (migration 013a's bug,
+ * fixed in 013b). It commits the failed state normally and RETURNS a structured
+ * payload. This mock must do the same — mutating state and then returning an `error`
+ * (simulating a raised exception) would silently reintroduce that exact bug into the
+ * test suite, since a real Postgres `error` from supabase-js means the whole
+ * transaction was rolled back, which is true for SCHEDULE_ROLLBACK_BATCH_NOT_FOUND /
+ * SCHEDULE_ROLLBACK_NOT_ELIGIBLE (no mutation precedes those raises) but must NOT be
+ * true for the conflict case.
  *
  * Same role as the sibling Full Match Report PR's mockPublishRpc.ts: proves the JS-side
- * contract the route relies on. Real Postgres transactional behavior is proven
+ * contract the route relies on. Real Postgres transactional/locking behavior is proven
  * separately by scripts/tournament-v2/verify-schedule-import-runtime.ts against Staging.
  */
 type Row = Record<string, unknown>;
@@ -20,6 +31,8 @@ interface RollbackResult {
   idempotent: boolean;
   revertedCreated?: number;
   revertedUpdated?: number;
+  errorCode?: string;
+  conflicts?: Row[];
 }
 
 interface RollbackOutcome {
@@ -43,10 +56,13 @@ export function mockRollbackRpc(db: Db, batchId: string, actorId: string | null)
   }
 
   batch.status = 'rolling_back';
+  // Clear stale diagnostics from an earlier failed attempt, matching 013b's claim UPDATE.
+  batch.rollback_failure_reason = null;
+  batch.failed_at = null;
 
-  const rows = (db.tournament_schedule_import_rows || []).filter(
-    (r) => r.batch_id === batchId && r.matched_match_id != null && r.applied_match_version != null
-  );
+  const rows = (db.tournament_schedule_import_rows || [])
+    .filter((r) => r.batch_id === batchId && r.matched_match_id != null && r.applied_match_version != null)
+    .sort((a, b) => String(a.matched_match_id).localeCompare(String(b.matched_match_id)));
   const matches = db.tournament_matches || [];
 
   const conflicts: Row[] = [];
@@ -83,10 +99,15 @@ export function mockRollbackRpc(db: Db, batchId: string, actorId: string | null)
   }
 
   if (conflicts.length > 0) {
+    // Commits normally — no thrown/returned `error` here. A real Postgres `error`
+    // means the transaction rolled back, which would undo this exact write.
     batch.status = 'failed';
     batch.rollback_failure_reason = JSON.stringify(conflicts);
     batch.failed_at = new Date().toISOString();
-    return { data: null, error: { message: `SCHEDULE_ROLLBACK_CONFLICT: ${JSON.stringify(conflicts)}` } };
+    return {
+      data: { batchId, status: 'failed', idempotent: false, errorCode: 'SCHEDULE_ROLLBACK_CONFLICT', conflicts },
+      error: null,
+    };
   }
 
   let revertedCreated = 0;
