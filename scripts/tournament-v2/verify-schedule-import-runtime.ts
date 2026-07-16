@@ -1074,14 +1074,19 @@ async function scenarioNoBatchStuckSaving(ctx: Ctx, batchId: string): Promise<vo
 // ============================================================================
 
 async function getMatchIdByCode(ctx: Ctx, matchCode: string): Promise<string> {
+  // Save persists match_code exactly as normalizeScheduleImportRow uppercases it
+  // (upper(raw.match_code)) — the raw RUN_TAG-derived codes callers pass in here are not
+  // themselves uppercase, so this must match on the same normalized form Save wrote, not
+  // the raw string, or the lookup silently misses (case-sensitive equality).
+  const normalizedMatchCode = matchCode.trim().toUpperCase();
   const { data, error } = await ctx.client
     .from('tournament_matches')
     .select('id')
     .eq('tournament_id', ctx.tournamentId)
-    .eq('match_code', matchCode)
+    .eq('match_code', normalizedMatchCode)
     .maybeSingle();
   if (error) throw new Error(`match lookup by code failed: ${error.message}`);
-  if (!data) throw new Error(`no match found for match_code ${matchCode}`);
+  if (!data) throw new Error(`no match found for match_code ${normalizedMatchCode}`);
   return data.id as string;
 }
 
