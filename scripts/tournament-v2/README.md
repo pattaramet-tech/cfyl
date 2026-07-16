@@ -44,17 +44,67 @@ be fixed and the same file re-run safely.
 (see the Schedule Import and Qualification Draw sections below). **Migration 014 is also
 applied to `CFYL-Tournament-Staging`**, and its disposable-data runtime verifier
 (`npm run verify:tournament-full-report-runtime`) has passed all 10 scenarios there — see
-the Full Match Report section below for details. None of 001–014 have been applied to
-Production yet. **Migration 014 is required before Official Publish can operate at all**
-— the API fails closed with `FULL_REPORT_PUBLISH_RPC_UNAVAILABLE` if the RPC function does
-not exist, and there is deliberately **no sequential-write fallback** for Official Publish
-(unlike Quick Result and the Standings Override, both of which now also have their own
-atomic RPCs — migrations 016 and 017 respectively — reachable via their own runtime
-verifiers, documented separately from this table). Do not assume any migration file in
-this folder is safe to run against a given database without first reviewing its
-dependencies and the current state of that database — in particular, 014 assumes 001–013b
-are already applied (it only reads/writes existing tables) and does not itself alter any
-table's schema.
+"Migration 014 runtime verification" below for details. None of 001–014 have been applied
+to Production yet. **Migration 014 is required before Official Publish can operate at
+all** — the API fails closed with `FULL_REPORT_PUBLISH_RPC_UNAVAILABLE` if the RPC
+function does not exist, and there is deliberately **no sequential-write fallback** for
+Official Publish (unlike Quick Result and the Standings Override, both of which now also
+have their own atomic RPCs — migrations 016 and 017 respectively — reachable via their
+own runtime verifiers, documented separately from this table). Do not assume any
+migration file in this folder is safe to run against a given database without first
+reviewing its dependencies and the current state of that database — in particular, 014
+assumes 001–013b are already applied (it only reads/writes existing tables) and does not
+itself alter any table's schema.
+
+### Migration 014 runtime verification (against CFYL-Tournament-Staging)
+
+The owner manually applied Migration 014 to `CFYL-Tournament-Staging` and confirmed:
+`tournament.publish_full_match_report` exists, `SECURITY DEFINER` is enabled,
+`search_path` is `tournament, pg_temp`, `service_role` can execute it, `anon` cannot
+execute it, `authenticated` cannot execute it, and `npm run verify:tournament-foundation`
+passed.
+
+`npm run verify:tournament-full-report-runtime`
+(`scripts/tournament-v2/verify-full-report-runtime.ts`) was then run against
+`CFYL-Tournament-Staging`, using only uniquely-named disposable rows (created and deleted
+within the same run — verified with an independent zero-rows sweep afterward). **All 10
+scenarios passed**: regulation publish, penalty-decided publish, concurrent same-key
+idempotency (exactly one physical publication + one idempotent response), same-key
+different-payload rejection, different-key already-published rejection (both via the
+application layer and via a direct RPC call, bypassing the app layer entirely), full
+transaction rollback after an injected real Postgres unique-constraint violation on
+`tournament_match_cards`, every Preview Token failure mode (required/tampered/expired/
+mismatch), Public Schedule showing only the published match with no internal field
+leakage, Standings correctly using regulation scores while excluding penalty scores from
+GF/GA/GD, and complete cleanup with zero disposable rows left behind.
+
+**Schema gap found and worked around (not fixed, since fixing requires a new migration —
+out of scope for this verification pass):** `tournament_match_goals.team_id` and
+`tournament_match_cards.team_id` reference `tournament_teams(id)` with **no
+`ON DELETE CASCADE`** (unlike their `match_id` FK, which does cascade). Deleting a
+tournament triggers cascading deletes of both `tournament_teams` (via `tournament_id`)
+and `tournament_matches` → `tournament_match_goals`/`tournament_match_cards` (via
+`match_id`) in the same transaction, and Postgres does not guarantee the match-side
+cascade completes before the team-side cascade is attempted — so a delete can fail with
+`violates foreign key constraint tournament_match_cards_team_id_fkey` even though every
+row involved is about to be deleted anyway. The runtime verifier works around this by
+explicitly deleting `tournament_match_goals`/`tournament_match_cards` rows (by
+`match_id`) before deleting the tournament. This is a real, reproducible gap in the
+Phase 1 schema (migration 005), not specific to Migration 014 — worth a small follow-up
+migration (`ON DELETE CASCADE` on both `team_id` columns) at some point, but that is a
+new migration decision, not something this verification pass should silently apply. This
+gap remains open and documented as of this synchronization pass — it has not been fixed
+and no Migration 018 has been added; treat it as a separate, focused hardening PR unless a
+new verified blocker requires otherwise.
+
+**Migration 014 is required before Official Publish can operate at all** — the API fails
+closed with `FULL_REPORT_PUBLISH_RPC_UNAVAILABLE` if the RPC function does not exist, and
+there is deliberately **no sequential-write fallback** for Official Publish. Do not assume
+any migration file in this folder is safe to run against a given database without first
+reviewing its dependencies and the current state of that database. **Staging first,
+always** — Migration 014 has been applied and runtime-verified on
+`CFYL-Tournament-Staging`; Production application still requires explicit separate
+approval and is not part of this task.
 
 **Why this order, not the Data Model doc's own section order**: `tournament_matches`
 (Data Model §2.8) references `tournament_knockout_rounds` (§2.15), so §2.15 is created
