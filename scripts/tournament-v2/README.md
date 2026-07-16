@@ -15,7 +15,7 @@ against any project yet.** Source of truth for every column/constraint is
 
 ## Run order
 
-Run all 12 files **in order**, once per project (Staging first, then Production). Each
+Run all 13 files **in order**, once per project (Staging first, then Production). Each
 file is idempotent (`create table if not exists`, `create index if not exists`,
 `drop policy if exists` before `create policy`), so a partial failure can be fixed and
 the same file re-run safely.
@@ -33,7 +33,8 @@ the same file re-run safely.
 | 9 | `009-rbac.sql` | `tournament_user_profiles`, `tournament_role_assignments`, `tournament_match_officials` |
 | 10 | `010-result-workflow.sql` | `tournament_match_attachments`, `tournament_result_submissions`, `tournament_result_versions`, `tournament_result_approvals` |
 | 11 | `011-scheduling-import-and-views.sql` | `tournament_schedule_batches`, `tournament_schedule_import_rows`, `tournament_schedule_versions`, deferred FK on `tournament_matches.schedule_batch_id`, `tournament.public_matches_view`, `tournament.public_players_view` |
-| 12 | `012-draw-selected-source-support.sql` | `draw_selected` source-type support on `tournament_matches`, qualification draw uniqueness guards, G-U16 qualification-rule backfill |
+| 12 | `012-draw-selected-source-support.sql` | `draw_selected` source-type support on `tournament_matches`, qualification draw uniqueness guards (`uniq_tqualdraw_active_category_slot`, `uniq_tqualcand_selected_order`), G-U16 qualification-rule backfill |
+| 13 | `013-schedule-batch-atomic-save.sql` | Adds `'saving'`/`'failed'` to `tournament_schedule_batches.status`, adds `failed_at`/`failure_reason` columns |
 
 **Why this order, not the Data Model doc's own section order**: `tournament_matches`
 (Data Model §2.8) references `tournament_knockout_rounds` (§2.15), so §2.15 is created
@@ -59,7 +60,7 @@ must exist first) and before testing anything through the client or `verify-foun
 2. Add `tournament` to **Exposed schemas**
 3. Save
 
-## After running all 12 files
+## After running all 13 files
 
 1. Confirm the `tournament` schema is in Exposed Schemas (previous section) — do this
    before the next two steps, or they'll fail with a schema-not-found error unrelated
@@ -85,6 +86,76 @@ must exist first) and before testing anything through the client or `verify-foun
   (`tournament_venues`, `tournament_courts`, `tournament_staff`, `tournament_standing_rules`,
   `tournament_qualification_rules` — extended by judgment call, not literal spec), and
   the exact aggregate shape for public goal/card counts (deferred to Phase 9).
+
+## Schedule Import runtime verification (against CFYL-Tournament-Staging)
+
+`npm run verify:tournament-schedule-import-runtime`
+(`scripts/tournament-v2/verify-schedule-import-runtime.ts`) is a disposable-data runtime
+verifier for the Schedule Import feature (migrations 011–013 and
+`app/api/tournament/admin/schedule/import/{preview,save}/route.ts`). Same safety guard as
+`verify-full-report-runtime.ts`: it refuses to run unless
+`TOURNAMENT_RUNTIME_VERIFY_CONFIRM=CFYL-Tournament-Staging` is set, and every row it
+creates is uniquely tagged and cleaned up at the end of the run (confirmed via its own
+post-cleanup verification queries).
+
+**Design note**: the preview/save logic lives entirely inside the two route files (there
+is no separate service module), and both routes require a real League Supabase Auth
+bearer token via `requireTournamentSuperAdmin`. To avoid creating throwaway users in
+League's shared production Auth system, this verifier does not call the route `POST`
+handlers directly — it calls the exact same underlying real functions the routes call
+(`validateScheduleImportRow`, `buildDrawSelectedConfigs`, `resolveScheduleSourceTeamId`,
+`buildScheduleImportDiff`) and replicates the routes' persistence orchestration
+(identical tables, columns, status values, and the same atomic `preview -> saving`
+claim `UPDATE`) directly against the real service client. The `requireTournamentSuperAdmin`
+HTTP/auth wrapper itself is intentionally out of scope for this runtime check.
+
+**Results of the last run against CFYL-Tournament-Staging:**
+
+| Check | Result |
+|---|---|
+| `uniq_tqualdraw_active_category_slot` exists (migration 012) | **✓ Confirmed** — verified functionally: a second active (non-superseded) draw for the same `(category_id, qualification_slot)` was rejected by Postgres, naming this exact index in the error |
+| `uniq_tqualcand_selected_order` exists (migration 012) | **✓ Confirmed** — verified functionally: a second selected candidate at the same `draw_order` within a draw was rejected by Postgres, naming this exact index in the error |
+| Preview two `draw_selected` rows (`G-U16-THIRD-DRAW-1`, `G-U16-THIRD-DRAW-2`) | **✓ Passed** — both rows validate as `warning` (code `W8`, unresolved placeholder), never `error` |
+| Save the batch | **✗ Blocked — real schema bug, not a Staging-application gap** (see below) |
+| Saved Match preserves `home/away_source_type`/`home/away_source_ref` | Not reached (depends on Save) |
+| Unresolved `draw_selected` `team_id` stays `null` | Not reached (depends on Save) |
+| Retry Save is idempotent, no duplicate Match | Not reached (depends on Save) |
+| No batch remains stuck in `saving` | Not reached (depends on Save) |
+| Rollback workflow | **✗ Blocked — not implemented** (see below) |
+| Complete cleanup of all disposable rows | **✓ Confirmed** — zero disposable rows remained, re-verified independently |
+
+**Bug found: `tournament_schedule_batches.save_result` does not exist in any migration.**
+`app/api/tournament/admin/schedule/import/save/route.ts` reads and writes a
+`save_result` column (used for the idempotent-retry response and the final `status:
+'saved'` update) on every call, but **no migration file — 011, 012, or 013 — ever
+creates that column**. Migration 013 ("Atomic schedule batch save states") adds
+`failed_at`/`failure_reason` and the `saving`/`failed` status values, but not
+`save_result`; confirmed against a live `CFYL-Tournament-Staging` (which has 013 fully
+applied — `status`, `failed_at`, `failure_reason`, `saved_at`, `rolled_back_at`,
+`rolled_back_by` all present) by directly querying each column: every one of them
+resolves except `save_result`, which fails with `column
+tournament_schedule_batches.save_result does not exist`. This means **Save currently
+cannot succeed against any database with the current migration set applied** — this is
+not a "migration not yet applied" gap, it is a missing column definition in the source
+SQL itself. The existing mocked unit tests
+(`app/api/tournament/admin/schedule/import/save/__tests__/route.test.ts`) never caught
+this because their in-memory mock DB accepts any column the code writes to, regardless
+of whether a real migration defines it — this is exactly the class of bug real-database
+runtime verification exists to catch. Fixing this (adding a `save_result jsonb` column
+via a new migration) is a schema change and was not made here — out of scope for a
+verification-only pass; flagged for the owner to fix and apply.
+
+**Gap found: no rollback workflow is implemented anywhere in the codebase.**
+`app/api/tournament/admin/schedule/` contains only `template/`, `import/preview/`, and
+`import/save/` routes — no rollback route file exists. `tournament_schedule_batches` has
+a `rolled_back` status value and `rolled_back_at`/`rolled_back_by` columns (schema-only,
+from migration 011, never written by any code), and
+`TOURNAMENT_V2_SCHEDULING_AND_IMPORT.md` §9 documents an intended future `POST
+/schedule/import/batches/{id}/rollback` endpoint that has not been built. Building it was
+out of scope for this verification task (it would be starting a new feature); the
+verifier's own cleanup therefore uses direct disposable-row deletion rather than a
+rollback endpoint, matching the precedent already used by `verify-foundation.ts` and
+`verify-full-report-runtime.ts`.
 
 ---
 
