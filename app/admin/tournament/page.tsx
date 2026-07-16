@@ -57,6 +57,21 @@ const WORKFLOWS: WorkflowCard[] = [
     badge: 'Public',
     external: true,
   },
+  {
+    href: '/admin/tournament/standings',
+    icon: '📊',
+    title: 'ตารางคะแนน (Standings)',
+    description: 'คำนวณอันดับกลุ่ม เกณฑ์ตัดสินเสมอ และคะแนนแฟร์เพลย์จากผลที่เผยแพร่แล้วเท่านั้น',
+    badge: 'V2',
+  },
+  {
+    href: '/tournament/standings',
+    icon: '🏆',
+    title: 'ตารางคะแนน Public',
+    description: 'หน้าตารางคะแนนสำหรับผู้ชมทั่วไป แสดงเฉพาะผลที่เผยแพร่อย่างเป็นทางการ',
+    badge: 'Public',
+    external: true,
+  },
 ];
 
 export default function TournamentV2DashboardPage() {
