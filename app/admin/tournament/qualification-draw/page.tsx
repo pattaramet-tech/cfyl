@@ -42,6 +42,7 @@ interface DrawVersion {
 
 interface DrawState {
   category_id: string;
+  active_draw_id: string | null;
   candidate_options: CandidateOption[];
   placeholder_source_refs: string[];
   versions: DrawVersion[];
@@ -62,6 +63,8 @@ interface SaveSummary {
   updated_match_ids: string[];
   selected_source_refs: string[];
 }
+
+const STALE_STATE_ERROR_CODE = 'QUALIFICATION_DRAW_STALE_STATE';
 
 function getToken(): string | null {
   return typeof window === 'undefined' ? null : localStorage.getItem('admin_token');
@@ -86,6 +89,7 @@ export default function QualificationDrawPage() {
   const [selections, setSelections] = useState<Record<string, string>>({});
 
   const [affectedMatches, setAffectedMatches] = useState<AffectedMatch[] | null>(null);
+  const [previewActiveDrawId, setPreviewActiveDrawId] = useState<string | null>(null);
   const [saveSummary, setSaveSummary] = useState<SaveSummary | null>(null);
   const [showConfirm, setShowConfirm] = useState(false);
 
@@ -206,6 +210,11 @@ export default function QualificationDrawPage() {
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.error || 'Preview ไม่สำเร็จ');
       setAffectedMatches(payload.data.affected_matches as AffectedMatch[]);
+      // Captured fresh at Preview time (not from the earlier page-load fetch) —
+      // this is what gets submitted back as expected_active_draw_id on Save, so
+      // the RPC's optimistic-concurrency check compares against the state this
+      // admin actually saw right before confirming.
+      setPreviewActiveDrawId((payload.data.active_draw_id as string | null) ?? null);
       setShowConfirm(true);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Preview ไม่สำเร็จ');
@@ -231,10 +240,19 @@ export default function QualificationDrawPage() {
             source_ref: ref,
             team_id: selections[ref],
           })),
+          expected_active_draw_id: previewActiveDrawId,
         }),
       });
       const payload = await response.json();
-      if (!response.ok) throw new Error(payload.error || 'บันทึกผลจับฉลากไม่สำเร็จ');
+      if (!response.ok) {
+        if (response.status === 409 && payload.code === STALE_STATE_ERROR_CODE) {
+          setShowConfirm(false);
+          setAffectedMatches(null);
+          await loadDrawState(categoryCode);
+          throw new Error(payload.error || 'ข้อมูลผลจับฉลากมีการเปลี่ยนแปลง กรุณาตรวจสอบผลล่าสุดแล้วลองอีกครั้ง');
+        }
+        throw new Error(payload.error || 'บันทึกผลจับฉลากไม่สำเร็จ');
+      }
       setSaveSummary(payload.data as SaveSummary);
       setShowConfirm(false);
       setAffectedMatches(null);

@@ -1,11 +1,8 @@
 import {
   GROUP_THIRD_PLACE_QUALIFICATION_SLOT,
   buildDrawSelectedConfigs,
-  buildDrawSelectedSelectionMaps,
   validateDrawSelectedAssignments,
   type DrawSelectedAssignmentInput,
-  type TournamentQualificationDrawCandidateRow,
-  type TournamentQualificationDrawRow,
 } from '@/lib/tournament/scheduling/drawSelected';
 import { getTournamentServiceClient } from '@/lib/tournament/db/supabase-tournament';
 
@@ -17,6 +14,17 @@ import { getTournamentServiceClient } from '@/lib/tournament/db/supabase-tournam
 // afterward — both the three eligible candidate teams and the two selected
 // results. See TOURNAMENT_V2_SCHEDULING_AND_IMPORT.md §D-29 and the
 // "Manual Qualification Placeholder Assignment" feature notes in PR #7.
+//
+// WRITE PATH: saveQualificationDrawSelections() performs exactly one
+// client.rpc('save_qualification_draw_assignment', ...) call — migration 015
+// (scripts/tournament-v2/015-qualification-draw-atomic-save.sql). All of
+// supersede-previous-draw, insert-new-draw, insert-candidates, resolve
+// affected Matches, and write the audit log run inside that single Postgres
+// transaction; the RPC is the sole write boundary and the sole source of
+// truth for validation. The TS-side pre-validation below (candidate/
+// assignment checks, reusing the same helpers Preview uses) exists only for
+// fast user feedback without a network round trip — it is never trusted for
+// correctness, and the RPC re-validates everything from scratch.
 
 type TournamentClient = ReturnType<typeof getTournamentServiceClient>;
 
@@ -38,31 +46,6 @@ interface TeamRow {
   category_id: string;
   team_code: string;
   name: string;
-}
-
-interface GroupMemberRow {
-  group_id: string;
-  team_id: string | null;
-}
-
-interface TournamentMatchSourceRow {
-  id: string;
-  home_source_type: string | null;
-  home_source_ref: string | null;
-  away_source_type: string | null;
-  away_source_ref: string | null;
-  home_team_id: string | null;
-  away_team_id: string | null;
-  sources_resolved_at: string | null;
-}
-
-interface TournamentMatchRow extends TournamentMatchSourceRow {
-  category_id: string;
-}
-
-interface ActiveDrawRow {
-  id: string;
-  version: number;
 }
 
 interface DrawRow {
@@ -105,6 +88,7 @@ export interface DrawVersionSummary {
 
 export interface QualificationDrawStateResult {
   categoryId: string;
+  activeDrawId: string | null;
   candidateOptions: CandidateOption[];
   placeholderSourceRefs: string[];
   versions: DrawVersionSummary[];
@@ -116,8 +100,10 @@ interface SaveQualificationDrawSelectionsParams {
   categoryCode: string;
   candidateTeamIds: string[];
   assignments: DrawSelectedAssignmentInput[];
+  expectedActiveDrawId: string | null;
   note?: string;
   actorUserId?: string | null;
+  actorEmail?: string | null;
 }
 
 export interface SaveQualificationDrawSelectionsResult {
@@ -125,54 +111,7 @@ export interface SaveQualificationDrawSelectionsResult {
   version: number;
   updatedMatchIds: string[];
   selectedSourceRefs: string[];
-}
-
-export function buildDrawSelectedMatchUpdates(params: {
-  matches: TournamentMatchSourceRow[];
-  teamIdsBySourceRef: Map<string, string>;
-  now: string;
-}): Array<{
-  id: string;
-  home_team_id: string | null;
-  away_team_id: string | null;
-  sources_resolved_at: string | null;
-}> {
-  const updates: Array<{
-    id: string;
-    home_team_id: string | null;
-    away_team_id: string | null;
-    sources_resolved_at: string | null;
-  }> = [];
-
-  for (const match of params.matches) {
-    const homeSourceRef = String(match.home_source_ref || '').trim().toUpperCase();
-    const awaySourceRef = String(match.away_source_ref || '').trim().toUpperCase();
-
-    const nextHomeTeamId =
-      match.home_source_type === 'draw_selected'
-        ? params.teamIdsBySourceRef.get(homeSourceRef) || null
-        : match.home_team_id;
-    const nextAwayTeamId =
-      match.away_source_type === 'draw_selected'
-        ? params.teamIdsBySourceRef.get(awaySourceRef) || null
-        : match.away_team_id;
-
-    // Preserve the original source_type/source_ref always — resolution only
-    // ever populates home_team_id/away_team_id, never converts the source
-    // definition itself (e.g. never rewrites source_type to 'team').
-    if (nextHomeTeamId === match.home_team_id && nextAwayTeamId === match.away_team_id) {
-      continue;
-    }
-
-    updates.push({
-      id: match.id,
-      home_team_id: nextHomeTeamId,
-      away_team_id: nextAwayTeamId,
-      sources_resolved_at: nextHomeTeamId || nextAwayTeamId ? params.now : match.sources_resolved_at,
-    });
-  }
-
-  return updates;
+  previousDrawId: string | null;
 }
 
 function validateCandidateTeamIds(params: {
@@ -200,6 +139,21 @@ function validateCandidateTeamIds(params: {
   }
 
   return errors;
+}
+
+async function resolveActiveDrawId(params: {
+  client: TournamentClient;
+  categoryId: string;
+}): Promise<string | null> {
+  const { data, error } = await params.client
+    .from('tournament_qualification_draws')
+    .select('id')
+    .eq('category_id', params.categoryId)
+    .eq('qualification_slot', GROUP_THIRD_PLACE_QUALIFICATION_SLOT)
+    .is('superseded_at', null)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  return (data?.id as string | undefined) || null;
 }
 
 export async function getQualificationDrawState(params: {
@@ -267,6 +221,7 @@ export async function getQualificationDrawState(params: {
 
   const draws = ((drawsResult.data || []) as DrawRow[]).filter((draw) => draw.category_id === category.id);
   const drawIds = draws.map((draw) => draw.id);
+  const activeDrawId = draws.find((draw) => draw.superseded_at === null)?.id || null;
 
   let candidatesByDrawId = new Map<string, CandidateRow[]>();
   if (drawIds.length > 0) {
@@ -306,6 +261,7 @@ export async function getQualificationDrawState(params: {
 
   return {
     categoryId: category.id,
+    activeDrawId,
     candidateOptions,
     placeholderSourceRefs: placeholderConfigs.map((config) => config.sourceRef),
     versions,
@@ -336,13 +292,16 @@ export interface PreviewMatchSummary {
 }
 
 export interface PreviewQualificationDrawSelectionsResult {
+  activeDrawId: string | null;
   affectedMatches: PreviewMatchSummary[];
 }
 
 /**
  * Read-only preview: validates candidates/selections exactly like Save, and
  * reports which matches would be resolved and to which teams — without
- * writing anything (no draw row, no candidate rows, no match updates).
+ * writing anything (no draw row, no candidate rows, no match updates). Also
+ * returns the current active draw id so the UI can submit it back as
+ * expected_active_draw_id on the real Save call.
  */
 export async function previewQualificationDrawSelections(params: {
   client: TournamentClient;
@@ -470,47 +429,50 @@ export async function previewQualificationDrawSelections(params: {
     }
   }
 
-  return { affectedMatches };
+  const activeDrawId = await resolveActiveDrawId({ client: params.client, categoryId: category.id });
+
+  return { activeDrawId, affectedMatches };
 }
 
+interface SaveQualificationDrawAssignmentRpcResult {
+  drawId: string;
+  version: number;
+  updatedMatchIds: string[];
+  selectedSourceRefs: string[];
+  previousDrawId: string | null;
+}
+
+/**
+ * Write path — performs exactly one client.rpc(...) call
+ * (tournament.save_qualification_draw_assignment, migration 015). Everything
+ * from superseding the previous draw through writing the audit log runs in
+ * that single Postgres transaction; if any step fails, the whole thing rolls
+ * back. The pre-validation below is fast-feedback only — the RPC re-validates
+ * candidates/assignments/category/tournament state from scratch and is the
+ * only thing that actually writes.
+ */
 export async function saveQualificationDrawSelections(
   params: SaveQualificationDrawSelectionsParams
 ): Promise<SaveQualificationDrawSelectionsResult> {
   const categoryCode = params.categoryCode.trim().toUpperCase();
-  const now = new Date().toISOString();
 
-  const [categoriesResult, qualificationRulesResult, teamsResult, groupMembersResult, matchesResult] =
-    await Promise.all([
-      params.client
-        .from('tournament_categories')
-        .select('id, code')
-        .eq('tournament_id', params.tournamentId)
-        .is('deleted_at', null),
-      params.client
-        .from('tournament_qualification_rules')
-        .select('category_id, best_third_placed_count, best_third_placed_method')
-        .eq('tournament_id', params.tournamentId),
-      params.client
-        .from('tournament_teams')
-        .select('id, category_id, team_code, name')
-        .eq('tournament_id', params.tournamentId),
-      params.client.from('tournament_group_members').select('group_id, team_id'),
-      params.client
-        .from('tournament_matches')
-        .select(
-          'id, category_id, home_source_type, home_source_ref, away_source_type, away_source_ref, home_team_id, away_team_id, sources_resolved_at'
-        )
-        .eq('tournament_id', params.tournamentId)
-        .is('deleted_at', null),
-    ]);
+  const [categoriesResult, qualificationRulesResult, teamsResult] = await Promise.all([
+    params.client
+      .from('tournament_categories')
+      .select('id, code')
+      .eq('tournament_id', params.tournamentId)
+      .is('deleted_at', null),
+    params.client
+      .from('tournament_qualification_rules')
+      .select('category_id, best_third_placed_count, best_third_placed_method')
+      .eq('tournament_id', params.tournamentId),
+    params.client
+      .from('tournament_teams')
+      .select('id, category_id, team_code, name')
+      .eq('tournament_id', params.tournamentId),
+  ]);
 
-  const queryError = [
-    categoriesResult.error,
-    qualificationRulesResult.error,
-    teamsResult.error,
-    groupMembersResult.error,
-    matchesResult.error,
-  ].find(Boolean);
+  const queryError = [categoriesResult.error, qualificationRulesResult.error, teamsResult.error].find(Boolean);
   if (queryError) throw new Error(queryError.message);
 
   const categories = (categoriesResult.data || []) as CategoryRow[];
@@ -561,138 +523,39 @@ export async function saveQualificationDrawSelections(
     throw new Error(assignmentErrors[0]);
   }
 
-  const groupIdByTeamId = new Map<string, string>();
-  for (const member of (groupMembersResult.data || []) as GroupMemberRow[]) {
-    if (member.team_id) groupIdByTeamId.set(member.team_id, member.group_id);
-  }
-
-  const currentActiveDrawsResult = await params.client
-    .from('tournament_qualification_draws')
-    .select('id, version')
-    .eq('category_id', category.id)
-    .eq('qualification_slot', GROUP_THIRD_PLACE_QUALIFICATION_SLOT)
-    .is('superseded_at', null)
-    .order('version', { ascending: false });
-
-  if (currentActiveDrawsResult.error) {
-    throw new Error(currentActiveDrawsResult.error.message);
-  }
-
-  const currentActiveDraws = (currentActiveDrawsResult.data || []) as ActiveDrawRow[];
-  if (currentActiveDraws.length > 1) {
-    throw new Error(`Multiple active qualification draws found for ${categoryCode}`);
-  }
-
-  const previousDraw = currentActiveDraws[0];
-  if (previousDraw) {
-    const { error: supersedeError } = await params.client
-      .from('tournament_qualification_draws')
-      .update({ superseded_at: now })
-      .eq('id', previousDraw.id);
-    if (supersedeError) {
-      throw new Error(supersedeError.message);
-    }
-  }
-
   const noteText = [MANUAL_CANDIDATE_CONFIRMATION_MARKER, params.note || '']
     .filter(Boolean)
     .join(' ')
     .trim();
 
-  const { data: drawData, error: drawInsertError } = await params.client
-    .from('tournament_qualification_draws')
-    .insert({
-      category_id: category.id,
-      qualification_slot: GROUP_THIRD_PLACE_QUALIFICATION_SLOT,
-      slots_available: categoryConfigs.length,
-      version: (previousDraw?.version || 0) + 1,
-      drawn_by: params.actorUserId || null,
-      drawn_at: now,
-      note: noteText || null,
-    })
-    .select('id, category_id, qualification_slot')
-    .single();
-
-  if (drawInsertError || !drawData) {
-    throw new Error(drawInsertError?.message || 'Failed to create qualification draw');
-  }
-
-  const draw = drawData as TournamentQualificationDrawRow;
-  const drawOrderByTeamId = new Map(
-    params.assignments.map((assignment) => {
-      const sourceRef = assignment.sourceRef.trim().toUpperCase();
-      const config = configsByRef.get(sourceRef);
-      return [assignment.teamId.trim(), config?.drawPosition || 0] as const;
-    })
-  );
-
-  // The full manually-confirmed candidate list is always stored (append-only,
-  // versioned) even though only 2 of the 3 are selected — this preserves the
-  // audit trail of who the eligible candidates were, not just who was picked.
-  const candidateRows = candidateTeamIds.map((teamId) => ({
-    draw_id: draw.id,
-    team_id: teamId,
-    group_id: groupIdByTeamId.get(teamId) || null,
-    is_selected: drawOrderByTeamId.has(teamId),
-    draw_order: drawOrderByTeamId.get(teamId) || null,
-  }));
-
-  const { error: candidateInsertError } = await params.client
-    .from('tournament_qualification_draw_candidates')
-    .insert(candidateRows);
-  if (candidateInsertError) {
-    throw new Error(candidateInsertError.message);
-  }
-
-  const { teamIdsBySourceRef, errors: selectionErrors } = buildDrawSelectedSelectionMaps({
-    configsByRef,
-    activeDraws: [draw],
-    candidates: candidateRows as TournamentQualificationDrawCandidateRow[],
-  });
-  if (selectionErrors.length > 0) {
-    throw new Error(selectionErrors[0]);
-  }
-
-  const drawSourceRefs = new Set(categoryConfigs.map((config) => config.sourceRef));
-  const matches = ((matchesResult.data || []) as TournamentMatchRow[]).filter(
-    (match) => match.category_id === category.id
-  );
-  const impactedMatches = matches.filter(
-    (match) =>
-      (match.home_source_type === 'draw_selected' &&
-        drawSourceRefs.has(String(match.home_source_ref || '').trim().toUpperCase())) ||
-      (match.away_source_type === 'draw_selected' &&
-        drawSourceRefs.has(String(match.away_source_ref || '').trim().toUpperCase()))
-  );
-
-  const updates = buildDrawSelectedMatchUpdates({
-    matches: impactedMatches,
-    teamIdsBySourceRef,
-    now,
+  const { data, error } = await params.client.rpc('save_qualification_draw_assignment', {
+    p_tournament_id: params.tournamentId,
+    p_category_code: categoryCode,
+    p_candidate_team_ids: candidateTeamIds,
+    p_assignments: params.assignments.map((assignment) => ({
+      source_ref: assignment.sourceRef.trim().toUpperCase(),
+      team_id: assignment.teamId.trim(),
+    })),
+    p_expected_active_draw_id: params.expectedActiveDrawId,
+    p_note: noteText || null,
+    p_actor_id: params.actorUserId || null,
+    p_actor_email: params.actorEmail || null,
   });
 
-  const updatedMatchIds: string[] = [];
-  for (const update of updates) {
-    const { error: matchUpdateError } = await params.client
-      .from('tournament_matches')
-      .update({
-        home_team_id: update.home_team_id,
-        away_team_id: update.away_team_id,
-        sources_resolved_at: update.sources_resolved_at,
-        updated_by: params.actorUserId || null,
-        updated_at: now,
-      })
-      .eq('id', update.id);
-    if (matchUpdateError) {
-      throw new Error(matchUpdateError.message);
-    }
-    updatedMatchIds.push(update.id);
+  if (error) {
+    throw new Error(error.message);
   }
+  if (!data) {
+    throw new Error('save_qualification_draw_assignment returned no data');
+  }
+
+  const result = data as SaveQualificationDrawAssignmentRpcResult;
 
   return {
-    drawId: draw.id,
-    version: (previousDraw?.version || 0) + 1,
-    updatedMatchIds,
-    selectedSourceRefs: params.assignments.map((assignment) => assignment.sourceRef.trim().toUpperCase()),
+    drawId: result.drawId,
+    version: result.version,
+    updatedMatchIds: result.updatedMatchIds || [],
+    selectedSourceRefs: result.selectedSourceRefs || [],
+    previousDrawId: result.previousDrawId,
   };
 }

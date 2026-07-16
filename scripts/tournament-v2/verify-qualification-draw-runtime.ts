@@ -19,28 +19,26 @@
  * DESIGN CHOICE — bypasses HTTP/auth, exercises the real service functions
  * directly (same precedent as verify-schedule-import-runtime.ts): calls
  * getQualificationDrawState / previewQualificationDrawSelections /
- * saveQualificationDrawSelections directly, plus logTournamentAdminAction —
- * the exact same functions app/api/tournament/admin/qualification-draws/route.ts
- * calls, in the same order, so this exercises the real orchestration
- * (including the real gap between the multi-step Save and the separate,
- * fire-and-forget audit log write). The requireTournamentSuperAdmin() HTTP/auth
- * wrapper itself is intentionally out of scope for this runtime check, to avoid
- * creating throwaway users in League's shared production Auth system.
+ * saveQualificationDrawSelections directly — the exact same functions
+ * app/api/tournament/admin/qualification-draws/route.ts calls, in the same
+ * order. The requireTournamentSuperAdmin() HTTP/auth wrapper itself is
+ * intentionally out of scope for this runtime check, to avoid creating
+ * throwaway users in League's shared production Auth system.
  *
- * KNOWN ARCHITECTURAL GAP under test (see item 6 below): saveQualificationDrawSelections
- * performs multiple independent, sequential PostgREST writes (supersede-update,
- * insert-draw, insert-candidates, one update per resolved Match) with no wrapping
- * transaction or RPC — unlike migration 013b's rollback_schedule_import_batch(),
- * which locks and commits atomically in one Postgres function. Migration 012's
- * partial unique index (uniq_tqualdraw_active_category_slot) prevents two
- * concurrently-created draws from both landing "active", which item 6 verifies for
- * real — but it cannot protect the later steps (candidate insert, per-Match update
- * loop, audit log) from a partial write if the sequence fails after the draw insert
- * succeeds. No transactional RPC exists for this feature (grep confirms zero
- * `.rpc(` calls in qualification-draws.ts or its route). This script does not
- * attempt to fabricate an artificial mid-sequence failure against real Staging
- * (there is no safe way to do that without corrupting shared schema/constraints);
- * the gap is verified by code inspection and is reported as-is.
+ * REQUIRES MIGRATION 015 —
+ * scripts/tournament-v2/015-qualification-draw-atomic-save.sql — which fixes
+ * the transactional-atomicity gap this verifier previously could only report
+ * via code inspection: saveQualificationDrawSelections() now performs its
+ * entire write path (supersede -> insert draw -> insert candidates -> resolve
+ * Matches -> write audit log) as exactly one client.rpc(...) call to
+ * tournament.save_qualification_draw_assignment(), a single Postgres
+ * transaction. This script does not attempt to fabricate an artificial
+ * mid-sequence failure against real Staging (no safe way to do that without
+ * corrupting shared schema/constraints — that rollback guarantee is proven by
+ * the transactional RPC mock in the unit tests instead); what this script
+ * proves for real is the full happy-path atomic Save/correction and, in
+ * scenario 6, a genuine concurrent race using the RPC's
+ * expected_active_draw_id optimistic-concurrency token.
  */
 
 import dotenv from 'dotenv';
@@ -48,11 +46,11 @@ dotenv.config({ path: '.env.local' });
 import { loadEnvConfig } from '@next/env';
 import { randomUUID } from 'crypto';
 import { getTournamentServiceClient } from '../../lib/tournament/db/supabase-tournament';
-import { logTournamentAdminAction } from '../../lib/tournament/services/audit';
 import {
   getQualificationDrawState,
   previewQualificationDrawSelections,
   saveQualificationDrawSelections,
+  type SaveQualificationDrawSelectionsResult,
 } from '../../lib/tournament/services/qualification-draws';
 
 loadEnvConfig(process.cwd());
@@ -87,6 +85,8 @@ interface Ctx {
   drawIds: string[];
   candidateIds: string[];
   auditEntityIds: string[];
+  /** The currently-active draw id, tracked as the scenarios progress — submitted as expected_active_draw_id on the next Save/correction. */
+  activeDrawId: string | null;
 }
 
 interface ScenarioResult {
@@ -116,39 +116,40 @@ async function doSave(
   ctx: Ctx,
   candidateTeamIds: string[],
   assignments: Array<{ sourceRef: string; teamId: string }>,
+  expectedActiveDrawId: string | null,
   note?: string
-) {
-  const result = await saveQualificationDrawSelections({
-    client: ctx.client,
-    tournamentId: ctx.tournamentId,
-    categoryCode: CATEGORY_CODE,
-    candidateTeamIds,
-    assignments,
-    note,
-    actorUserId: ACTOR_ID,
-  });
-
-  // Mirrors app/api/tournament/admin/qualification-draws/route.ts POST exactly:
-  // a separate, fire-and-forget audit log write performed only after Save's own
-  // multi-step sequence has already fully returned.
-  await logTournamentAdminAction({
-    tournamentId: ctx.tournamentId,
-    admin: { id: ACTOR_ID, email: ACTOR_EMAIL },
-    action: 'qualification-draws.confirm_manual_placeholder_assignment',
-    entityType: 'qualification-draw',
-    entityId: result.drawId,
-    entityLabel: `${CATEGORY_CODE} ${result.selectedSourceRefs.join(', ')}`,
-    newData: {
-      category_code: CATEGORY_CODE,
-      candidate_team_ids: candidateTeamIds,
-      selections: assignments,
-      updated_match_ids: result.updatedMatchIds,
-      source: 'manual_candidate_confirmation',
-    },
-  });
+): Promise<SaveQualificationDrawSelectionsResult> {
+  let result: SaveQualificationDrawSelectionsResult;
+  try {
+    // The entire write — supersede, insert draw, insert candidates, resolve
+    // Matches, write the audit log — happens inside this single client.rpc(...)
+    // call (tournament.save_qualification_draw_assignment, migration 015).
+    // No separate audit-log call follows; the RPC already wrote it atomically.
+    result = await saveQualificationDrawSelections({
+      client: ctx.client,
+      tournamentId: ctx.tournamentId,
+      categoryCode: CATEGORY_CODE,
+      candidateTeamIds,
+      assignments,
+      expectedActiveDrawId,
+      note,
+      actorUserId: ACTOR_ID,
+      actorEmail: ACTOR_EMAIL,
+    });
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    if (message.includes('does not exist') || message.includes('schema cache') || message.includes('Could not find the function')) {
+      throw new Error(
+        `save_qualification_draw_assignment RPC does not exist — Migration 015 has not been applied to this Staging ` +
+          `project yet. Raw error: ${message}`
+      );
+    }
+    throw e;
+  }
 
   if (!ctx.drawIds.includes(result.drawId)) ctx.drawIds.push(result.drawId);
   if (!ctx.auditEntityIds.includes(result.drawId)) ctx.auditEntityIds.push(result.drawId);
+  ctx.activeDrawId = result.drawId;
 
   return result;
 }
@@ -250,6 +251,7 @@ async function setup(client: TournamentClient): Promise<Ctx> {
       drawIds: [],
       candidateIds: [],
       auditEntityIds: [],
+      activeDrawId: null,
     };
   } catch (err) {
     console.error('[SETUP] failed, attempting emergency cleanup of tournament row...');
@@ -330,6 +332,7 @@ async function scenarioConfirmedSave(ctx: Ctx): Promise<void> {
       { sourceRef: SLOT_1, teamId: ctx.teamIds[0] },
       { sourceRef: SLOT_2, teamId: ctx.teamIds[1] },
     ],
+    null, // initial Save — expected_active_draw_id must be null
     'v1'
   );
 
@@ -393,6 +396,7 @@ async function scenarioCorrection(ctx: Ctx): Promise<void> {
       { sourceRef: SLOT_1, teamId: ctx.teamIds[2] },
       { sourceRef: SLOT_2, teamId: ctx.teamIds[0] },
     ],
+    firstDrawId, // correction — must name the exact currently-active draw
     'v2 correction'
   );
 
@@ -517,6 +521,9 @@ async function scenarioInvalidInputsRejectedWithoutWrites(ctx: Ctx): Promise<voi
         categoryCode: CATEGORY_CODE,
         candidateTeamIds: attempt.candidateTeamIds,
         assignments: attempt.assignments,
+        // The correct current active draw id, so rejection is provably due to
+        // the validation rule under test — not a spurious stale-state mismatch.
+        expectedActiveDrawId: ctx.activeDrawId,
         actorUserId: ACTOR_ID,
       });
     } catch {
@@ -532,52 +539,79 @@ async function scenarioInvalidInputsRejectedWithoutWrites(ctx: Ctx): Promise<voi
 async function scenarioConcurrentSaveVsCorrection(ctx: Ctx): Promise<void> {
   const activeBefore = await countActiveDraws(ctx);
   assert(activeBefore === 1, `expected exactly 1 active draw before the concurrency race, got ${activeBefore}`);
+  const expectedActiveDrawId = ctx.activeDrawId;
+  assert(!!expectedActiveDrawId, 'expected ctx.activeDrawId to be set before the race');
 
-  // Two distinct, individually-valid correction payloads fired with no await
-  // between them, so both reach Postgres as genuinely concurrent writes — real
-  // locking/constraint enforcement arbitrates the outcome, nothing is simulated.
-  const attemptA = doSave(
-    ctx,
-    [ctx.teamIds[0], ctx.teamIds[1], ctx.teamIds[2]],
-    [
+  // Both attempts are built from the SAME expected_active_draw_id — exactly
+  // "two corrections built from the same stale Preview state," the scenario
+  // migration 015's optimistic-concurrency token exists to prevent. Fired
+  // with no await between them so both reach Postgres as genuinely
+  // concurrent transactions; real locking (the category-row FOR UPDATE)
+  // arbitrates the outcome, nothing is simulated.
+  const attemptA = saveQualificationDrawSelections({
+    client: ctx.client,
+    tournamentId: ctx.tournamentId,
+    categoryCode: CATEGORY_CODE,
+    candidateTeamIds: [ctx.teamIds[0], ctx.teamIds[1], ctx.teamIds[2]],
+    assignments: [
       { sourceRef: SLOT_1, teamId: ctx.teamIds[1] },
       { sourceRef: SLOT_2, teamId: ctx.teamIds[2] },
     ],
-    'race-A'
-  ).then(
+    expectedActiveDrawId,
+    note: 'race-A',
+    actorUserId: ACTOR_ID,
+    actorEmail: ACTOR_EMAIL,
+  }).then(
     (r) => ({ ok: true as const, result: r }),
     (e) => ({ ok: false as const, error: e instanceof Error ? e.message : String(e) })
   );
-  const attemptB = doSave(
-    ctx,
-    [ctx.teamIds[0], ctx.teamIds[1], ctx.teamIds[2]],
-    [
+  const attemptB = saveQualificationDrawSelections({
+    client: ctx.client,
+    tournamentId: ctx.tournamentId,
+    categoryCode: CATEGORY_CODE,
+    candidateTeamIds: [ctx.teamIds[0], ctx.teamIds[1], ctx.teamIds[2]],
+    assignments: [
       { sourceRef: SLOT_1, teamId: ctx.teamIds[0] },
       { sourceRef: SLOT_2, teamId: ctx.teamIds[2] },
     ],
-    'race-B'
-  ).then(
+    expectedActiveDrawId,
+    note: 'race-B',
+    actorUserId: ACTOR_ID,
+    actorEmail: ACTOR_EMAIL,
+  }).then(
     (r) => ({ ok: true as const, result: r }),
     (e) => ({ ok: false as const, error: e instanceof Error ? e.message : String(e) })
   );
 
   const [outcomeA, outcomeB] = await Promise.all([attemptA, attemptB]);
-
-  const succeededCount = [outcomeA, outcomeB].filter((o) => o.ok).length;
-  assert(succeededCount >= 1, 'expected at least one of the two concurrent Save calls to succeed');
   console.log(
     `    [race] A=${outcomeA.ok ? 'succeeded' : `failed (${outcomeA.error})`}, B=${outcomeB.ok ? 'succeeded' : `failed (${outcomeB.error})`}`
   );
 
-  // The invariant migration 012's uniq_tqualdraw_active_category_slot exists to
-  // guarantee: no matter how the race resolved, there is still EXACTLY one
-  // active draw for this category+slot afterward — never zero, never two.
-  const activeAfter = await countActiveDraws(ctx);
-  assert(activeAfter === 1, `expected exactly 1 active draw after the concurrent race, got ${activeAfter} — unique active-draw index did not hold`);
+  const succeeded = [outcomeA, outcomeB].filter((o) => o.ok) as Array<{ ok: true; result: SaveQualificationDrawSelectionsResult }>;
+  const failed = [outcomeA, outcomeB].filter((o) => !o.ok) as Array<{ ok: false; error: string }>;
 
-  // And the placeholder Match must be resolved to a team that belongs to
-  // WHICHEVER attempt actually ended up active — never a mix, never left
-  // pointing at neither (partial Match resolution).
+  // Exactly one succeeds, exactly one gets a stale-state conflict — never
+  // both succeeding (two active versions) and never both failing.
+  assert(succeeded.length === 1, `expected exactly 1 of the 2 concurrent attempts to succeed, got ${succeeded.length}`);
+  assert(failed.length === 1, `expected exactly 1 of the 2 concurrent attempts to fail, got ${failed.length}`);
+  assert(
+    failed[0].error.includes('QUALIFICATION_DRAW_STALE_STATE'),
+    `expected the losing attempt to fail specifically with QUALIFICATION_DRAW_STALE_STATE, got: ${failed[0].error}`
+  );
+
+  const winner = succeeded[0].result;
+  ctx.activeDrawId = winner.drawId;
+  if (!ctx.drawIds.includes(winner.drawId)) ctx.drawIds.push(winner.drawId);
+  if (!ctx.auditEntityIds.includes(winner.drawId)) ctx.auditEntityIds.push(winner.drawId);
+
+  // The invariant migration 015's category-row lock + expected_active_draw_id
+  // check exist to guarantee: no matter how the race resolved, there is still
+  // EXACTLY one active draw for this category+slot afterward — never zero,
+  // never two — and it is exactly the winning attempt.
+  const activeAfter = await countActiveDraws(ctx);
+  assert(activeAfter === 1, `expected exactly 1 active draw after the concurrent race, got ${activeAfter}`);
+
   const { data: activeDraw, error: activeErr } = await ctx.client
     .from('tournament_qualification_draws')
     .select('id')
@@ -585,10 +619,20 @@ async function scenarioConcurrentSaveVsCorrection(ctx: Ctx): Promise<void> {
     .is('superseded_at', null)
     .single();
   if (activeErr || !activeDraw) throw new Error(`active draw re-fetch after race failed: ${activeErr?.message}`);
+  assert(activeDraw.id === winner.drawId, 'expected the active draw to be exactly the winning attempt, not a mix or the loser');
 
-  const winningResult = outcomeA.ok && outcomeA.result.drawId === activeDraw.id ? outcomeA.result : outcomeB.ok ? outcomeB.result : null;
-  assert(!!winningResult, 'expected the active draw id to match one of the two attempted Save results');
+  // No partial candidates: the winning draw has all 3; the losing attempt
+  // never got past the concurrency check, so it wrote none.
+  const { data: winningCandidates, error: candErr } = await ctx.client
+    .from('tournament_qualification_draw_candidates')
+    .select('id')
+    .eq('draw_id', winner.drawId);
+  if (candErr) throw new Error(candErr.message);
+  assert((winningCandidates || []).length === 3, `expected the winning draw to have exactly 3 candidates, got ${(winningCandidates || []).length}`);
+  ctx.candidateIds.push(...(winningCandidates || []).map((c) => c.id as string));
 
+  // No partial Match resolution: both placeholder sides resolved together,
+  // to the SAME winning attempt's teams — never a mix of A's home + B's away.
   const { data: matchAfter, error: matchErr } = await ctx.client
     .from('tournament_matches')
     .select('home_team_id, away_team_id')

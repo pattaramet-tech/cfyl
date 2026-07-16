@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getTournamentServiceClient } from '@/lib/tournament/db/supabase-tournament';
 import { requireTournamentSuperAdmin } from '@/lib/tournament/services/auth';
-import { logTournamentAdminAction } from '@/lib/tournament/services/audit';
 import {
   getQualificationDrawState,
   previewQualificationDrawSelections,
@@ -19,6 +18,7 @@ interface QualificationDrawRequestBody {
   selections?: unknown;
   note?: unknown;
   preview?: unknown;
+  expected_active_draw_id?: unknown;
 }
 
 interface SelectionBodyItem {
@@ -28,6 +28,11 @@ interface SelectionBodyItem {
 
 function asText(value: unknown): string {
   return String(value ?? '').trim();
+}
+
+function asNullableUuid(value: unknown): string | null {
+  const text = asText(value);
+  return text.length > 0 ? text : null;
 }
 
 function asStringArray(value: unknown): string[] | null {
@@ -44,6 +49,10 @@ function asSelections(value: unknown): Array<{ sourceRef: string; teamId: string
       sourceRef: asText(item.source_ref).toUpperCase(),
       teamId: asText(item.team_id),
     }));
+}
+
+function isStaleStateErrorMessage(message: string): boolean {
+  return message.includes('QUALIFICATION_DRAW_STALE_STATE');
 }
 
 function isValidationErrorMessage(message: string): boolean {
@@ -63,6 +72,21 @@ function isValidationErrorMessage(message: string): boolean {
     'Multiple active qualification draws',
     'candidate teams are required',
     'Duplicate candidate team',
+    // Authoritative errors raised by tournament.save_qualification_draw_assignment
+    // (migration 015) — the RPC re-validates everything the TS pre-validation
+    // above already checks, plus tournament/category/config state it doesn't.
+    'QUALIFICATION_DRAW_TOURNAMENT_NOT_FOUND',
+    'QUALIFICATION_DRAW_TOURNAMENT_NOT_ACTIVE',
+    'QUALIFICATION_DRAW_CATEGORY_NOT_FOUND',
+    'QUALIFICATION_DRAW_CONFIG_NOT_FOUND',
+    'QUALIFICATION_DRAW_INVALID_CANDIDATE_COUNT',
+    'QUALIFICATION_DRAW_DUPLICATE_CANDIDATE',
+    'QUALIFICATION_DRAW_CANDIDATE_NOT_IN_CATEGORY',
+    'QUALIFICATION_DRAW_INVALID_ASSIGNMENT_COUNT',
+    'QUALIFICATION_DRAW_DUPLICATE_ASSIGNMENT_REF',
+    'QUALIFICATION_DRAW_UNKNOWN_ASSIGNMENT_REF',
+    'QUALIFICATION_DRAW_ASSIGNMENT_NOT_CANDIDATE',
+    'QUALIFICATION_DRAW_DUPLICATE_ASSIGNMENT_TEAM',
   ].some((needle) => message.includes(needle));
 }
 
@@ -109,6 +133,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({
       data: {
         category_id: state.categoryId,
+        active_draw_id: state.activeDrawId,
         candidate_options: state.candidateOptions.map((option) => ({
           team_id: option.teamId,
           team_code: option.teamCode,
@@ -158,6 +183,7 @@ export async function POST(request: NextRequest) {
   const note = asText(body.note);
   const candidateTeamIds = asStringArray(body.candidate_team_ids);
   const selections = asSelections(body.selections);
+  const expectedActiveDrawId = asNullableUuid(body.expected_active_draw_id);
 
   if (!tournamentSlug) {
     return NextResponse.json({ error: 'tournament_slug is required' }, { status: 400 });
@@ -198,6 +224,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({
         data: {
           preview: true,
+          active_draw_id: preview.activeDrawId,
           affected_matches: preview.affectedMatches.map((match) => ({
             match_id: match.matchId,
             match_code: match.matchCode,
@@ -212,31 +239,28 @@ export async function POST(request: NextRequest) {
       });
     }
 
+    // Single-RPC write boundary (tournament.save_qualification_draw_assignment,
+    // migration 015): supersede -> insert draw -> insert candidates -> resolve
+    // Matches -> write audit log all run inside one Postgres transaction. There
+    // is deliberately no separate logTournamentAdminAction() call here — a
+    // second, decoupled audit write after this returns would reintroduce the
+    // exact non-atomicity this migration fixes (a fully successful Save with a
+    // silently-failed audit insert). expected_active_draw_id is the optimistic
+    // concurrency token: null for an initial Save (must find no active draw),
+    // or the exact currently-active draw id for a correction (must still be
+    // active) — a mismatch fails closed with QUALIFICATION_DRAW_STALE_STATE and
+    // zero writes, mapped to HTTP 409 below.
     const result = (await saveQualificationDrawSelections({
       client,
       tournamentId: tournament.id,
       categoryCode,
       candidateTeamIds,
       assignments: selections,
+      expectedActiveDrawId,
       note: note || undefined,
       actorUserId: auth.userId || null,
+      actorEmail: auth.email || null,
     })) as SaveQualificationDrawSelectionsResult;
-
-    await logTournamentAdminAction({
-      tournamentId: tournament.id,
-      admin: { id: auth.userId, email: auth.email },
-      action: 'qualification-draws.confirm_manual_placeholder_assignment',
-      entityType: 'qualification-draw',
-      entityId: result.drawId,
-      entityLabel: `${categoryCode} ${result.selectedSourceRefs.join(', ')}`,
-      newData: {
-        category_code: categoryCode,
-        candidate_team_ids: candidateTeamIds,
-        selections,
-        updated_match_ids: result.updatedMatchIds,
-        source: 'manual_candidate_confirmation',
-      },
-    });
 
     return NextResponse.json({
       data: {
@@ -244,12 +268,23 @@ export async function POST(request: NextRequest) {
         version: result.version,
         updated_match_ids: result.updatedMatchIds,
         selected_source_refs: result.selectedSourceRefs,
+        previous_draw_id: result.previousDrawId,
       },
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Internal server error';
-    const status = isValidationErrorMessage(message) ? 400 : 500;
 
+    if (isStaleStateErrorMessage(message)) {
+      return NextResponse.json(
+        {
+          error: 'ข้อมูลผลจับฉลากมีการเปลี่ยนแปลงตั้งแต่ครั้งล่าสุดที่โหลด กรุณาโหลดข้อมูลใหม่แล้วลองอีกครั้ง',
+          code: 'QUALIFICATION_DRAW_STALE_STATE',
+        },
+        { status: 409 }
+      );
+    }
+
+    const status = isValidationErrorMessage(message) ? 400 : 500;
     return NextResponse.json({ error: message }, { status });
   }
 }
