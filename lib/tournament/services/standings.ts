@@ -305,7 +305,14 @@ export async function getBestThirdPlacedRanking(params: {
   }
   const { candidates, isComplete, incompleteReason } = extractEligibleThirdPlaceCandidates(categoryStandings.groups);
   if (!isComplete) {
-    return { ranked: [], fullyResolved: false, explanation: incompleteReason || 'ผลการแข่งขันยังไม่ครบ', isComplete, incompleteReason };
+    return {
+      ranked: [],
+      state: 'incomplete',
+      fullyResolved: false,
+      explanation: incompleteReason || 'ผลการแข่งขันยังไม่ครบ',
+      isComplete,
+      incompleteReason,
+    };
   }
   const ranking = rankBestThirdPlacedTeams(candidates);
   return { ...ranking, isComplete, incompleteReason: null };

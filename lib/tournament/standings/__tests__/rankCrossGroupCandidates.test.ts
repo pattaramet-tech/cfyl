@@ -27,6 +27,7 @@ function row(overrides: Partial<StandingsRow> = {}): StandingsRow {
     tieState: 'resolved',
     overrideApplied: false,
     overrideReason: null,
+    overrideRejectedReason: null,
     ...overrides,
   };
 }
@@ -88,25 +89,40 @@ describe('rankCrossGroupCandidates — D-07 ranked method', () => {
     expect(isComplete).toBe(false);
   });
 
-  it('ranks best-third-place by points -> GD -> GF -> Fair Play', () => {
+  it('ranks best-third-place by points -> GD -> GF -> Fair Play when all candidates played the same number of counted matches', () => {
     const candidates = [
-      { teamId: 't1', teamName: 'T1', teamCode: 'T1', groupId: 'g1', groupCode: 'A', rank: 3, points: 3, goalDifference: 0, goalsFor: 2, fairPlayScore: -1 },
-      { teamId: 't2', teamName: 'T2', teamCode: 'T2', groupId: 'g2', groupCode: 'B', rank: 3, points: 4, goalDifference: 0, goalsFor: 1, fairPlayScore: 0 },
-      { teamId: 't3', teamName: 'T3', teamCode: 'T3', groupId: 'g3', groupCode: 'C', rank: 3, points: 3, goalDifference: 1, goalsFor: 2, fairPlayScore: 0 },
+      { teamId: 't1', teamName: 'T1', teamCode: 'T1', groupId: 'g1', groupCode: 'A', rank: 3, points: 3, goalDifference: 0, goalsFor: 2, fairPlayScore: -1, countedMatches: 3 },
+      { teamId: 't2', teamName: 'T2', teamCode: 'T2', groupId: 'g2', groupCode: 'B', rank: 3, points: 4, goalDifference: 0, goalsFor: 1, fairPlayScore: 0, countedMatches: 3 },
+      { teamId: 't3', teamName: 'T3', teamCode: 'T3', groupId: 'g3', groupCode: 'C', rank: 3, points: 3, goalDifference: 1, goalsFor: 2, fairPlayScore: 0, countedMatches: 3 },
     ];
-    const { ranked, fullyResolved } = rankBestThirdPlacedTeams(candidates);
+    const { ranked, fullyResolved, state } = rankBestThirdPlacedTeams(candidates);
     expect(ranked.map((c) => c.teamId)).toEqual(['t2', 't3', 't1']);
     expect(fullyResolved).toBe(true);
+    expect(state).toBe('resolved');
   });
 
   it('reports fullyResolved=false when two candidates remain tied on every criterion (never invents a draw winner)', () => {
     const candidates = [
-      { teamId: 't1', teamName: 'T1', teamCode: 'T1', groupId: 'g1', groupCode: 'A', rank: 3, points: 3, goalDifference: 1, goalsFor: 2, fairPlayScore: 0 },
-      { teamId: 't2', teamName: 'T2', teamCode: 'T2', groupId: 'g2', groupCode: 'B', rank: 3, points: 3, goalDifference: 1, goalsFor: 2, fairPlayScore: 0 },
+      { teamId: 't1', teamName: 'T1', teamCode: 'T1', groupId: 'g1', groupCode: 'A', rank: 3, points: 3, goalDifference: 1, goalsFor: 2, fairPlayScore: 0, countedMatches: 3 },
+      { teamId: 't2', teamName: 'T2', teamCode: 'T2', groupId: 'g2', groupCode: 'B', rank: 3, points: 3, goalDifference: 1, goalsFor: 2, fairPlayScore: 0, countedMatches: 3 },
     ];
-    const { fullyResolved, explanation } = rankBestThirdPlacedTeams(candidates);
+    const { fullyResolved, explanation, state } = rankBestThirdPlacedTeams(candidates);
     expect(fullyResolved).toBe(false);
+    expect(state).toBe('unresolved_tie');
     expect(explanation).toContain('จับฉลาก');
+  });
+
+  it('returns normalization_required when candidates played an unequal number of counted matches (no approved normalization rule)', () => {
+    const candidates = [
+      { teamId: 't1', teamName: 'T1', teamCode: 'T1', groupId: 'g1', groupCode: 'A', rank: 3, points: 9, goalDifference: 5, goalsFor: 8, fairPlayScore: 0, countedMatches: 4 },
+      { teamId: 't2', teamName: 'T2', teamCode: 'T2', groupId: 'g2', groupCode: 'B', rank: 3, points: 6, goalDifference: 2, goalsFor: 4, fairPlayScore: 0, countedMatches: 3 },
+    ];
+    const { ranked, fullyResolved, state, explanation } = rankBestThirdPlacedTeams(candidates);
+    expect(state).toBe('normalization_required');
+    expect(fullyResolved).toBe(false);
+    // No qualification selection occurs while normalization is required.
+    expect(ranked).toEqual([]);
+    expect(explanation).toContain('ยังไม่สามารถเปรียบเทียบทีมอันดับ 3 ข้ามกลุ่มได้');
   });
 });
 

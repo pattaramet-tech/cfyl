@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getTournamentServiceClient } from '@/lib/tournament/db/supabase-tournament';
-import { getCategoryStandings } from '@/lib/tournament/services/standings';
-import type { StandingsRow } from '@/lib/tournament/standings/types';
+import { getBestThirdPlacedRanking, getCategoryStandings } from '@/lib/tournament/services/standings';
+import type { BestThirdPlacedRankingResult, CrossGroupCandidate, StandingsRow } from '@/lib/tournament/standings/types';
 
 export const dynamic = 'force-dynamic';
 
@@ -12,6 +12,12 @@ function asText(value: unknown): string {
 // Public rows never expose the override reason (an internal admin note) or
 // any audit metadata (actor/timestamp) — only that a manual adjustment was
 // applied, plus the same result fields the group table always shows.
+//
+// IMPORTANT: when an override is applied, calculateGroupStandings embeds the
+// raw reason text directly into tiebreakExplanation ("จัดอันดับโดย Admin:
+// <reason>") for the admin view — that field must NEVER be passed through
+// verbatim here, or the "reason" leaks to the public despite being stripped
+// everywhere else. Replace it with a reason-free placeholder instead.
 function serializePublicRow(row: StandingsRow) {
   return {
     team_id: row.teamId,
@@ -27,9 +33,35 @@ function serializePublicRow(row: StandingsRow) {
     points: row.points,
     fair_play_score: row.fairPlayScore,
     qualification_status: row.qualificationStatus,
-    tiebreak_explanation: row.tiebreakExplanation,
+    tiebreak_explanation: row.overrideApplied ? 'จัดอันดับโดย Admin' : row.tiebreakExplanation,
     tie_state: row.tieState,
     override_applied: row.overrideApplied,
+  };
+}
+
+function serializePublicCandidate(candidate: CrossGroupCandidate) {
+  return {
+    team_id: candidate.teamId,
+    team_name: candidate.teamName,
+    team_code: candidate.teamCode,
+    group_code: candidate.groupCode,
+    points: candidate.points,
+    goal_difference: candidate.goalDifference,
+    goals_for: candidate.goalsFor,
+    fair_play_score: candidate.fairPlayScore,
+    counted_matches: candidate.countedMatches,
+  };
+}
+
+// Surfaces the same pending-rule state the admin API sees (state/explanation)
+// so the public page can clearly show "not yet comparable" rather than
+// guessing or silently omitting the section — no audit/override metadata is
+// part of this shape to begin with, so nothing further needs to be stripped.
+function serializePublicBestThirdPlacedRanking(ranking: BestThirdPlacedRankingResult) {
+  return {
+    state: ranking.state,
+    explanation: ranking.explanation,
+    ranked: ranking.ranked.map(serializePublicCandidate),
   };
 }
 
@@ -62,9 +94,17 @@ export async function GET(request: NextRequest) {
 
     const categoryStandings = await getCategoryStandings({ client, tournamentId: tournament.id, categoryCode });
 
+    const bestThirdPlacedRanking =
+      categoryStandings.bestThirdPlacedMethod === 'ranked' && categoryStandings.bestThirdPlacedCount > 0
+        ? await getBestThirdPlacedRanking({ client, tournamentId: tournament.id, categoryCode })
+        : null;
+
     return NextResponse.json({
       data: {
         category_code: categoryStandings.categoryCode,
+        best_third_placed_ranking: bestThirdPlacedRanking
+          ? serializePublicBestThirdPlacedRanking(bestThirdPlacedRanking)
+          : null,
         groups: categoryStandings.groups.map((g) => ({
           group_code: g.groupCode,
           is_complete: g.isComplete,

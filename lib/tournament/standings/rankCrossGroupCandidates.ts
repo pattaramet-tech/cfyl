@@ -1,5 +1,16 @@
 import type { BestThirdPlacedRankingResult, CrossGroupCandidate, G16ThirdPlaceCandidatesResult, GroupStandingsResult } from './types';
 
+// The owner has NOT decided how to normalize best-third-place comparisons
+// across groups of unequal size (D-07's own "open sub-question" — see
+// TOURNAMENT_V2_DECISION_CHECKLIST.md). Comparing raw points/GD/GF/Fair Play
+// totals is only valid when every candidate has played the same number of
+// counted matches; this engine must not guess a normalization formula
+// (points-per-game, percentage, dropping a group's worst result, etc.) —
+// it returns an explicit 'normalization_required' state instead and makes
+// NO qualification decision until the owner approves a specific rule.
+export const CROSS_GROUP_NORMALIZATION_REQUIRED_MESSAGE =
+  'ยังไม่สามารถเปรียบเทียบทีมอันดับ 3 ข้ามกลุ่มได้\nเนื่องจากแต่ละกลุ่มมีจำนวนการแข่งขันไม่เท่ากัน\nและยังไม่ได้กำหนดวิธีปรับผลเปรียบเทียบ';
+
 // D-07 (DECISION LOCKED 2026-07-14) cross-group best-third-place ranking —
 // GENERAL rule, for categories whose tournament_qualification_rules row has
 // best_third_placed_method='ranked':
@@ -51,6 +62,7 @@ function extractThirdPlaceRows(groupStandings: GroupStandingsResult[]): {
       goalDifference: thirdPlaceRow.goalDifference,
       goalsFor: thirdPlaceRow.goalsFor,
       fairPlayScore: thirdPlaceRow.fairPlayScore,
+      countedMatches: thirdPlaceRow.played,
     });
   }
 
@@ -84,6 +96,21 @@ export function extractEligibleThirdPlaceCandidates(groupStandings: GroupStandin
  * as the group-stage tiebreak's 'lot' step).
  */
 export function rankBestThirdPlacedTeams(candidates: CrossGroupCandidate[]): BestThirdPlacedRankingResult {
+  // Raw point/GD/GF totals are only comparable when every candidate has
+  // played the same number of counted matches. With no approved
+  // normalization rule for unequal group sizes, do not rank, do not resolve
+  // a tie, and do not mark anyone qualified — return an explicit pending
+  // state instead of silently comparing incomparable totals.
+  const distinctMatchCounts = new Set(candidates.map((c) => c.countedMatches));
+  if (candidates.length > 0 && distinctMatchCounts.size > 1) {
+    return {
+      ranked: [],
+      state: 'normalization_required',
+      fullyResolved: false,
+      explanation: CROSS_GROUP_NORMALIZATION_REQUIRED_MESSAGE,
+    };
+  }
+
   const sorted = [...candidates].sort(
     (a, b) =>
       b.points - a.points ||
@@ -109,7 +136,7 @@ export function rankBestThirdPlacedTeams(candidates: CrossGroupCandidate[]): Bes
     ? 'มีทีมเสมอกันทุกเกณฑ์ (คะแนน/ผลต่างประตู/ประตูได้/แฟร์เพลย์) ต้องจับฉลากตัดสิน'
     : 'จัดอันดับตามคะแนน → ผลต่างประตู → ประตูได้ → แฟร์เพลย์';
 
-  return { ranked: sorted, fullyResolved: !anyFullTie, explanation };
+  return { ranked: sorted, state: anyFullTie ? 'unresolved_tie' : 'resolved', fullyResolved: !anyFullTie, explanation };
 }
 
 /**
