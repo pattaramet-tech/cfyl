@@ -272,7 +272,7 @@ export async function POST(request: NextRequest) {
       client
         .from('tournament_matches')
         .select(
-          'id, match_code, category_id, group_id, venue_id, court_id, match_date, match_time, match_no, stage, home_source_type, home_source_ref, away_source_type, away_source_ref, result_policy, status, note, schedule_status, version'
+          'id, match_code, category_id, group_id, venue_id, court_id, match_date, match_time, match_no, stage, home_source_type, home_source_ref, away_source_type, away_source_ref, result_policy, status, note, schedule_status, version, home_team_id, away_team_id, sources_resolved_at, result_type, schedule_batch_id, updated_at, updated_by'
         )
         .eq('tournament_id', batch.tournament_id)
         .is('deleted_at', null),
@@ -658,9 +658,41 @@ export async function POST(request: NextRequest) {
       const categoryStageKey = `${category.id}|${normalized.stage}`;
 
       if (existing) {
+        // Complete pre-mutation snapshot of every column this Save call is about to
+        // overwrite, keyed by column name — Rollback restores exactly these columns
+        // from this JSON, so it must stay in lockstep with `payload` above.
+        const beforePayload = {
+          category_id: existing.category_id,
+          group_id: existing.group_id,
+          stage: existing.stage,
+          match_code: existing.match_code,
+          match_no: existing.match_no,
+          match_date: existing.match_date,
+          match_time: existing.match_time,
+          venue_id: existing.venue_id,
+          court_id: existing.court_id,
+          home_team_id: existing.home_team_id ?? null,
+          away_team_id: existing.away_team_id ?? null,
+          home_source_type: existing.home_source_type,
+          home_source_ref: existing.home_source_ref,
+          away_source_type: existing.away_source_type,
+          away_source_ref: existing.away_source_ref,
+          sources_resolved_at: existing.sources_resolved_at ?? null,
+          result_policy: existing.result_policy,
+          result_type: existing.result_type ?? null,
+          status: existing.status,
+          note: existing.note,
+          schedule_batch_id: existing.schedule_batch_id ?? null,
+          schedule_status: existing.schedule_status ?? null,
+          version: existing.version || 1,
+          updated_at: existing.updated_at ?? null,
+          updated_by: existing.updated_by ?? null,
+        };
+        const appliedVersion = (existing.version || 1) + 1;
+
         const { data: updatedMatch, error: updateError } = await client
           .from('tournament_matches')
-          .update({ ...payload, version: (existing.version || 1) + 1 })
+          .update({ ...payload, version: appliedVersion })
           .eq('id', existing.id)
           .select('id')
           .single();
@@ -673,7 +705,13 @@ export async function POST(request: NextRequest) {
 
         await client
           .from('tournament_schedule_import_rows')
-          .update({ action: 'update', matched_match_id: updatedMatch.id })
+          .update({
+            action: 'update',
+            matched_match_id: updatedMatch.id,
+            before_payload: beforePayload,
+            applied_match_version: appliedVersion,
+            applied_match_updated_at: now,
+          })
           .eq('id', importRow.id);
         updated += 1;
 
@@ -708,7 +746,13 @@ export async function POST(request: NextRequest) {
 
         await client
           .from('tournament_schedule_import_rows')
-          .update({ action: 'create', matched_match_id: createdMatch.id })
+          .update({
+            action: 'create',
+            matched_match_id: createdMatch.id,
+            before_payload: null,
+            applied_match_version: 1,
+            applied_match_updated_at: now,
+          })
           .eq('id', importRow.id);
         created += 1;
         if (!categoryStageStatus.has(categoryStageKey)) {

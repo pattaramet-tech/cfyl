@@ -98,6 +98,16 @@ export interface ExistingScheduleMatch {
   note: string | null;
   schedule_status?: string | null;
   version?: number | null;
+  // Only fetched/populated by the Save route, which needs the complete set of
+  // Save-mutated columns to snapshot into tournament_schedule_import_rows.before_payload
+  // for Rollback. Preview does not select these — optional so both routes share one type.
+  home_team_id?: string | null;
+  away_team_id?: string | null;
+  sources_resolved_at?: string | null;
+  result_type?: string | null;
+  schedule_batch_id?: string | null;
+  updated_at?: string | null;
+  updated_by?: string | null;
 }
 
 export interface ScheduleValidationContext {
