@@ -194,6 +194,8 @@ directly against `tournament_matches.match_code`, which Save always persists upp
 via `normalizeScheduleImportRow`'s `upper(raw.match_code)`. The exact-equality lookup
 silently missed. Fixed by normalizing the lookup value the same way before querying.
 
+**PR #6 runtime gate passed; ready for final review.**
+
 ---
 
 # Phase 2 — Core Domain CRUD + Seed Data
