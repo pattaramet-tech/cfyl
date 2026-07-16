@@ -15,10 +15,11 @@ against any project yet.** Source of truth for every column/constraint is
 
 ## Run order
 
-Run all 15 files **in order**, once per project (Staging first, then Production). Each
-file is idempotent (`create table if not exists`, `create index if not exists`,
-`drop policy if exists` before `create policy`), so a partial failure can be fixed and
-the same file re-run safely.
+Run all 16 files **in order**, once per project — **Staging first**, verify there,
+**then Production only after Staging verification and explicit approval**. Each file is
+idempotent (`create table if not exists`, `create index if not exists`, `drop policy if
+exists` before `create policy`, `create or replace function`), so a partial failure can
+be fixed and the same file re-run safely.
 
 | # | File | Creates |
 |---|---|---|
@@ -37,6 +38,23 @@ the same file re-run safely.
 | 13 | `013-schedule-batch-atomic-save.sql` | Adds `'saving'`/`'failed'` to `tournament_schedule_batches.status`, adds `failed_at`/`failure_reason` columns |
 | 13a | `013a-schedule-import-save-result-and-rollback.sql` | Adds `tournament_schedule_batches.save_result` (missing from every prior migration despite the Save route depending on it), adds `'rolling_back'` to `status` and `rollback_failure_reason`, adds `tournament_schedule_import_rows.before_payload`/`applied_match_version`/`applied_match_updated_at`, and creates the `tournament.rollback_schedule_import_batch()` RPC. A separate, additive repair migration — does not modify the already-applied 013 retroactively. |
 | 13b | `013b-schedule-rollback-concurrency-fix.sql` | `CREATE OR REPLACE FUNCTION` only, no column changes. Fixes two bugs verified in 013a's rollback RPC (see "Rollback workflow" below): a TOCTOU/lost-update race between its conflict-check and apply passes, and a conflict-triggered `status='failed'` write that a subsequent `RAISE EXCEPTION` silently rolled back. Does not modify the already-applied 013a retroactively. |
+| 14 | `014-full-result-publish-transaction.sql` | `tournament.publish_full_match_report(...)` — atomic Official Full Match Report publish RPC (service-role only; see the file's own security comments) |
+
+**Migration status as of this task**: 001–013b are applied to `CFYL-Tournament-Staging`
+(see the Schedule Import and Qualification Draw sections below). **Migration 014 is also
+applied to `CFYL-Tournament-Staging`**, and its disposable-data runtime verifier
+(`npm run verify:tournament-full-report-runtime`) has passed all 10 scenarios there — see
+the Full Match Report section below for details. None of 001–014 have been applied to
+Production yet. **Migration 014 is required before Official Publish can operate at all**
+— the API fails closed with `FULL_REPORT_PUBLISH_RPC_UNAVAILABLE` if the RPC function does
+not exist, and there is deliberately **no sequential-write fallback** for Official Publish
+(unlike Quick Result and the Standings Override, both of which now also have their own
+atomic RPCs — migrations 016 and 017 respectively — reachable via their own runtime
+verifiers, documented separately from this table). Do not assume any migration file in
+this folder is safe to run against a given database without first reviewing its
+dependencies and the current state of that database — in particular, 014 assumes 001–013b
+are already applied (it only reads/writes existing tables) and does not itself alter any
+table's schema.
 
 **Why this order, not the Data Model doc's own section order**: `tournament_matches`
 (Data Model §2.8) references `tournament_knockout_rounds` (§2.15), so §2.15 is created
@@ -62,7 +80,7 @@ must exist first) and before testing anything through the client or `verify-foun
 2. Add `tournament` to **Exposed schemas**
 3. Save
 
-## After running all 15 files
+## After running all 16 files
 
 1. Confirm the `tournament` schema is in Exposed Schemas (previous section) — do this
    before the next two steps, or they'll fail with a schema-not-found error unrelated
@@ -71,11 +89,13 @@ must exist first) and before testing anything through the client or `verify-foun
    `tournament_venues`, etc.) should be readable as `anon`; RBAC/result-workflow tables
    (`tournament_user_profiles`, `tournament_result_submissions`, etc.) should return zero
    rows as `anon`.
-3. Set `TOURNAMENT_SUPABASE_URL` / `TOURNAMENT_SUPABASE_ANON_KEY` /
+3. Database → Functions → confirm `tournament.publish_full_match_report` exists and that
+   `anon`/`authenticated` are NOT listed among its grantees — only `service_role`.
+4. Set `TOURNAMENT_SUPABASE_URL` / `TOURNAMENT_SUPABASE_ANON_KEY` /
    `TOURNAMENT_SUPABASE_SERVICE_ROLE_KEY` in `.env.local` for the project you just ran
    these against.
-4. From the repo root: `npm run verify:tournament-foundation` — confirms connectivity
-   and that all 34 tables are queryable (see `verify-foundation.ts` in this folder).
+5. From the repo root: `npm run verify:tournament-foundation` — confirms connectivity
+   and that all tables are queryable (see `verify-foundation.ts` in this folder).
 
 ## What's deliberately NOT here
 
