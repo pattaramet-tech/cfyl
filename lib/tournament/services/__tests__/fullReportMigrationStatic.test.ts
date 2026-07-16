@@ -93,6 +93,94 @@ describe('Migration 014 — static structural review (draft, not applied)', () =
     expect(source).toMatch(/STATUS: DRAFT/);
     expect(source).toMatch(/NOT applied/);
   });
+
+  it('locks the match row (FOR UPDATE) BEFORE checking idempotency — not the other way around', () => {
+    const source = readSource(MIGRATION_PATH);
+    const bodyMatch = source.match(/as \$\$([\s\S]*?)\$\$;/);
+    const body = bodyMatch ? bodyMatch[1] : '';
+    const lockIndex = body.indexOf('for update');
+    const idempotencyCheckIndex = body.indexOf('idempotency_key = p_idempotency_key');
+    expect(lockIndex).toBeGreaterThan(-1);
+    expect(idempotencyCheckIndex).toBeGreaterThan(-1);
+    expect(lockIndex).toBeLessThan(idempotencyCheckIndex);
+  });
+
+  it('checks idempotency BEFORE the already-published guard, so a same-key retry succeeds even though the match is now published', () => {
+    const source = readSource(MIGRATION_PATH);
+    const bodyMatch = source.match(/as \$\$([\s\S]*?)\$\$;/);
+    const body = bodyMatch ? bodyMatch[1] : '';
+    const idempotencyReturnIndex = body.indexOf("'idempotent', true");
+    // The already-published RAISE (the actual guard in the function body,
+    // not any mention of the error code in a comment) always follows "if
+    // v_match.result_workflow_status = 'published' then".
+    const alreadyPublishedGuardIndex = body.indexOf("v_match.result_workflow_status = 'published'");
+    expect(idempotencyReturnIndex).toBeGreaterThan(-1);
+    expect(alreadyPublishedGuardIndex).toBeGreaterThan(-1);
+    expect(idempotencyReturnIndex).toBeLessThan(alreadyPublishedGuardIndex);
+  });
+
+  it('has no p_payload parameter — the stored/idempotency payload is built by the function itself from validated parameters', () => {
+    const source = readSource(MIGRATION_PATH);
+    // Extract just the CREATE FUNCTION parameter list, not the whole file —
+    // the header/revision-note comments legitimately discuss "p_payload" as
+    // the name of the parameter a PRIOR draft used to have and explain why
+    // it was removed, so a whole-file substring check would false-positive.
+    const paramListMatch = source.match(/create or replace function tournament\.publish_full_match_report\(([\s\S]*?)\)\nreturns jsonb/);
+    expect(paramListMatch).not.toBeNull();
+    const paramList = paramListMatch ? paramListMatch[1] : '';
+    expect(paramList).not.toMatch(/^\s*p_payload\s/m);
+    expect(source).toMatch(/v_canonical_payload := jsonb_build_object/);
+    expect(source).toMatch(/tournament_result_submissions[\s\S]*?v_canonical_payload/);
+  });
+
+  it('validates result_type consistency with decided_by, not just decided_by/penalty-field presence', () => {
+    const source = readSource(MIGRATION_PATH);
+    expect(source).toContain('FULL_REPORT_RESULT_TYPE_INCONSISTENT');
+    expect(source).toMatch(/p_result_type <> 'normal'/);
+    expect(source).toMatch(/p_result_type <> 'penalty_decided'/);
+  });
+
+  it('validates penalty scores are non-negative inside the transaction', () => {
+    const source = readSource(MIGRATION_PATH);
+    expect(source).toMatch(/p_penalty_home_score < 0 or p_penalty_away_score < 0/);
+  });
+
+  it('validates goal event scope (team, player tournament/category/team, minute, count) inside the transaction', () => {
+    const source = readSource(MIGRATION_PATH);
+    expect(source).toContain('FULL_REPORT_GOAL_TEAM_INVALID');
+    expect(source).toContain('FULL_REPORT_GOAL_PLAYER_NOT_FOUND');
+    expect(source).toContain('FULL_REPORT_GOAL_PLAYER_DELETED');
+    expect(source).toContain('FULL_REPORT_GOAL_PLAYER_TOURNAMENT_MISMATCH');
+    expect(source).toContain('FULL_REPORT_GOAL_PLAYER_CATEGORY_MISMATCH');
+    expect(source).toContain('FULL_REPORT_GOAL_PLAYER_TEAM_MISMATCH');
+    expect(source).toContain('FULL_REPORT_GOAL_COUNT_INVALID');
+    expect(source).toContain('FULL_REPORT_GOAL_MINUTE_INVALID');
+  });
+
+  it('validates card event scope (team, player tournament/category/team, type, minute, duplicates) inside the transaction', () => {
+    const source = readSource(MIGRATION_PATH);
+    expect(source).toContain('FULL_REPORT_CARD_TEAM_INVALID');
+    expect(source).toContain('FULL_REPORT_CARD_PLAYER_REQUIRED');
+    expect(source).toContain('FULL_REPORT_CARD_PLAYER_NOT_FOUND');
+    expect(source).toContain('FULL_REPORT_CARD_PLAYER_DELETED');
+    expect(source).toContain('FULL_REPORT_CARD_PLAYER_TOURNAMENT_MISMATCH');
+    expect(source).toContain('FULL_REPORT_CARD_PLAYER_CATEGORY_MISMATCH');
+    expect(source).toContain('FULL_REPORT_CARD_PLAYER_TEAM_MISMATCH');
+    expect(source).toContain('FULL_REPORT_CARD_TYPE_INVALID');
+    expect(source).toContain('FULL_REPORT_CARD_MINUTE_INVALID');
+    expect(source).toContain('FULL_REPORT_DUPLICATE_CARD');
+  });
+
+  it('skips the team-match check for own-goal events (documented, unresolved ambiguity) without weakening non-own-goal validation', () => {
+    const source = readSource(MIGRATION_PATH);
+    expect(source).toMatch(/not v_goal_is_own and v_player\.team_id <> v_goal_team_id/);
+    expect(source).toMatch(/OWN-GOAL AMBIGUITY/);
+  });
+
+  it('does not perform goal-total-to-score reconciliation anywhere', () => {
+    const source = readSource(MIGRATION_PATH);
+    expect(source).not.toMatch(/sum\(.*goals.*\)\s*=\s*p_regulation/i);
+  });
 });
 
 describe('No non-transactional Official Publish fallback exists in the API/service layer', () => {

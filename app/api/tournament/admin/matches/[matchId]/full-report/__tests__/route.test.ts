@@ -198,11 +198,50 @@ function validBody(overrides: Record<string, unknown> = {}) {
   };
 }
 
+// Mirrors Migration 014's actual contract (scripts/tournament-v2/
+// 014-full-result-publish-transaction.sql): the RPC builds its own
+// canonical payload from the received scalar/array args (never trusts a
+// caller-supplied payload — there is no p_payload param anymore), and
+// checks idempotency BEFORE the already-published/version checks, so a
+// same-key retry against a now-published match still returns the stored
+// success.
+function buildMockCanonicalPayload(args: Record<string, unknown>): Row {
+  return {
+    matchId: args.p_match_id,
+    tournamentId: args.p_tournament_id,
+    regulationHomeScore: args.p_regulation_home_score,
+    regulationAwayScore: args.p_regulation_away_score,
+    penaltyHomeScore: args.p_penalty_home_score,
+    penaltyAwayScore: args.p_penalty_away_score,
+    decidedBy: args.p_decided_by,
+    winnerTeamId: args.p_winner_team_id,
+    resultType: args.p_result_type,
+    goals: args.p_goals || [],
+    cards: args.p_cards || [],
+    reportText: args.p_report_text,
+  };
+}
+
 function successRpcHandler(db: Db) {
   return (name: string, args: Record<string, unknown>) => {
     if (name !== 'publish_full_match_report') return { data: null, error: { message: 'unexpected rpc' } };
     const match = db.tournament_matches.find((m) => m.id === args.p_match_id);
     if (!match) return { data: null, error: { message: 'FULL_REPORT_MATCH_NOT_FOUND: not found' } };
+
+    const canonicalPayload = buildMockCanonicalPayload(args);
+    const existing = db.tournament_result_submissions.find(
+      (s) => s.match_id === args.p_match_id && s.stage === 'full_report' && s.idempotency_key === args.p_idempotency_key
+    );
+    if (existing) {
+      if (JSON.stringify(existing.payload) !== JSON.stringify(canonicalPayload)) {
+        return { data: null, error: { message: 'FULL_REPORT_IDEMPOTENCY_PAYLOAD_MISMATCH: idempotency_key already used with a different payload' } };
+      }
+      return {
+        data: { submission_id: existing.id, match_id: args.p_match_id, new_match_version: match.version, published_at: existing.submitted_at, idempotent: true },
+        error: null,
+      };
+    }
+
     if (match.result_workflow_status === 'published') {
       return { data: null, error: { message: 'FULL_REPORT_ALREADY_PUBLISHED_USE_CORRECTION: already published' } };
     }
@@ -214,7 +253,7 @@ function successRpcHandler(db: Db) {
       id: submissionId,
       match_id: args.p_match_id,
       stage: 'full_report',
-      payload: args.p_payload,
+      payload: canonicalPayload,
       idempotency_key: args.p_idempotency_key,
       submitted_at: '2026-07-20T12:00:00.000Z',
     });
@@ -231,7 +270,7 @@ function successRpcHandler(db: Db) {
   };
 }
 
-async function previewAndExtractToken(db: Db): Promise<string> {
+async function previewAndExtractToken(): Promise<string> {
   const response = await POST(makeRequest({ ...validBody(), preview: true }), { params: Promise.resolve({ matchId: MATCH_ID }) });
   const body = await response.json();
   expect(response.status).toBe(200);
@@ -448,7 +487,7 @@ describe('full-report route — Publish safety (Preview Token, idempotency, vers
   it('30. A valid Preview Token allows Publish to succeed via the RPC', async () => {
     const db = baseDb();
     state.client = createMockClient(db, successRpcHandler(db));
-    const previewToken = await previewAndExtractToken(db);
+    const previewToken = await previewAndExtractToken();
 
     const response = await POST(
       makeRequest({ ...validBody(), expected_version: 3, idempotency_key: 'idem-1', preview_token: previewToken }),
@@ -464,7 +503,7 @@ describe('full-report route — Publish safety (Preview Token, idempotency, vers
   it('31. A tampered Preview Token is rejected', async () => {
     const db = baseDb();
     state.client = createMockClient(db, successRpcHandler(db));
-    const previewToken = await previewAndExtractToken(db);
+    const previewToken = await previewAndExtractToken();
     const [payload, signature] = previewToken.split('.');
     const decoded = JSON.parse(Buffer.from(payload, 'base64url').toString('utf-8'));
     decoded.expectedMatchVersion = 999;
@@ -484,7 +523,7 @@ describe('full-report route — Publish safety (Preview Token, idempotency, vers
     try {
       const db = baseDb();
       state.client = createMockClient(db, successRpcHandler(db));
-      const previewToken = await previewAndExtractToken(db);
+      const previewToken = await previewAndExtractToken();
       vi.advanceTimersByTime(16 * 60 * 1000);
 
       const response = await POST(
@@ -502,7 +541,7 @@ describe('full-report route — Publish safety (Preview Token, idempotency, vers
   it('33. Editing the payload after Preview is rejected (score changed)', async () => {
     const db = baseDb();
     state.client = createMockClient(db, successRpcHandler(db));
-    const previewToken = await previewAndExtractToken(db);
+    const previewToken = await previewAndExtractToken();
 
     const response = await POST(
       makeRequest({ ...validBody({ regulation_home_score: 5 }), expected_version: 3, idempotency_key: 'idem-4', preview_token: previewToken }),
@@ -516,7 +555,7 @@ describe('full-report route — Publish safety (Preview Token, idempotency, vers
   it('35. A stale match version returns 409', async () => {
     const db = baseDb();
     state.client = createMockClient(db, successRpcHandler(db));
-    const previewToken = await previewAndExtractToken(db);
+    const previewToken = await previewAndExtractToken();
     // Simulate a concurrent edit bumping the match version between Preview and Publish.
     (db.tournament_matches[0] as Row).version = 4;
 
@@ -532,7 +571,7 @@ describe('full-report route — Publish safety (Preview Token, idempotency, vers
   it('36. Same idempotency key + same payload returns the stored successful result without a second write', async () => {
     const db = baseDb();
     state.client = createMockClient(db, successRpcHandler(db));
-    const previewToken = await previewAndExtractToken(db);
+    const previewToken = await previewAndExtractToken();
     const first = await POST(
       makeRequest({ ...validBody(), expected_version: 3, idempotency_key: 'idem-7', preview_token: previewToken }),
       { params: Promise.resolve({ matchId: MATCH_ID }) }
@@ -554,7 +593,7 @@ describe('full-report route — Publish safety (Preview Token, idempotency, vers
   it('37. Same idempotency key + different payload is rejected', async () => {
     const db = baseDb();
     state.client = createMockClient(db, successRpcHandler(db));
-    const previewToken = await previewAndExtractToken(db);
+    const previewToken = await previewAndExtractToken();
     await POST(
       makeRequest({ ...validBody(), expected_version: 3, idempotency_key: 'idem-8', preview_token: previewToken }),
       { params: Promise.resolve({ matchId: MATCH_ID }) }
@@ -591,7 +630,7 @@ describe('full-report route — RPC unavailable (fail closed, no fallback)', () 
   it('fails closed with FULL_REPORT_PUBLISH_RPC_UNAVAILABLE (503) when Migration 014 is not applied, and writes nothing', async () => {
     const db = baseDb();
     state.client = createMockClient(db, () => ({ data: null, error: { message: 'Could not find the function tournament.publish_full_match_report', code: 'PGRST202' } }));
-    const previewToken = await previewAndExtractToken(db);
+    const previewToken = await previewAndExtractToken();
 
     const response = await POST(
       makeRequest({ ...validBody(), expected_version: 3, idempotency_key: 'idem-unavail', preview_token: previewToken }),
@@ -614,7 +653,7 @@ describe('full-report route — RPC-reported failure never reports success', () 
   it('45. when the RPC reports an internal failure, the match remains unpublished and no app-layer fallback write occurs', async () => {
     const db = baseDb();
     state.client = createMockClient(db, () => ({ data: null, error: { message: 'FULL_REPORT_RESULT_INCONSISTENT: simulated goal-insert failure inside the transaction' } }));
-    const previewToken = await previewAndExtractToken(db);
+    const previewToken = await previewAndExtractToken();
 
     const response = await POST(
       makeRequest({ ...validBody(), expected_version: 3, idempotency_key: 'idem-fail', preview_token: previewToken }),

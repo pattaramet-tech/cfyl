@@ -65,16 +65,51 @@ function createMockClient(db: Db) {
   }
   return {
     from: (table: string) => builder(table),
+    // Mirrors Migration 014's actual contract: builds its own canonical
+    // payload from the received args (no p_payload param), and checks
+    // idempotency BEFORE the already-published check.
     rpc(name: string, args: Record<string, unknown>) {
       if (name !== 'publish_full_match_report') return Promise.resolve({ data: null, error: { message: 'unexpected rpc' } });
       const match = db.tournament_matches.find((m) => m.id === args.p_match_id);
       if (!match) return Promise.resolve({ data: null, error: { message: 'FULL_REPORT_MATCH_NOT_FOUND: not found' } });
+
+      const canonicalPayload = {
+        matchId: args.p_match_id,
+        tournamentId: args.p_tournament_id,
+        regulationHomeScore: args.p_regulation_home_score,
+        regulationAwayScore: args.p_regulation_away_score,
+        penaltyHomeScore: args.p_penalty_home_score,
+        penaltyAwayScore: args.p_penalty_away_score,
+        decidedBy: args.p_decided_by,
+        winnerTeamId: args.p_winner_team_id,
+        resultType: args.p_result_type,
+        goals: args.p_goals || [],
+        cards: args.p_cards || [],
+        reportText: args.p_report_text,
+      };
+      const existing = db.tournament_result_submissions.find(
+        (s) => s.match_id === args.p_match_id && s.stage === 'full_report' && s.idempotency_key === args.p_idempotency_key
+      );
+      if (existing) {
+        if (JSON.stringify(existing.payload) !== JSON.stringify(canonicalPayload)) {
+          return Promise.resolve({ data: null, error: { message: 'FULL_REPORT_IDEMPOTENCY_PAYLOAD_MISMATCH: idempotency_key already used with a different payload' } });
+        }
+        return Promise.resolve({
+          data: { submission_id: existing.id, match_id: args.p_match_id, new_match_version: match.version, published_at: existing.submitted_at, idempotent: true },
+          error: null,
+        });
+      }
+
+      if (match.result_workflow_status === 'published') {
+        return Promise.resolve({ data: null, error: { message: 'FULL_REPORT_ALREADY_PUBLISHED_USE_CORRECTION: already published' } });
+      }
+
       const submissionId = `sub-${Math.random().toString(36).slice(2)}`;
       db.tournament_result_submissions.push({
         id: submissionId,
         match_id: args.p_match_id,
         stage: 'full_report',
-        payload: args.p_payload,
+        payload: canonicalPayload,
         idempotency_key: args.p_idempotency_key,
         submitted_at: '2026-07-20T12:00:00.000Z',
       });
