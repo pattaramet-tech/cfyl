@@ -31,16 +31,25 @@
  * this repo's sibling PR. The requireTournamentSuperAdmin() HTTP/auth wrapper
  * itself is intentionally out of scope for this runtime check.
  *
- * KNOWN GAP — Scenario 9 (rollback workflow) is reported BLOCKED, not faked:
- * as of this branch, no rollback API route or service function exists anywhere
- * in the codebase for schedule import batches. Only schema-level support
- * exists (tournament_schedule_batches.status allows 'rolled_back',
- * rolled_back_at/rolled_back_by columns from migration 011) and a design doc
- * (TOURNAMENT_V2_SCHEDULING_AND_IMPORT.md §9) describing an intended future
- * POST /schedule/import/batches/{id}/rollback endpoint. Building it here would
- * be starting a new feature, which is explicitly out of scope for this task.
- * Cleanup therefore uses direct disposable-row deletion (as verify-foundation.ts
- * and verify-full-report-runtime.ts already do), not a rollback endpoint.
+ * REQUIRES MIGRATION 013a — scripts/tournament-v2/013a-schedule-import-save-result-and-rollback.sql
+ * must be applied to CFYL-Tournament-Staging before this script can pass. It adds
+ * tournament_schedule_batches.save_result (missing from every prior migration despite
+ * the Save route depending on it — see PR #6 history), the 'rolling_back' status value,
+ * and the tournament_schedule_import_rows snapshot columns (before_payload,
+ * applied_match_version, applied_match_updated_at) that Rollback's conflict-check relies
+ * on. Do not run this against a Staging project 013a has not been applied to — it will
+ * fail at the Save step with "column ... does not exist", same as before 013a existed.
+ *
+ * ROLLBACK — calls the real tournament.rollback_schedule_import_batch() RPC directly
+ * (via ctx.client.rpc(...)), the same way the real
+ * app/api/tournament/admin/schedule/import/batches/[batchId]/rollback/route.ts route
+ * does, minus its HTTP/auth wrapper. Since the entire rollback contract lives in that
+ * one Postgres function (see migration 013a), calling it directly here exercises the
+ * real transactional logic, not a reimplementation — unlike Preview/Save, which had to
+ * be replicated in this script because their logic lives in the route files themselves.
+ * Cleanup still uses direct disposable-row deletion for anything rollback doesn't
+ * already remove (the tournament row, the qualification draw/candidates from the index
+ * check, etc.) — rollback only ever touches rows this script itself created.
  */
 
 import dotenv from 'dotenv';
@@ -145,12 +154,9 @@ const EMPTY_SAVE_RESULT: SaveResultSummary = {
   failures: [],
 };
 
-class BlockedError extends Error {}
-
 interface ScenarioResult {
   name: string;
   ok: boolean;
-  blocked?: boolean;
   detail?: string;
 }
 const results: ScenarioResult[] = [];
@@ -161,14 +167,9 @@ async function run(name: string, fn: () => Promise<void>): Promise<void> {
     results.push({ name, ok: true });
     console.log(`✓ ${name}`);
   } catch (e) {
-    if (e instanceof BlockedError) {
-      results.push({ name, ok: false, blocked: true, detail: e.message });
-      console.log(`⚠ BLOCKED: ${name}\n    ${e.message}`);
-    } else {
-      const detail = e instanceof Error ? e.message : String(e);
-      results.push({ name, ok: false, detail });
-      console.error(`✗ ${name}\n    ${detail}`);
-    }
+    const detail = e instanceof Error ? e.message : String(e);
+    results.push({ name, ok: false, detail });
+    console.error(`✗ ${name}\n    ${detail}`);
   }
 }
 
@@ -318,7 +319,7 @@ async function loadScheduleContext(
     client
       .from('tournament_matches')
       .select(
-        'id, match_code, category_id, group_id, venue_id, court_id, match_date, match_time, match_no, stage, home_source_type, home_source_ref, away_source_type, away_source_ref, result_policy, status, note, schedule_status, version'
+        'id, match_code, category_id, group_id, venue_id, court_id, match_date, match_time, match_no, stage, home_source_type, home_source_ref, away_source_type, away_source_ref, result_policy, status, note, schedule_status, version, home_team_id, away_team_id, sources_resolved_at, result_type, schedule_batch_id, updated_at, updated_by'
       )
       .eq('tournament_id', tournamentId)
       .is('deleted_at', null),
@@ -832,9 +833,41 @@ async function performSave(ctx: Ctx, batchId: string, confirmPublishedRevision =
       const categoryStageKey = `${category.id}|${normalized.stage}`;
 
       if (existing) {
+        // Complete pre-mutation snapshot of every column about to be overwritten —
+        // Rollback restores exactly these columns from this JSON, so it must stay in
+        // lockstep with `payload` above. Mirrors the real Save route's fix.
+        const beforePayload = {
+          category_id: existing.category_id,
+          group_id: existing.group_id,
+          stage: existing.stage,
+          match_code: existing.match_code,
+          match_no: existing.match_no,
+          match_date: existing.match_date,
+          match_time: existing.match_time,
+          venue_id: existing.venue_id,
+          court_id: existing.court_id,
+          home_team_id: existing.home_team_id ?? null,
+          away_team_id: existing.away_team_id ?? null,
+          home_source_type: existing.home_source_type,
+          home_source_ref: existing.home_source_ref,
+          away_source_type: existing.away_source_type,
+          away_source_ref: existing.away_source_ref,
+          sources_resolved_at: existing.sources_resolved_at ?? null,
+          result_policy: existing.result_policy,
+          result_type: existing.result_type ?? null,
+          status: existing.status,
+          note: existing.note,
+          schedule_batch_id: existing.schedule_batch_id ?? null,
+          schedule_status: existing.schedule_status ?? null,
+          version: existing.version || 1,
+          updated_at: existing.updated_at ?? null,
+          updated_by: existing.updated_by ?? null,
+        };
+        const appliedVersion = (existing.version || 1) + 1;
+
         const { data: updatedMatch, error: updateError } = await client
           .from('tournament_matches')
-          .update({ ...payload, version: (existing.version || 1) + 1 })
+          .update({ ...payload, version: appliedVersion })
           .eq('id', existing.id)
           .select('id')
           .single();
@@ -843,7 +876,16 @@ async function performSave(ctx: Ctx, batchId: string, confirmPublishedRevision =
           failures.push({ row: importRow.row_no, match_code: normalized.match_code, error: updateError?.message || 'update failed' });
           continue;
         }
-        await client.from('tournament_schedule_import_rows').update({ action: 'update', matched_match_id: updatedMatch.id }).eq('id', importRow.id);
+        await client
+          .from('tournament_schedule_import_rows')
+          .update({
+            action: 'update',
+            matched_match_id: updatedMatch.id,
+            before_payload: beforePayload,
+            applied_match_version: appliedVersion,
+            applied_match_updated_at: now,
+          })
+          .eq('id', importRow.id);
         updated += 1;
         ctx.matchIds.push(updatedMatch.id as string);
         if (isConfirmedPublishedRevision) {
@@ -863,7 +905,16 @@ async function performSave(ctx: Ctx, batchId: string, confirmPublishedRevision =
           failures.push({ row: importRow.row_no, match_code: normalized.match_code, error: createError?.message || 'create failed' });
           continue;
         }
-        await client.from('tournament_schedule_import_rows').update({ action: 'create', matched_match_id: createdMatch.id }).eq('id', importRow.id);
+        await client
+          .from('tournament_schedule_import_rows')
+          .update({
+            action: 'create',
+            matched_match_id: createdMatch.id,
+            before_payload: null,
+            applied_match_version: 1,
+            applied_match_updated_at: now,
+          })
+          .eq('id', importRow.id);
         created += 1;
         ctx.matchIds.push(createdMatch.id as string);
         if (!categoryStageStatus.has(categoryStageKey)) categoryStageStatus.set(categoryStageKey, 'validated');
@@ -937,9 +988,29 @@ async function scenarioSave(ctx: Ctx, batchId: string): Promise<SaveResponse> {
   assert(result.created === 2, `expected 2 created matches, got ${result.created}`);
   assert(result.failed === 0, `expected 0 failed rows, got ${result.failed}: ${JSON.stringify(result.failures)}`);
 
-  const { data: batchRow, error } = await ctx.client.from('tournament_schedule_batches').select('status').eq('id', batchId).single();
+  const { data: batchRow, error } = await ctx.client
+    .from('tournament_schedule_batches')
+    .select('status, save_result')
+    .eq('id', batchId)
+    .single();
   if (error || !batchRow) throw new Error(`batch re-fetch failed: ${error?.message}`);
   assert(batchRow.status === 'saved', `expected batch.status 'saved' after save, got '${batchRow.status}'`);
+  assert(!!batchRow.save_result, 'expected save_result to be persisted on the batch');
+  assert((batchRow.save_result as SaveResultSummary).created === 2, `expected stored save_result.created === 2, got ${(batchRow.save_result as SaveResultSummary).created}`);
+
+  const { data: rows, error: rowsError } = await ctx.client
+    .from('tournament_schedule_import_rows')
+    .select('id, match_code, action, matched_match_id, before_payload, applied_match_version, applied_match_updated_at')
+    .eq('batch_id', batchId);
+  if (rowsError) throw new Error(`import rows re-fetch failed: ${rowsError.message}`);
+  assert(rows && rows.length === 2, `expected 2 import rows, got ${rows?.length}`);
+  for (const row of rows || []) {
+    assert(row.action === 'create', `expected row action 'create' for ${row.match_code}, got '${row.action}'`);
+    assert(!!row.matched_match_id, `expected matched_match_id recorded for ${row.match_code}`);
+    assert(row.before_payload === null, `expected before_payload null for a create-action row (${row.match_code}), got ${JSON.stringify(row.before_payload)}`);
+    assert(row.applied_match_version === 1, `expected applied_match_version 1 for a newly created match (${row.match_code}), got ${row.applied_match_version}`);
+    assert(!!row.applied_match_updated_at, `expected applied_match_updated_at recorded for ${row.match_code}`);
+  }
 
   return result;
 }
@@ -997,24 +1068,188 @@ async function scenarioNoBatchStuckSaving(ctx: Ctx, batchId: string): Promise<vo
   assert(batchRow.status === 'saved', `expected final batch status 'saved', got '${batchRow.status}'`);
 }
 
-async function scenarioRollback(): Promise<void> {
-  throw new BlockedError(
-    'No rollback workflow is implemented in this codebase for schedule import batches. ' +
-      'app/api/tournament/admin/schedule/ contains only template/, import/preview/, and import/save/ routes — ' +
-      'no rollback route file exists anywhere in the repo. tournament_schedule_batches has a "rolled_back" status ' +
-      'value and rolled_back_at/rolled_back_by columns (schema-only, added by migration 011, never written by any ' +
-      'code), and TOURNAMENT_V2_SCHEDULING_AND_IMPORT.md §9 documents an intended future ' +
-      'POST /schedule/import/batches/{id}/rollback endpoint that has not been built. Implementing it now would be ' +
-      'starting a new feature, which is explicitly out of scope for this runtime-verification task.'
-  );
+// ============================================================================
+// Second batch — updates M1 (an 'update' action, not 'create'), producing a
+// before_payload snapshot for Rollback to later restore from.
+// ============================================================================
+
+async function getMatchIdByCode(ctx: Ctx, matchCode: string): Promise<string> {
+  const { data, error } = await ctx.client
+    .from('tournament_matches')
+    .select('id')
+    .eq('tournament_id', ctx.tournamentId)
+    .eq('match_code', matchCode)
+    .maybeSingle();
+  if (error) throw new Error(`match lookup by code failed: ${error.message}`);
+  if (!data) throw new Error(`no match found for match_code ${matchCode}`);
+  return data.id as string;
+}
+
+async function scenarioSaveUpdate(ctx: Ctx, m1RawRow: RawScheduleImportRow): Promise<{ batchId: string; matchId: string }> {
+  const updatedRawRow: RawScheduleImportRow = { ...m1RawRow, start_time: '09:15' };
+  const { context } = await loadScheduleContext(ctx.client, ctx.tournamentId);
+  const seen = createScheduleBatchSeen();
+  const result = validateScheduleImportRow(updatedRawRow, 2, context, seen);
+  assert(result.status === 'warning', `expected update-batch row status 'warning', got '${result.status}': ${JSON.stringify(result.messages)}`);
+  assert(result.action === 'update', `expected action 'update' for an already-existing match_code, got '${result.action}'`);
+
+  const { data: batchData, error: batchError } = await ctx.client
+    .from('tournament_schedule_batches')
+    .insert({
+      tournament_id: ctx.tournamentId,
+      batch_type: 'fixture_import',
+      file_name: `runtime-verify-update-${RUN_TAG}.xlsx`,
+      status: 'preview',
+      total_rows: 1,
+      valid_rows: 0,
+      warning_rows: 1,
+      error_rows: 0,
+      uploaded_by: ACTOR_ID,
+    })
+    .select('id')
+    .single();
+  if (batchError || !batchData) throw new Error(`update batch insert failed: ${batchError?.message}`);
+  const batchId = batchData.id as string;
+  ctx.batchIds.push(batchId);
+
+  const { error: rowInsertError } = await ctx.client.from('tournament_schedule_import_rows').insert({
+    batch_id: batchId,
+    row_no: result.row,
+    raw_payload: {
+      raw: updatedRawRow,
+      normalized: result.normalized,
+      diff: result.diff,
+      old_match: null,
+      requires_revision_confirmation: result.requiresRevisionConfirmation,
+    },
+    match_code: result.match_code || null,
+    status: result.status,
+    messages: result.messages,
+    matched_match_id: result.existingMatchId,
+    action: result.action,
+  });
+  if (rowInsertError) throw new Error(`update batch row insert failed: ${rowInsertError.message}`);
+
+  const saveResult = await performSave(ctx, batchId);
+  assert(saveResult.status === 'saved', `expected update-batch save status 'saved', got '${saveResult.status}'`);
+  assert(saveResult.updated === 1, `expected 1 updated match, got ${saveResult.updated}`);
+  assert(saveResult.failed === 0, `expected 0 failed rows in update batch, got ${saveResult.failed}: ${JSON.stringify(saveResult.failures)}`);
+
+  const { data: row, error: rowError } = await ctx.client
+    .from('tournament_schedule_import_rows')
+    .select('matched_match_id, before_payload, applied_match_version')
+    .eq('batch_id', batchId)
+    .single();
+  if (rowError || !row) throw new Error(`update batch row re-fetch failed: ${rowError?.message}`);
+  const beforePayload = row.before_payload as Record<string, unknown> | null;
+  assert(!!beforePayload, 'expected before_payload captured for the update-action row');
+  assert(beforePayload!.match_time === '09:00', `expected before_payload.match_time '09:00', got ${beforePayload!.match_time}`);
+  assert(row.applied_match_version === 2, `expected applied_match_version 2 after updating a version-1 match, got ${row.applied_match_version}`);
+
+  const matchId = row.matched_match_id as string;
+  const { data: match, error: matchError } = await ctx.client.from('tournament_matches').select('match_time, version').eq('id', matchId).single();
+  if (matchError || !match) throw new Error(`updated match re-fetch failed: ${matchError?.message}`);
+  assert(match.match_time === '09:15', `expected updated match_time '09:15', got ${match.match_time}`);
+  assert(match.version === 2, `expected updated match version 2, got ${match.version}`);
+
+  return { batchId, matchId };
 }
 
 // ============================================================================
-// Cleanup — direct disposable-row deletion (no rollback endpoint exists; see
-// scenarioRollback above). Explicit deletes for rows that do NOT cascade from
-// the tournament delete: tournament_matches and tournament_schedule_versions
-// both have their batch_id FK as ON DELETE SET NULL (not cascade), and
-// tournament_audit_logs.tournament_id is also ON DELETE SET NULL.
+// Rollback — calls the real tournament.rollback_schedule_import_batch() RPC
+// directly (see header comment). This exercises the real Postgres function,
+// not a reimplementation, since the entire rollback contract lives there.
+// ============================================================================
+
+interface RollbackResponse {
+  batchId: string;
+  status: string;
+  idempotent: boolean;
+  revertedCreated?: number;
+  revertedUpdated?: number;
+}
+
+async function performRollback(ctx: Ctx, batchId: string): Promise<RollbackResponse> {
+  const { data, error } = await ctx.client.rpc('rollback_schedule_import_batch', {
+    p_batch_id: batchId,
+    p_actor_id: ACTOR_ID,
+  });
+  if (error) {
+    if (error.message.includes('does not exist')) {
+      throw new Error(
+        `Rollback RPC (or a column it depends on) does not exist — Migration 013a has not been applied to ` +
+          `this Staging project yet. Raw error: ${error.message}`
+      );
+    }
+    throw new Error(error.message);
+  }
+  return data as RollbackResponse;
+}
+
+async function scenarioRollbackUpdate(ctx: Ctx, batchId: string, matchId: string): Promise<void> {
+  const result = await performRollback(ctx, batchId);
+  assert(result.status === 'rolled_back', `expected status 'rolled_back', got '${result.status}'`);
+  assert(!result.idempotent, `expected idempotent falsy on first rollback, got ${result.idempotent}`);
+  assert(result.revertedUpdated === 1, `expected revertedUpdated 1, got ${result.revertedUpdated}`);
+
+  const { data: match, error } = await ctx.client
+    .from('tournament_matches')
+    .select('match_time, version, schedule_status')
+    .eq('id', matchId)
+    .single();
+  if (error || !match) throw new Error(`match re-fetch after rollback failed: ${error?.message}`);
+  assert(match.match_time === '09:00', `expected match_time restored to '09:00', got ${match.match_time}`);
+  assert(match.version === 1, `expected version restored to 1, got ${match.version}`);
+  assert(match.schedule_status === 'validated', `expected schedule_status restored to 'validated', got ${match.schedule_status}`);
+
+  const { data: batchRow, error: batchError } = await ctx.client
+    .from('tournament_schedule_batches')
+    .select('status, rolled_back_at, rolled_back_by')
+    .eq('id', batchId)
+    .single();
+  if (batchError || !batchRow) throw new Error(`update batch re-fetch after rollback failed: ${batchError?.message}`);
+  assert(batchRow.status === 'rolled_back', `expected update batch status 'rolled_back', got '${batchRow.status}'`);
+  assert(!!batchRow.rolled_back_at, 'expected rolled_back_at to be set');
+  assert(batchRow.rolled_back_by === ACTOR_ID, `expected rolled_back_by to be the actor, got ${batchRow.rolled_back_by}`);
+}
+
+async function scenarioRollbackCreate(ctx: Ctx, batchId: string, matchIds: string[]): Promise<void> {
+  const result = await performRollback(ctx, batchId);
+  assert(result.status === 'rolled_back', `expected status 'rolled_back', got '${result.status}'`);
+  assert(result.revertedCreated === 2, `expected revertedCreated 2, got ${result.revertedCreated}`);
+
+  const { data: matches, error } = await ctx.client.from('tournament_matches').select('id').in('id', matchIds);
+  if (error) throw new Error(`match re-fetch after rollback failed: ${error.message}`);
+  assert((matches || []).length === 0, `expected both created matches deleted by rollback, ${matches?.length} remain`);
+
+  const { data: batchRow, error: batchError } = await ctx.client.from('tournament_schedule_batches').select('status').eq('id', batchId).single();
+  if (batchError || !batchRow) throw new Error(`create batch re-fetch after rollback failed: ${batchError?.message}`);
+  assert(batchRow.status === 'rolled_back', `expected create batch status 'rolled_back', got '${batchRow.status}'`);
+}
+
+async function scenarioRollbackIdempotentAndAudit(ctx: Ctx, batchId: string): Promise<void> {
+  const retry = await performRollback(ctx, batchId);
+  assert(retry.idempotent === true, `expected idempotent:true when retrying an already-rolled-back batch, got ${retry.idempotent}`);
+  assert(retry.status === 'rolled_back', `expected status 'rolled_back' on retry, got '${retry.status}'`);
+
+  const { data: logs, error } = await ctx.client
+    .from('tournament_audit_logs')
+    .select('id')
+    .eq('entity_id', batchId)
+    .eq('action', 'schedule.import.rollback');
+  if (error) throw new Error(`audit log re-fetch failed: ${error.message}`);
+  assert((logs || []).length === 1, `expected exactly 1 rollback audit log entry (idempotent retry must not write a second), got ${logs?.length}`);
+}
+
+// ============================================================================
+// Cleanup — direct disposable-row deletion for anything Rollback did not
+// already remove. Rollback (scenarios 9b/9d above) deletes/restores the
+// Matches it touches, but never deletes the batches, import rows, schedule
+// version rows, or the tournament itself — those still need explicit cleanup.
+// tournament_matches and tournament_schedule_versions both have their
+// batch_id FK as ON DELETE SET NULL (not cascade), and
+// tournament_audit_logs.tournament_id is also ON DELETE SET NULL, so none of
+// these cascade away from the final tournament delete either.
 // ============================================================================
 
 async function cleanup(ctx: Ctx): Promise<void> {
@@ -1073,55 +1308,80 @@ async function cleanup(ctx: Ctx): Promise<void> {
 // Main
 // ============================================================================
 
+function required<T>(value: T | null | undefined, message: string): T {
+  if (value === null || value === undefined) throw new Error(message);
+  return value;
+}
+
 async function main(): Promise<void> {
   const client = getTournamentServiceClient();
   console.log(`[INFO] Connected to Tournament Staging host: ${new URL(process.env.TOURNAMENT_SUPABASE_URL || '').host}`);
   console.log(`[INFO] RUN_TAG = ${RUN_TAG}`);
 
   const ctx = await setup(client);
-  let preview: PreviewOutcome | null = null;
-  let firstSave: SaveResponse | null = null;
+  const box: {
+    preview: PreviewOutcome | null;
+    firstSave: SaveResponse | null;
+    updateBatch: { batchId: string; matchId: string } | null;
+    createdMatchIds: string[];
+  } = { preview: null, firstSave: null, updateBatch: null, createdMatchIds: [] };
 
   try {
     await run('Migration 012 indexes exist (uniq_tqualdraw_active_category_slot, uniq_tqualcand_selected_order)', () => checkMigration012Indexes(ctx));
 
     await run('1-2. Preview draw_selected rows -> Warning, not Error', async () => {
-      preview = await scenarioPreview(ctx);
+      box.preview = await scenarioPreview(ctx);
     });
-    if (!preview) throw new Error('preview scenario did not produce a batch — aborting dependent scenarios');
+    const preview = required(box.preview, 'preview scenario did not produce a batch — aborting dependent scenarios');
+    const createBatchId = preview.batchId;
 
-    await run('3-4. Save batch successfully -> status becomes saved', async () => {
-      firstSave = await scenarioSave(ctx, preview!.batchId);
+    await run('3-4. Save batch successfully -> status becomes saved, save_result stored', async () => {
+      box.firstSave = await scenarioSave(ctx, preview.batchId);
     });
-    if (!firstSave) throw new Error('save scenario failed — aborting dependent scenarios');
+    const firstSave = required(box.firstSave, 'save scenario failed — aborting dependent scenarios');
 
-    await run('5. Saved Match preserves home/away source_type + source_ref', () => scenarioSourceFieldsPreserved(ctx, preview!.rawRows));
+    await run('5. Saved Match preserves home/away source_type + source_ref', () => scenarioSourceFieldsPreserved(ctx, preview.rawRows));
     await run('6. Unresolved draw_selected team_id remains null', () => scenarioUnresolvedTeamIdNull(ctx));
-    await run('7. Retry Save on same batch -> idempotent, no duplicate Match', () => scenarioRetrySaveIdempotent(ctx, preview!.batchId, firstSave!));
-    await run('8. No batch remains stuck in saving', () => scenarioNoBatchStuckSaving(ctx, preview!.batchId));
-    await run('9. Supported rollback workflow', () => scenarioRollback());
+    await run('7. Retry Save on same batch -> idempotent, no duplicate Match', () => scenarioRetrySaveIdempotent(ctx, preview.batchId, firstSave));
+    await run('8. No batch remains stuck in saving', () => scenarioNoBatchStuckSaving(ctx, preview.batchId));
+
+    await run('9a. Second batch updates M1 (captures before_payload for Rollback)', async () => {
+      box.updateBatch = await scenarioSaveUpdate(ctx, preview.rawRows[0]);
+    });
+    if (box.updateBatch) {
+      const updateBatch = box.updateBatch;
+      await run('9b. Rollback the update batch -> M1 restored to its pre-update state', () =>
+        scenarioRollbackUpdate(ctx, updateBatch.batchId, updateBatch.matchId)
+      );
+    }
+
+    await run('9c. Resolve created Match ids for the rollback-of-create scenario', async () => {
+      box.createdMatchIds = [
+        await getMatchIdByCode(ctx, preview.rawRows[0].match_code as string),
+        await getMatchIdByCode(ctx, preview.rawRows[1].match_code as string),
+      ];
+    });
+    if (box.createdMatchIds.length === 2) {
+      const createdMatchIds = box.createdMatchIds;
+      await run('9d. Rollback the original create batch -> both created Matches removed', () =>
+        scenarioRollbackCreate(ctx, createBatchId, createdMatchIds)
+      );
+      await run('9e. Rollback is idempotent on retry; exactly one audit log entry', () => scenarioRollbackIdempotentAndAudit(ctx, createBatchId));
+    }
   } finally {
     await run('10. Complete cleanup of all disposable rows', () => cleanup(ctx));
   }
 
   console.log('\n[SUMMARY]');
   let anyFailed = false;
-  let anyBlocked = false;
   for (const r of results) {
-    const marker = r.ok ? '✓' : r.blocked ? '⚠ BLOCKED' : '✗ FAILED';
+    const marker = r.ok ? '✓' : '✗ FAILED';
     console.log(`  ${marker} ${r.name}${r.detail ? `\n      ${r.detail}` : ''}`);
-    if (!r.ok && !r.blocked) anyFailed = true;
-    if (r.blocked) anyBlocked = true;
+    if (!r.ok) anyFailed = true;
   }
 
   if (anyFailed) {
-    throw new Error('One or more scenarios FAILED (not merely blocked) — see [SUMMARY] above.');
-  }
-  if (anyBlocked) {
-    const passedCount = results.filter((r) => r.ok).length;
-    console.log(`\n${passedCount}/${results.length} scenarios passed; ${results.length - passedCount} blocked (see above). Not all required scenarios could run.`);
-    process.exitCode = 1;
-    return;
+    throw new Error('One or more scenarios FAILED — see [SUMMARY] above.');
   }
   console.log(`\nAll ${results.length} scenarios passed.`);
 }

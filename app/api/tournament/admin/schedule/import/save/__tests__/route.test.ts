@@ -575,4 +575,96 @@ describe('POST /api/tournament/admin/schedule/import/save', () => {
 
     expect(db.tournament_schedule_versions).toHaveLength(0);
   });
+
+  it('stores the final save summary into save_result on the batch', async () => {
+    const db = buildDb();
+    state.client = createMockClient(db);
+
+    const response = await POST(makeRequest('batch-1'));
+    const body = await response.json();
+
+    expect(db.tournament_schedule_batches[0].save_result).toMatchObject({
+      created: body.data.created,
+      updated: body.data.updated,
+      unchanged: body.data.unchanged,
+      skipped: body.data.skipped,
+      failed: body.data.failed,
+      revisionsConfirmed: body.data.revisionsConfirmed,
+    });
+  });
+
+  it('returns the exact stored save_result on an idempotent retry, without writing again', async () => {
+    const db = buildDb();
+    state.client = createMockClient(db);
+
+    const first = await POST(makeRequest('batch-1'));
+    const firstBody = await first.json();
+    const storedAfterFirst = db.tournament_schedule_batches[0].save_result;
+
+    const second = await POST(makeRequest('batch-1'));
+    const secondBody = await second.json();
+
+    expect(secondBody.data.created).toBe(firstBody.data.created);
+    expect(db.tournament_schedule_batches[0].save_result).toEqual(storedAfterFirst);
+  });
+
+  it('records matched_match_id and the resulting version/updated_at for a newly created match', async () => {
+    const db = buildDb();
+    state.client = createMockClient(db);
+
+    await POST(makeRequest('batch-1'));
+
+    const createdMatch = db.tournament_matches[0];
+    const row = db.tournament_schedule_import_rows[0];
+    expect(row.matched_match_id).toBe(createdMatch.id);
+    expect(row.before_payload).toBeNull();
+    expect(row.applied_match_version).toBe(1);
+    expect(row.applied_match_updated_at).toBeTypeOf('string');
+  });
+
+  it('stores a complete pre-import Match snapshot in before_payload before mutating an existing match', async () => {
+    const existingMatch = {
+      id: 'match-1',
+      tournament_id: 'tour-1',
+      match_code: 'B-U12-GA-001',
+      category_id: 'cat-1',
+      group_id: 'group-1',
+      venue_id: 'venue-1',
+      court_id: 'court-1',
+      match_date: '2026-08-01',
+      match_time: '08:00',
+      match_no: 1,
+      stage: 'group',
+      home_source_type: 'group_slot',
+      home_source_ref: 'A-S1',
+      away_source_type: 'group_slot',
+      away_source_ref: 'A-S2',
+      home_team_id: null,
+      away_team_id: null,
+      sources_resolved_at: null,
+      result_policy: 'single_step',
+      result_type: 'normal',
+      status: 'scheduled',
+      note: null,
+      schedule_batch_id: null,
+      schedule_status: 'validated',
+      version: 1,
+    };
+    const db = buildDb({ existingMatch });
+    state.client = createMockClient(db);
+
+    await POST(makeRequest('batch-1'));
+
+    const row = db.tournament_schedule_import_rows[0];
+    expect(row.before_payload).toMatchObject({
+      match_time: '08:00',
+      schedule_status: 'validated',
+      version: 1,
+      home_source_ref: 'A-S1',
+    });
+    expect(row.matched_match_id).toBe('match-1');
+    expect(row.applied_match_version).toBe(2);
+    expect(db.tournament_matches[0].match_time).toBe('08:30');
+    expect(db.tournament_matches[0].version).toBe(2);
+  });
 });
