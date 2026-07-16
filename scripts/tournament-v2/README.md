@@ -217,8 +217,9 @@ lock, deterministic lock ordering, the conflict path returning rather than raisi
 the failed-state update, and the conditional `DELETE`/`UPDATE` version/updated_at checks
 are all present in the SQL source text.
 
-The runtime verifier gained two new scenarios for this fix (not yet run against Staging —
-013b has not been applied there yet):
+The runtime verifier gained two new scenarios for this fix. **Migration 013b has now
+been applied to `CFYL-Tournament-Staging` and both scenarios passed** — see the
+15-scenario results below:
 
 - **Conflict persistence**: create and update a disposable Match through Schedule
   Import, mutate that Match directly afterward (simulating an unrelated admin edit),
@@ -266,11 +267,27 @@ silently missed. Fixed by normalizing the lookup value the same way before query
 **Status update — a subsequent final review found the two real Rollback bugs described
 above, which this "all 13 scenarios passed" run predates and could not have caught (no
 concurrency scenario existed yet, and the conflict-persistence assertions only checked
-the in-memory response, not a re-query of the batch row).** Migration 013b, the code
-fixes, and two new verifier scenarios covering exactly these bugs are now prepared and
-unit/static-tested, but **not yet run against real Staging** — that requires the owner
-to apply 013b there first. Do not treat the runtime gate as passed again until that run
-actually happens and succeeds, including the two new scenarios above.
+the in-memory response, not a re-query of the batch row).** Migration 013b and the two
+new verifier scenarios covering exactly these bugs have since been applied and run
+against real Staging — see the next section.
+
+### Migration 013b applied to CFYL-Tournament-Staging — all 15 scenarios passed
+
+The owner applied `scripts/tournament-v2/013b-schedule-rollback-concurrency-fix.sql` to
+`CFYL-Tournament-Staging`. With it in place, `npm run verify:tournament-schedule-import-runtime`
+passed end to end for all 15 scenarios (the 13 above, plus the 2 new ones this migration
+was written to cover):
+
+| Check | Result |
+|---|---|
+| All 13 scenarios listed above (indexes, preview/save, rollback lifecycle, idempotency, cleanup) | **✓ Passed** |
+| Rollback conflict state persists correctly — `status='failed'`, `rollback_failure_reason`, and `failed_at` all survive a re-query after a conflict, with the external edit surviving untouched | **✓ Passed** |
+| Concurrent rollback/edit never overwrites the committed edit — real `Promise.all` race between a rollback call and a direct Match edit, no `await` between them; the concurrent edit's value is present in the final Match state under either safe ordering | **✓ Passed** |
+| Complete rollback lifecycle (create → update → rollback update → rollback create) | **✓ Passed** |
+| Zero disposable rows remain after cleanup | **✓ Confirmed** |
+
+**PR #6 runtime gate passed after Migration 013b; ready for final review.** Production
+was not modified — only `CFYL-Tournament-Staging`.
 
 ---
 
