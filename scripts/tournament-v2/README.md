@@ -167,24 +167,32 @@ rejected as "changed since import" against its own history. Covered by a dedicat
 → *"allows rolling back an earlier batch after a later batch on the same Match was
 already rolled back."*
 
-### Results of the last run against CFYL-Tournament-Staging (before 013a existed)
+### Results of the latest run against CFYL-Tournament-Staging — ✅ all 13 scenarios passed
+
+Migration 013a is applied to `CFYL-Tournament-Staging`. With it in place,
+`npm run verify:tournament-schedule-import-runtime` passed end to end:
 
 | Check | Result |
 |---|---|
 | `uniq_tqualdraw_active_category_slot` exists (migration 012) | **✓ Confirmed** — verified functionally: a second active (non-superseded) draw for the same `(category_id, qualification_slot)` was rejected by Postgres, naming this exact index in the error |
 | `uniq_tqualcand_selected_order` exists (migration 012) | **✓ Confirmed** — verified functionally: a second selected candidate at the same `draw_order` within a draw was rejected by Postgres, naming this exact index in the error |
 | Preview two `draw_selected` rows (`G-U16-THIRD-DRAW-1`, `G-U16-THIRD-DRAW-2`) | **✓ Passed** — both rows validate as `warning` (code `W8`, unresolved placeholder), never `error` |
-| Save the batch | **✗ Blocked** — `save_result` column missing (see above; now fixed by 013a) |
-| Rollback workflow | **✗ Blocked** — not implemented (see above; now implemented by 013a) |
-| Complete cleanup of all disposable rows | **✓ Confirmed** — zero disposable rows remained, re-verified independently |
+| Save the batch successfully; batch status becomes `saved`; `save_result` stored | **✓ Passed** |
+| Saved Match preserves `home/away_source_type`/`home/away_source_ref` | **✓ Passed** |
+| Unresolved `draw_selected` `team_id` stays `null` | **✓ Passed** |
+| Retry Save on the same batch is idempotent, no duplicate Match | **✓ Passed** |
+| No batch remains stuck in `saving` | **✓ Passed** |
+| Second batch updates the first batch's Match, capturing `before_payload` | **✓ Passed** |
+| Rollback of the update batch restores the Match to its pre-update state (`match_time`, `version`, `schedule_status` all verified) | **✓ Passed** |
+| Rollback of the original create batch removes both created Matches | **✓ Passed** |
+| Rollback is idempotent on retry; exactly one audit log entry | **✓ Passed** |
+| Complete cleanup of all disposable rows | **✓ Confirmed** — zero disposable rows remained |
 
-**The verifier itself has since been extended** to cover save_result persistence, the
-before/applied_match_version/applied_match_updated_at snapshot fields, and the full
-rollback lifecycle (create-action delete, update-action restore, conflict detection,
-idempotent retry, audit log). **It has not been re-run against Staging yet** — that
-requires Migration 013a to be applied there first (owner action, as with every prior
-migration in this project). Do not treat the runtime gate as passed until that run
-actually happens and succeeds.
+**Bug fixed along the way (verifier-only, no migration/RPC changes)**:
+`getMatchIdByCode()` compared the raw `RUN_TAG`-derived `match_code` (not uppercased)
+directly against `tournament_matches.match_code`, which Save always persists uppercased
+via `normalizeScheduleImportRow`'s `upper(raw.match_code)`. The exact-equality lookup
+silently missed. Fixed by normalizing the lookup value the same way before querying.
 
 ---
 
