@@ -15,7 +15,7 @@ against any project yet.** Source of truth for every column/constraint is
 
 ## Run order
 
-Run all 13 files **in order**, once per project (Staging first, then Production). Each
+Run all 14 files **in order**, once per project (Staging first, then Production). Each
 file is idempotent (`create table if not exists`, `create index if not exists`,
 `drop policy if exists` before `create policy`), so a partial failure can be fixed and
 the same file re-run safely.
@@ -35,6 +35,7 @@ the same file re-run safely.
 | 11 | `011-scheduling-import-and-views.sql` | `tournament_schedule_batches`, `tournament_schedule_import_rows`, `tournament_schedule_versions`, deferred FK on `tournament_matches.schedule_batch_id`, `tournament.public_matches_view`, `tournament.public_players_view` |
 | 12 | `012-draw-selected-source-support.sql` | `draw_selected` source-type support on `tournament_matches`, qualification draw uniqueness guards (`uniq_tqualdraw_active_category_slot`, `uniq_tqualcand_selected_order`), G-U16 qualification-rule backfill |
 | 13 | `013-schedule-batch-atomic-save.sql` | Adds `'saving'`/`'failed'` to `tournament_schedule_batches.status`, adds `failed_at`/`failure_reason` columns |
+| 13a | `013a-schedule-import-save-result-and-rollback.sql` | Adds `tournament_schedule_batches.save_result` (missing from every prior migration despite the Save route depending on it), adds `'rolling_back'` to `status` and `rollback_failure_reason`, adds `tournament_schedule_import_rows.before_payload`/`applied_match_version`/`applied_match_updated_at`, and creates the `tournament.rollback_schedule_import_batch()` RPC. A separate, additive repair migration — does not modify the already-applied 013 retroactively. |
 
 **Why this order, not the Data Model doc's own section order**: `tournament_matches`
 (Data Model §2.8) references `tournament_knockout_rounds` (§2.15), so §2.15 is created
@@ -60,7 +61,7 @@ must exist first) and before testing anything through the client or `verify-foun
 2. Add `tournament` to **Exposed schemas**
 3. Save
 
-## After running all 13 files
+## After running all 14 files
 
 1. Confirm the `tournament` schema is in Exposed Schemas (previous section) — do this
    before the next two steps, or they'll fail with a schema-not-found error unrelated
@@ -91,71 +92,99 @@ must exist first) and before testing anything through the client or `verify-foun
 
 `npm run verify:tournament-schedule-import-runtime`
 (`scripts/tournament-v2/verify-schedule-import-runtime.ts`) is a disposable-data runtime
-verifier for the Schedule Import feature (migrations 011–013 and
-`app/api/tournament/admin/schedule/import/{preview,save}/route.ts`). Same safety guard as
-`verify-full-report-runtime.ts`: it refuses to run unless
+verifier for the Schedule Import feature (migrations 011–013a and
+`app/api/tournament/admin/schedule/import/{preview,save}/route.ts` +
+`app/api/tournament/admin/schedule/import/batches/[batchId]/rollback/route.ts`). Same
+safety guard as `verify-full-report-runtime.ts`: it refuses to run unless
 `TOURNAMENT_RUNTIME_VERIFY_CONFIRM=CFYL-Tournament-Staging` is set, and every row it
 creates is uniquely tagged and cleaned up at the end of the run (confirmed via its own
 post-cleanup verification queries).
 
 **Design note**: the preview/save logic lives entirely inside the two route files (there
-is no separate service module), and both routes require a real League Supabase Auth
-bearer token via `requireTournamentSuperAdmin`. To avoid creating throwaway users in
-League's shared production Auth system, this verifier does not call the route `POST`
-handlers directly — it calls the exact same underlying real functions the routes call
+is no separate service module), and both require a real League Supabase Auth bearer
+token via `requireTournamentSuperAdmin`. To avoid creating throwaway users in League's
+shared production Auth system, this verifier does not call the `POST` handlers directly
+— it calls the exact same underlying real functions the routes call
 (`validateScheduleImportRow`, `buildDrawSelectedConfigs`, `resolveScheduleSourceTeamId`,
 `buildScheduleImportDiff`) and replicates the routes' persistence orchestration
-(identical tables, columns, status values, and the same atomic `preview -> saving`
-claim `UPDATE`) directly against the real service client. The `requireTournamentSuperAdmin`
-HTTP/auth wrapper itself is intentionally out of scope for this runtime check.
+(identical tables, columns, status values, and the same atomic `preview -> saving` claim
+`UPDATE`) directly against the real service client. Rollback is different: its entire
+contract lives in one Postgres function
+(`tournament.rollback_schedule_import_batch()`, migration 013a), so the verifier calls
+that RPC directly (`ctx.client.rpc(...)`) — this exercises the real transactional logic,
+not a reimplementation. The `requireTournamentSuperAdmin` HTTP/auth wrapper itself is
+intentionally out of scope for this runtime check either way.
 
-**Results of the last run against CFYL-Tournament-Staging:**
+### Bug found and fixed: `tournament_schedule_batches.save_result` did not exist
+
+An earlier run against Staging found that `app/api/tournament/admin/schedule/import/save/route.ts`
+reads and writes a `save_result` column (used for the idempotent-retry response and the
+final `status: 'saved'` update) on every call, but no migration — 011, 012, or 013 — ever
+created that column. Confirmed live: with 013 fully applied to `CFYL-Tournament-Staging`,
+`save_result` was the only column of the batch table that failed to resolve. This meant
+**Save could not succeed against any database with the migration set that existed at the
+time** — not a "migration not yet applied" gap, a missing column definition in the source
+SQL itself. The existing mocked unit tests never caught it because their in-memory mock DB
+accepts any column the code writes to, regardless of whether a real migration defines it.
+
+**Fixed** via `scripts/tournament-v2/013a-schedule-import-save-result-and-rollback.sql` —
+a separate, additive repair migration (013, already applied to Staging, is not modified
+retroactively). Adds `save_result jsonb`. The Save route's own `save_result` read/write
+code was already correct; it needed no changes.
+
+### Rollback workflow — implemented
+
+Migration 011 added a `'rolled_back'` status value and `rolled_back_at`/`rolled_back_by`
+columns, but no rollback route, RPC, or per-row snapshot data ever existed until now.
+Migration 013a adds:
+
+- `tournament_schedule_batches`: `'rolling_back'` status, `rollback_failure_reason`
+- `tournament_schedule_import_rows`: `before_payload` (the complete pre-mutation set of
+  `tournament_matches` columns Save writes, including `updated_at`/`updated_by` — see
+  below for why), `applied_match_version`, `applied_match_updated_at`
+- `tournament.rollback_schedule_import_batch(p_batch_id, p_actor_id)` — `SECURITY
+  DEFINER`, pinned `search_path`, `service_role`-only execute (same posture as other
+  privileged Tournament V2 write RPCs). Single Postgres transaction, all-or-nothing:
+  atomically claims `saved -> rolling_back`; runs a conflict-check pass over every row
+  the batch actually mutated (Match must still exist, must not have changed since
+  — version/updated_at both checked — must not be currently published, and must not
+  already have a result entered); any conflict aborts the whole rollback with no partial
+  restore; otherwise deletes `create`-action Matches and restores `update`-action Matches
+  to their exact `before_payload` snapshot; finalizes as `rolled_back` and writes one
+  audit log entry.
+- New route: `POST /api/tournament/admin/schedule/import/batches/[batchId]/rollback`
+  (`tournament_super_admin` only) — thin wrapper that calls the RPC and maps its errors
+  to HTTP status codes (404 batch not found, 409 not eligible / conflict).
+
+**Correctness note — why `before_payload` restores `updated_at`/`updated_by` exactly,
+not a fresh timestamp/actor**: rolling back a batch is a true undo, not a new edit event.
+This matters for composability — if a later batch touched a Match a rollback-of-an-earlier-
+batch also needs to touch, rolling back the later batch first must restore the Match to
+*exactly* the state the earlier batch's own `applied_match_version`/
+`applied_match_updated_at` recorded, or the earlier batch's rollback would be falsely
+rejected as "changed since import" against its own history. Covered by a dedicated test:
+`app/api/tournament/admin/schedule/import/batches/[batchId]/rollback/__tests__/route.test.ts`
+→ *"allows rolling back an earlier batch after a later batch on the same Match was
+already rolled back."*
+
+### Results of the last run against CFYL-Tournament-Staging (before 013a existed)
 
 | Check | Result |
 |---|---|
 | `uniq_tqualdraw_active_category_slot` exists (migration 012) | **✓ Confirmed** — verified functionally: a second active (non-superseded) draw for the same `(category_id, qualification_slot)` was rejected by Postgres, naming this exact index in the error |
 | `uniq_tqualcand_selected_order` exists (migration 012) | **✓ Confirmed** — verified functionally: a second selected candidate at the same `draw_order` within a draw was rejected by Postgres, naming this exact index in the error |
 | Preview two `draw_selected` rows (`G-U16-THIRD-DRAW-1`, `G-U16-THIRD-DRAW-2`) | **✓ Passed** — both rows validate as `warning` (code `W8`, unresolved placeholder), never `error` |
-| Save the batch | **✗ Blocked — real schema bug, not a Staging-application gap** (see below) |
-| Saved Match preserves `home/away_source_type`/`home/away_source_ref` | Not reached (depends on Save) |
-| Unresolved `draw_selected` `team_id` stays `null` | Not reached (depends on Save) |
-| Retry Save is idempotent, no duplicate Match | Not reached (depends on Save) |
-| No batch remains stuck in `saving` | Not reached (depends on Save) |
-| Rollback workflow | **✗ Blocked — not implemented** (see below) |
+| Save the batch | **✗ Blocked** — `save_result` column missing (see above; now fixed by 013a) |
+| Rollback workflow | **✗ Blocked** — not implemented (see above; now implemented by 013a) |
 | Complete cleanup of all disposable rows | **✓ Confirmed** — zero disposable rows remained, re-verified independently |
 
-**Bug found: `tournament_schedule_batches.save_result` does not exist in any migration.**
-`app/api/tournament/admin/schedule/import/save/route.ts` reads and writes a
-`save_result` column (used for the idempotent-retry response and the final `status:
-'saved'` update) on every call, but **no migration file — 011, 012, or 013 — ever
-creates that column**. Migration 013 ("Atomic schedule batch save states") adds
-`failed_at`/`failure_reason` and the `saving`/`failed` status values, but not
-`save_result`; confirmed against a live `CFYL-Tournament-Staging` (which has 013 fully
-applied — `status`, `failed_at`, `failure_reason`, `saved_at`, `rolled_back_at`,
-`rolled_back_by` all present) by directly querying each column: every one of them
-resolves except `save_result`, which fails with `column
-tournament_schedule_batches.save_result does not exist`. This means **Save currently
-cannot succeed against any database with the current migration set applied** — this is
-not a "migration not yet applied" gap, it is a missing column definition in the source
-SQL itself. The existing mocked unit tests
-(`app/api/tournament/admin/schedule/import/save/__tests__/route.test.ts`) never caught
-this because their in-memory mock DB accepts any column the code writes to, regardless
-of whether a real migration defines it — this is exactly the class of bug real-database
-runtime verification exists to catch. Fixing this (adding a `save_result jsonb` column
-via a new migration) is a schema change and was not made here — out of scope for a
-verification-only pass; flagged for the owner to fix and apply.
-
-**Gap found: no rollback workflow is implemented anywhere in the codebase.**
-`app/api/tournament/admin/schedule/` contains only `template/`, `import/preview/`, and
-`import/save/` routes — no rollback route file exists. `tournament_schedule_batches` has
-a `rolled_back` status value and `rolled_back_at`/`rolled_back_by` columns (schema-only,
-from migration 011, never written by any code), and
-`TOURNAMENT_V2_SCHEDULING_AND_IMPORT.md` §9 documents an intended future `POST
-/schedule/import/batches/{id}/rollback` endpoint that has not been built. Building it was
-out of scope for this verification task (it would be starting a new feature); the
-verifier's own cleanup therefore uses direct disposable-row deletion rather than a
-rollback endpoint, matching the precedent already used by `verify-foundation.ts` and
-`verify-full-report-runtime.ts`.
+**The verifier itself has since been extended** to cover save_result persistence, the
+before/applied_match_version/applied_match_updated_at snapshot fields, and the full
+rollback lifecycle (create-action delete, update-action restore, conflict detection,
+idempotent retry, audit log). **It has not been re-run against Staging yet** — that
+requires Migration 013a to be applied there first (owner action, as with every prior
+migration in this project). Do not treat the runtime gate as passed until that run
+actually happens and succeeds.
 
 ---
 
