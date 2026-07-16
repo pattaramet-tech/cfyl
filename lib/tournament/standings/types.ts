@@ -80,6 +80,11 @@ export interface StandingsRow {
   /** Manual override applied to this team's position, if any (D-13 / tournament_standing_overrides). */
   overrideApplied: boolean;
   overrideReason: string | null;
+  /** Non-null only when an override row existed for this team but was NOT
+   * applied — rank outside the group's valid range, or colliding with
+   * another team's override rank in the same group. The team's position
+   * still reflects its naturally computed order; it is never dropped. */
+  overrideRejectedReason: string | null;
 }
 
 export interface GroupStandingsResult {
@@ -104,14 +109,33 @@ export interface CrossGroupCandidate {
   goalDifference: number;
   goalsFor: number;
   fairPlayScore: number;
+  /** Number of counted (official, group-stage) matches this team has
+   * played. Raw point/GD/GF totals are only comparable across groups when
+   * every candidate has the same countedMatches — see
+   * rankBestThirdPlacedTeams' normalization_required state. */
+  countedMatches: number;
 }
 
+export type CrossGroupRankingState = 'resolved' | 'unresolved_tie' | 'normalization_required' | 'incomplete';
+
 export interface BestThirdPlacedRankingResult {
-  /** Candidates in final ranked order (index 0 = best). */
+  /** Candidates in final ranked order (index 0 = best). Empty when state is
+   * 'normalization_required' — no ranking, and no qualification decision,
+   * is produced in that state. */
   ranked: CrossGroupCandidate[];
-  /** True if the ranking sequence (points/GD/GF/FairPlay) fully separated
-   * every candidate; false if a tie remains after Fair Play (draw/lot
-   * required — the engine never breaks this itself, per D-07 step 5). */
+  /** 'resolved': ranking fully separated every candidate.
+   * 'unresolved_tie': candidates were comparable (equal countedMatches) but
+   *   remain tied after Fair Play — draw/lot required, per D-07 step 5.
+   * 'normalization_required': candidates played different numbers of
+   *   counted matches and no approved normalization rule exists yet — raw
+   *   totals are not comparable, so no ranking or qualification decision is
+   *   made at all.
+   * 'incomplete': one or more source groups aren't ready yet (incomplete
+   *   group, unresolved 3rd-place tie within a group) — there is no
+   *   candidate set to rank at all yet. */
+  state: CrossGroupRankingState;
+  /** True only when state === 'resolved'. Kept for backward compatibility
+   * with existing callers that only checked this boolean. */
   fullyResolved: boolean;
   explanation: string;
 }

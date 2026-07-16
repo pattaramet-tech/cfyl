@@ -1,9 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getTournamentServiceClient } from '@/lib/tournament/db/supabase-tournament';
 import { requireTournamentSuperAdmin } from '@/lib/tournament/services/auth';
-import { logTournamentAdminAction } from '@/lib/tournament/services/audit';
-import { getCategoryStandings } from '@/lib/tournament/services/standings';
-import type { StandingsRow } from '@/lib/tournament/standings/types';
+import {
+  previewStandingsOverride,
+  saveStandingsOverride,
+  StandingsOverrideError,
+} from '@/lib/tournament/services/standingsOverride';
+import { getBestThirdPlacedRanking, getCategoryStandings } from '@/lib/tournament/services/standings';
+import type { BestThirdPlacedRankingResult, CrossGroupCandidate, StandingsRow } from '@/lib/tournament/standings/types';
 
 export const dynamic = 'force-dynamic';
 
@@ -32,6 +36,31 @@ function serializeRow(row: StandingsRow) {
     tie_state: row.tieState,
     override_applied: row.overrideApplied,
     override_reason: row.overrideReason,
+    override_rejected_reason: row.overrideRejectedReason,
+  };
+}
+
+function serializeCandidate(candidate: CrossGroupCandidate) {
+  return {
+    team_id: candidate.teamId,
+    team_name: candidate.teamName,
+    team_code: candidate.teamCode,
+    group_id: candidate.groupId,
+    group_code: candidate.groupCode,
+    points: candidate.points,
+    goal_difference: candidate.goalDifference,
+    goals_for: candidate.goalsFor,
+    fair_play_score: candidate.fairPlayScore,
+    counted_matches: candidate.countedMatches,
+  };
+}
+
+function serializeBestThirdPlacedRanking(ranking: BestThirdPlacedRankingResult) {
+  return {
+    state: ranking.state,
+    fully_resolved: ranking.fullyResolved,
+    explanation: ranking.explanation,
+    ranked: ranking.ranked.map(serializeCandidate),
   };
 }
 
@@ -76,6 +105,15 @@ export async function GET(request: NextRequest) {
       ? categoryStandings.groups.filter((g) => g.groupCode.trim().toUpperCase() === groupCode)
       : categoryStandings.groups;
 
+    // Cross-group best-third-place ranking only applies to 'ranked' method
+    // categories — G-U16 (method='draw') is intentionally never ranked here;
+    // it continues to use the separate identification-only candidate pool
+    // surfaced via /api/tournament/admin/qualification-draws (PR #7).
+    const bestThirdPlacedRanking =
+      categoryStandings.bestThirdPlacedMethod === 'ranked' && categoryStandings.bestThirdPlacedCount > 0
+        ? await getBestThirdPlacedRanking({ client, tournamentId: tournament.id, categoryCode })
+        : null;
+
     return NextResponse.json({
       data: {
         category_id: categoryStandings.categoryId,
@@ -83,6 +121,7 @@ export async function GET(request: NextRequest) {
         qualify_rank_per_group: categoryStandings.qualifyRankPerGroup,
         best_third_placed_count: categoryStandings.bestThirdPlacedCount,
         best_third_placed_method: categoryStandings.bestThirdPlacedMethod,
+        best_third_placed_ranking: bestThirdPlacedRanking ? serializeBestThirdPlacedRanking(bestThirdPlacedRanking) : null,
         groups: groups.map((g) => ({
           group_id: g.groupId,
           group_code: g.groupCode,
@@ -104,13 +143,20 @@ interface OverrideRequestBody {
   override_rank?: unknown;
   reason?: unknown;
   preview?: unknown;
+  preview_token?: unknown;
 }
 
 /**
- * Manual standings override — Tournament Super Admin only, requires a
- * reason, supports preview-before-save. Writes tournament_standing_overrides
- * (append-only history is provided by audit_logs, not a version column on
- * this table). Never rewrites raw Match results.
+ * Manual standings override — Tournament Super Admin only. Two-step
+ * Preview → Save flow, matching PR #9's Quick Result safety pattern
+ * exactly: Save requires a server-signed preview_token proving a fresh
+ * Preview actually happened (never trusts a client-side "I previewed this"
+ * flag), and every scope constraint (tournament/group/team/rank/duplicate)
+ * is re-validated on the server at both steps — see
+ * lib/tournament/services/standingsOverride.ts. Writes exactly one active
+ * row per (group_id, team_id) in tournament_standing_overrides (no
+ * append-only table invented); change history lives in tournament_audit_logs.
+ * Never rewrites raw Match results.
  */
 export async function POST(request: NextRequest) {
   const auth = await requireTournamentSuperAdmin(request);
@@ -131,14 +177,11 @@ export async function POST(request: NextRequest) {
   const reason = asText(body.reason);
   const overrideRank = Number(body.override_rank);
   const isPreview = body.preview === true;
+  const previewToken = asText(body.preview_token);
 
   if (!tournamentSlug) return NextResponse.json({ error: 'tournament_slug is required' }, { status: 400 });
   if (!groupId) return NextResponse.json({ error: 'group_id is required' }, { status: 400 });
   if (!teamId) return NextResponse.json({ error: 'team_id is required' }, { status: 400 });
-  if (!reason) return NextResponse.json({ error: 'reason is required for a manual standings override' }, { status: 400 });
-  if (!Number.isInteger(overrideRank) || overrideRank < 1) {
-    return NextResponse.json({ error: 'override_rank must be a positive integer' }, { status: 400 });
-  }
 
   try {
     const client = getTournamentServiceClient();
@@ -147,45 +190,57 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: `Tournament ${tournamentSlug} not found` }, { status: 404 });
     }
 
-    const { data: existing, error: existingError } = await client
-      .from('tournament_standing_overrides')
-      .select('group_id, team_id, override_rank, reason')
-      .eq('group_id', groupId)
-      .eq('team_id', teamId)
-      .maybeSingle();
-    if (existingError) throw new Error(existingError.message);
-
     if (isPreview) {
+      const preview = await previewStandingsOverride({
+        client,
+        tournamentId: tournament.id,
+        groupId,
+        teamId,
+        overrideRank,
+        reason,
+        actorUserId: auth.userId || null,
+      });
       return NextResponse.json({
         data: {
           preview: true,
-          before: existing || null,
-          after: { group_id: groupId, team_id: teamId, override_rank: overrideRank, reason },
+          preview_token: preview.previewToken,
+          preview_expires_at: preview.previewExpiresAt,
+          before: preview.before ? { override_rank: preview.before.overrideRank, reason: preview.before.reason } : null,
+          after: {
+            group_id: preview.after.groupId,
+            team_id: preview.after.teamId,
+            override_rank: preview.after.overrideRank,
+            reason: preview.after.reason,
+          },
         },
       });
     }
 
-    const { error: upsertError } = await client
-      .from('tournament_standing_overrides')
-      .upsert(
-        { group_id: groupId, team_id: teamId, override_rank: overrideRank, reason, created_by: auth.userId || null },
-        { onConflict: 'group_id,team_id' }
-      );
-    if (upsertError) throw new Error(upsertError.message);
-
-    await logTournamentAdminAction({
+    const result = await saveStandingsOverride({
+      client,
       tournamentId: tournament.id,
-      admin: { id: auth.userId, email: auth.email },
-      action: 'standings.manual_override',
-      entityType: 'standing-override',
-      entityId: `${groupId}:${teamId}`,
-      entityLabel: `group=${groupId} team=${teamId}`,
-      oldData: existing || null,
-      newData: { group_id: groupId, team_id: teamId, override_rank: overrideRank, reason },
+      groupId,
+      teamId,
+      overrideRank,
+      reason,
+      actorUserId: auth.userId || null,
+      actorEmail: auth.email || null,
+      previewToken,
     });
 
-    return NextResponse.json({ data: { group_id: groupId, team_id: teamId, override_rank: overrideRank, reason } });
+    return NextResponse.json({
+      data: {
+        group_id: result.groupId,
+        team_id: result.teamId,
+        override_rank: result.overrideRank,
+        reason: result.reason,
+        audit_logged: result.auditLogged,
+      },
+    });
   } catch (error) {
+    if (error instanceof StandingsOverrideError) {
+      return NextResponse.json({ error: error.message, code: error.code }, { status: error.status });
+    }
     const message = error instanceof Error ? error.message : 'Internal server error';
     return NextResponse.json({ error: message }, { status: 500 });
   }

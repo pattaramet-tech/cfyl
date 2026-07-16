@@ -279,4 +279,70 @@ describe('calculateGroupStandings — manual override', () => {
     expect(b.overrideApplied).toBe(true);
     expect(b.overrideReason).toBe('คำสั่งกรรมการกลาง');
   });
+
+  it('never drops a team when two overrides collide on the same rank — both fall back to natural order instead', () => {
+    const matches = [
+      match({ matchId: 'm1', homeTeamId: 'team-a', awayTeamId: 'team-b', winnerTeamId: 'team-a', regulationHomeScore: 3, regulationAwayScore: 0 }),
+      match({ matchId: 'm2', homeTeamId: 'team-a', awayTeamId: 'team-c', winnerTeamId: 'team-a', regulationHomeScore: 3, regulationAwayScore: 0 }),
+      match({ matchId: 'm3', homeTeamId: 'team-b', awayTeamId: 'team-c', winnerTeamId: 'team-b', regulationHomeScore: 1, regulationAwayScore: 0 }),
+    ];
+    const result = calculateGroupStandings({
+      ...baseParams([teamA, teamB, teamC], matches),
+      overrides: [
+        { teamId: 'team-b', overrideRank: 1, reason: 'Admin A' },
+        { teamId: 'team-c', overrideRank: 1, reason: 'Admin B' },
+      ],
+    });
+
+    // Never drop a team: exactly 3 rows, 3 unique team IDs.
+    expect(result.rows).toHaveLength(3);
+    expect(new Set(result.rows.map((r) => r.teamId)).size).toBe(3);
+
+    const b = result.rows.find((r) => r.teamId === 'team-b')!;
+    const c = result.rows.find((r) => r.teamId === 'team-c')!;
+    expect(b.overrideApplied).toBe(false);
+    expect(c.overrideApplied).toBe(false);
+    expect(b.overrideRejectedReason).toContain('collides');
+    expect(c.overrideRejectedReason).toContain('collides');
+    // Natural order preserved: A (won both) is 1st.
+    expect(result.rows.find((r) => r.teamId === 'team-a')!.position).toBe(1);
+  });
+
+  it('never drops a team when an override rank is out of range for the group size', () => {
+    const matches = [
+      match({ matchId: 'm1', homeTeamId: 'team-a', awayTeamId: 'team-b', winnerTeamId: 'team-a', regulationHomeScore: 2, regulationAwayScore: 0 }),
+    ];
+    const result = calculateGroupStandings({
+      ...baseParams([teamA, teamB], matches),
+      overrides: [{ teamId: 'team-b', overrideRank: 99, reason: 'Invalid rank' }],
+    });
+
+    expect(result.rows).toHaveLength(2);
+    expect(new Set(result.rows.map((r) => r.teamId)).size).toBe(2);
+    const b = result.rows.find((r) => r.teamId === 'team-b')!;
+    expect(b.overrideApplied).toBe(false);
+    expect(b.overrideRejectedReason).toContain('outside the valid range');
+  });
+
+  it('final standings row count always equals the input team count, across override and no-override scenarios', () => {
+    const matches = [
+      match({ matchId: 'm1', homeTeamId: 'team-a', awayTeamId: 'team-b', winnerTeamId: 'team-a', regulationHomeScore: 2, regulationAwayScore: 0 }),
+      match({ matchId: 'm2', homeTeamId: 'team-a', awayTeamId: 'team-c', winnerTeamId: 'team-a', regulationHomeScore: 2, regulationAwayScore: 0 }),
+      match({ matchId: 'm3', homeTeamId: 'team-b', awayTeamId: 'team-c', winnerTeamId: 'team-b', regulationHomeScore: 1, regulationAwayScore: 0 }),
+    ];
+    const scenarios: Array<{ teamId: string; overrideRank: number; reason: string }[]> = [
+      [],
+      [{ teamId: 'team-b', overrideRank: 1, reason: 'x' }],
+      [
+        { teamId: 'team-b', overrideRank: 1, reason: 'x' },
+        { teamId: 'team-c', overrideRank: 1, reason: 'y' },
+      ],
+      [{ teamId: 'team-a', overrideRank: 999, reason: 'z' }],
+    ];
+    for (const overrides of scenarios) {
+      const result = calculateGroupStandings({ ...baseParams([teamA, teamB, teamC], matches), overrides });
+      expect(result.rows).toHaveLength(3);
+      expect(new Set(result.rows.map((r) => r.teamId)).size).toBe(3);
+    }
+  });
 });
