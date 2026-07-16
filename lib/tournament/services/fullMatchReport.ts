@@ -510,21 +510,16 @@ function isRpcUnavailableError(error: { code?: string; message?: string } | null
   return message.includes('could not find the function') || message.includes('function') && message.includes('does not exist');
 }
 
-interface ExistingFullReportSubmissionRow {
-  id: string;
-  payload: Record<string, unknown>;
-  submitted_at: string | null;
-}
 
 export async function publishFullMatchReport(params: PublishFullMatchReportParams): Promise<PublishFullMatchReportResult> {
   if (!params.idempotencyKey || !params.idempotencyKey.trim()) {
     throw new FullMatchReportError('FULL_REPORT_IDEMPOTENCY_KEY_REQUIRED', 'idempotencyKey is required');
   }
 
-  // Load the match and build the canonical payload BEFORE asserting
-  // eligibility (deliberately — see the idempotency check right below).
-  // validateResultConsistency/validateGoalsAndCards only need the match's
-  // team/tournament/category identifiers, not its eligibility status.
+  // Load the match BEFORE asserting eligibility (deliberately — see the
+  // idempotency fast-path check right below). validateResultConsistency/
+  // validateGoalsAndCards only need the match's team/tournament/category
+  // identifiers, not its eligibility status.
   const match = await loadMatch(params.client, params.matchId);
 
   const scoreValidation = validateResultConsistency({
@@ -543,91 +538,92 @@ export async function publishFullMatchReport(params: PublishFullMatchReportParam
     cards: params.input.cards,
   });
 
-  const canonicalPayload = buildCanonicalFullReportPayload({
-    matchId: params.matchId,
-    tournamentId: params.tournamentId,
-    scores: scoreValidation.value,
-    goals,
-    cards,
-    reportText: params.input.reportText,
-  });
-
-  // App-layer fast-path idempotency check (UX only — the RPC below is the
-  // authoritative, concurrency-safe enforcement), and — critically — this
-  // runs BEFORE assertEligible(). A retry of an idempotency key that just
-  // succeeded will see a match that is now result_workflow_status=published
-  // (by the retried request's own earlier success); that must still return
-  // the stored success, not be rejected as "already published". A genuinely
-  // NEW publish attempt (no matching idempotency key) against an
-  // already-published match is still correctly blocked below, once this
-  // idempotency check has been ruled out.
+  // App-layer fast-path idempotency lookup (UX only — the RPC is the
+  // authoritative, concurrency-safe enforcement, and re-checks this itself
+  // AFTER locking the match row; see Migration 014's ordering rationale).
+  // This lookup only decides whether to treat the request as a PRESUMED
+  // retry — it deliberately does NOT compare payloads itself (a byte-level
+  // JS comparison against a value that round-tripped through Postgres jsonb
+  // is not reliable), and it must run BEFORE assertEligible()/the Preview
+  // Token requirement: a retry of an idempotency key that just succeeded
+  // will see a match that is now result_workflow_status=published (by the
+  // retry's own earlier success) and would otherwise be incorrectly
+  // rejected as "already published", or incorrectly demand a fresh Preview
+  // Token for a request that isn't creating any new mutation. The RPC
+  // authoritatively decides idempotent-success vs. payload-mismatch.
   const { data: existingData, error: existingError } = await params.client
     .from('tournament_result_submissions')
-    .select('id, payload, submitted_at')
+    .select('id')
     .eq('match_id', params.matchId)
     .eq('stage', STAGE)
     .eq('idempotency_key', params.idempotencyKey)
     .maybeSingle();
   if (existingError) throw new Error(existingError.message);
+  const isPresumedRetry = !!existingData;
 
-  if (existingData) {
-    const existing = existingData as ExistingFullReportSubmissionRow;
-    const samePayload = JSON.stringify(existing.payload) === JSON.stringify(canonicalPayload);
-    if (!samePayload) {
-      throw new FullMatchReportError('FULL_REPORT_IDEMPOTENCY_PAYLOAD_MISMATCH', 'This idempotency key was already used with a different report payload');
+  let quickResult: QuickResultSubmissionRow | null = null;
+
+  if (!isPresumedRetry) {
+    assertEligible(match, { tournamentId: params.tournamentId, venueId: params.venueId });
+
+    if (!params.previewToken || !params.previewToken.trim()) {
+      throw new FullMatchReportError('FULL_REPORT_PREVIEW_REQUIRED', 'A valid Full Match Report preview is required before publishing.');
     }
-    return {
-      submissionId: existing.id,
+    const tokenVerification = verifyFullReportPreviewToken(params.previewToken);
+    if (!tokenVerification.ok) {
+      throw new FullMatchReportError(
+        tokenVerification.code,
+        tokenVerification.code === 'FULL_REPORT_PREVIEW_EXPIRED'
+          ? 'Full Match Report preview has expired — request a new preview before publishing'
+          : 'Full Match Report preview token is invalid or was tampered with'
+      );
+    }
+
+    const claims = tokenVerification.claims;
+    quickResult = await loadLatestQuickResult(params.client, params.matchId);
+    const quickResultComparisonHash = quickResult ? hashFullReportPayload(JSON.stringify({ id: quickResult.id, payload: quickResult.payload })) : null;
+    const canonicalPayload = buildCanonicalFullReportPayload({
       matchId: params.matchId,
-      matchCode: match.match_code,
-      newMatchVersion: match.version,
-      publishedAt: existing.submitted_at || new Date().toISOString(),
-      idempotent: true,
-    };
-  }
+      tournamentId: params.tournamentId,
+      scores: scoreValidation.value,
+      goals,
+      cards,
+      reportText: params.input.reportText,
+    });
+    const payloadHash = hashFullReportPayload(JSON.stringify(canonicalPayload));
 
-  assertEligible(match, { tournamentId: params.tournamentId, venueId: params.venueId });
+    const claimsMatchRequest =
+      claims.tournamentId === params.tournamentId &&
+      claims.matchId === params.matchId &&
+      claims.venueId === params.venueId &&
+      claims.actorUserId === params.actorUserId &&
+      claims.expectedMatchVersion === params.expectedVersion &&
+      claims.payloadHash === payloadHash &&
+      claims.quickResultComparisonHash === quickResultComparisonHash;
 
-  if (!params.previewToken || !params.previewToken.trim()) {
-    throw new FullMatchReportError('FULL_REPORT_PREVIEW_REQUIRED', 'A valid Full Match Report preview is required before publishing.');
-  }
-  const tokenVerification = verifyFullReportPreviewToken(params.previewToken);
-  if (!tokenVerification.ok) {
-    throw new FullMatchReportError(
-      tokenVerification.code,
-      tokenVerification.code === 'FULL_REPORT_PREVIEW_EXPIRED'
-        ? 'Full Match Report preview has expired — request a new preview before publishing'
-        : 'Full Match Report preview token is invalid or was tampered with'
-    );
-  }
+    if (!claimsMatchRequest) {
+      throw new FullMatchReportError(
+        'FULL_REPORT_PREVIEW_MISMATCH',
+        'The submitted report no longer matches what was previewed (tournament, match, venue, actor, version, scores, goals, cards, report text, or the Quick Result comparison changed) — preview again'
+      );
+    }
 
-  const claims = tokenVerification.claims;
-  const quickResult = await loadLatestQuickResult(params.client, params.matchId);
-  const quickResultComparisonHash = quickResult ? hashFullReportPayload(JSON.stringify({ id: quickResult.id, payload: quickResult.payload })) : null;
-  const payloadHash = hashFullReportPayload(JSON.stringify(canonicalPayload));
-
-  const claimsMatchRequest =
-    claims.tournamentId === params.tournamentId &&
-    claims.matchId === params.matchId &&
-    claims.venueId === params.venueId &&
-    claims.actorUserId === params.actorUserId &&
-    claims.expectedMatchVersion === params.expectedVersion &&
-    claims.payloadHash === payloadHash &&
-    claims.quickResultComparisonHash === quickResultComparisonHash;
-
-  if (!claimsMatchRequest) {
-    throw new FullMatchReportError(
-      'FULL_REPORT_PREVIEW_MISMATCH',
-      'The submitted report no longer matches what was previewed (tournament, match, venue, actor, version, scores, goals, cards, report text, or the Quick Result comparison changed) — preview again'
-    );
-  }
-
-  if (match.version !== params.expectedVersion) {
-    throw new FullMatchReportError('FULL_REPORT_VERSION_CONFLICT', `Match has changed since Preview (expected version ${params.expectedVersion}, current version ${match.version})`);
+    if (match.version !== params.expectedVersion) {
+      throw new FullMatchReportError('FULL_REPORT_VERSION_CONFLICT', `Match has changed since Preview (expected version ${params.expectedVersion}, current version ${match.version})`);
+    }
+  } else {
+    // Presumed retry: skip eligibility/token/version checks entirely (the
+    // match may legitimately already be published, from this same request
+    // succeeding earlier) and let the RPC's own idempotency check decide.
+    quickResult = await loadLatestQuickResult(params.client, params.matchId);
   }
 
   const comparison = compareQuickResult(quickResult, scoreValidation.value.regulationHomeScore, scoreValidation.value.regulationAwayScore);
 
+  // No p_payload parameter — Migration 014 builds its own canonical payload
+  // from these validated scalar/array parameters and never trusts a
+  // caller-supplied JSON blob as authoritative (see the migration's own
+  // header comment for the rationale).
   const { data: rpcData, error: rpcError } = await params.client.rpc('publish_full_match_report', {
     p_match_id: params.matchId,
     p_tournament_id: params.tournamentId,
@@ -645,7 +641,6 @@ export async function publishFullMatchReport(params: PublishFullMatchReportParam
     p_goals: goals.map((g) => ({ team_id: g.teamId, player_id: g.playerId, minute: g.minute, is_own_goal: g.isOwnGoal, goals: g.goals, note: g.note })),
     p_cards: cards.map((c) => ({ team_id: c.teamId, player_id: c.playerId, card_type: c.cardType, minute: c.minute, note: c.note })),
     p_report_text: params.input.reportText,
-    p_payload: canonicalPayload,
     p_quick_result_comparison: comparison,
   });
 
