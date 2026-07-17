@@ -92,3 +92,52 @@ describe('verify-standings-override-runtime.ts setup/cleanup (static)', () => {
     expect(source).not.toMatch(/RpcFailureInjection/);
   });
 });
+
+// Guards against a real regression a live Staging run already caught once:
+// Scenario 9 originally asserted the public payload never contains RUN_TAG
+// at all — a false positive, since setup() legitimately embeds RUN_TAG in
+// every disposable team_name ("Runtime Verify Team <n> ${RUN_TAG}"), which
+// the public row correctly includes. The fix compares against the exact
+// private override reason read from tournament_standing_overrides for that
+// specific team, never against RUN_TAG globally.
+describe('verify-standings-override-runtime.ts Scenario 9 — public privacy assertion (static)', () => {
+  const scenarioStart = source.indexOf('async function scenarioPublicStandingsNoReasonOrAudit');
+  const scenarioEnd = source.indexOf('\n}', source.indexOf('\n\n', scenarioStart));
+  const scenarioBody = source.slice(scenarioStart, scenarioEnd);
+
+  it('does not assert a blanket "public payload lacks RUN_TAG" check', () => {
+    expect(scenarioStart).toBeGreaterThan(-1);
+    expect(scenarioBody).not.toMatch(/!serialized\.includes\(RUN_TAG\)/);
+  });
+
+  it('reads the private override reason for the specific overridden team before asserting anything about it', () => {
+    expect(scenarioBody).toMatch(/from\('tournament_standing_overrides'\)\s*\n\s*\.select\('reason'\)/);
+    expect(scenarioBody).toMatch(/\.eq\('group_id', ctx\.groupId\)/);
+    expect(scenarioBody).toMatch(/\.eq\('team_id', teamId\)/);
+  });
+
+  it('sanity-checks exactly one override row is found and its reason is non-empty and contains RUN_TAG before checking its absence publicly', () => {
+    expect(scenarioBody).toMatch(/\(overrideRows \|\| \[\]\)\.length === 1/);
+    expect(scenarioBody).toMatch(/privateReason && privateReason\.trim\(\)\.length > 0/);
+    expect(scenarioBody).toMatch(/privateReason\.includes\(RUN_TAG\)/);
+  });
+
+  it('asserts the public payload never contains the exact private reason string (not RUN_TAG globally)', () => {
+    expect(scenarioBody).toMatch(/!serialized\.includes\(privateReason\)/);
+  });
+
+  it('confirms override_applied is exactly true on the located row before asserting privacy of its other fields', () => {
+    expect(scenarioBody).toMatch(/overriddenRow!\.override_applied === true/);
+  });
+
+  it('asserts the reason-free tiebreak_explanation placeholder and the absence of every private/audit field', () => {
+    expect(scenarioBody).toMatch(/tiebreak_explanation === 'จัดอันดับโดย Admin'/);
+    expect(scenarioBody).toMatch(/!\('override_reason' in overriddenRow!\)/);
+    expect(scenarioBody).toMatch(/!\('reason' in overriddenRow!\)/);
+    expect(scenarioBody).toMatch(/!\('created_by' in overriddenRow!\)/);
+    expect(scenarioBody).toMatch(/!\('old_data' in overriddenRow!\)/);
+    expect(scenarioBody).toMatch(/!\('new_data' in overriddenRow!\)/);
+    expect(scenarioBody).toMatch(/!\('admin_id' in overriddenRow!\)/);
+    expect(scenarioBody).toMatch(/!\('admin_email' in overriddenRow!\)/);
+  });
+});

@@ -570,12 +570,40 @@ async function scenarioPublicStandingsNoReasonOrAudit(ctx: Ctx): Promise<void> {
 
   const overriddenRow = group!.rows.find((r) => r.override_applied === true);
   assert(!!overriddenRow, 'expected at least one row with override_applied=true (team[2] or team[0] from earlier scenarios)');
+  assert(overriddenRow!.override_applied === true, 'expected override_applied to be exactly true on the located row');
+
+  // Read the ACTUAL private reason for this specific team directly from
+  // tournament_standing_overrides — never assert against RUN_TAG globally,
+  // since RUN_TAG is also legitimately embedded in team_name and other
+  // disposable public fixture names (this verifier's own setup() names every
+  // team "Runtime Verify Team <n> ${RUN_TAG}"), so a blanket "public payload
+  // must not contain RUN_TAG" check is a false positive by construction —
+  // the public row correctly includes team_name even when the private
+  // override reason is fully stripped. Comparing against the exact private
+  // reason string is the only assertion that actually distinguishes "the
+  // reason leaked" from "an unrelated field happens to share a tag."
+  const teamId = overriddenRow!.team_id as string;
+  const { data: overrideRows, error: overrideErr } = await ctx.client
+    .from('tournament_standing_overrides')
+    .select('reason')
+    .eq('group_id', ctx.groupId)
+    .eq('team_id', teamId);
+  if (overrideErr) throw new Error(`private override re-fetch failed: ${overrideErr.message}`);
+  assert((overrideRows || []).length === 1, `expected exactly 1 private override row for team ${teamId}, got ${(overrideRows || []).length}`);
+  const privateReason = (overrideRows![0] as { reason: string }).reason;
+  assert(!!privateReason && privateReason.trim().length > 0, 'expected the private override reason to be non-empty (sanity check before asserting its absence publicly)');
+  assert(privateReason.includes(RUN_TAG), 'expected the private override reason to contain RUN_TAG (sanity check that this is really the reason this verifier wrote)');
 
   const serialized = JSON.stringify(overriddenRow);
-  assert(!serialized.includes(RUN_TAG), 'expected no raw reason text (which always embeds RUN_TAG in this verifier) to leak into the public payload');
+  assert(!serialized.includes(privateReason), 'expected the exact private override reason string to never appear anywhere in the public payload');
+  assert(overriddenRow!.tiebreak_explanation === 'จัดอันดับโดย Admin', `expected tiebreak_explanation to be the reason-free placeholder, got ${JSON.stringify(overriddenRow!.tiebreak_explanation)}`);
   assert(!('override_reason' in overriddenRow!), 'expected override_reason to be entirely absent from the public row shape');
-  assert(!('created_by' in overriddenRow!), 'expected created_by (audit actor) to be entirely absent from the public row shape');
   assert(!('reason' in overriddenRow!), 'expected reason to be entirely absent from the public row shape');
+  assert(!('created_by' in overriddenRow!), 'expected created_by (audit actor) to be entirely absent from the public row shape');
+  assert(!('old_data' in overriddenRow!), 'expected old_data (audit payload) to be entirely absent from the public row shape');
+  assert(!('new_data' in overriddenRow!), 'expected new_data (audit payload) to be entirely absent from the public row shape');
+  assert(!('admin_id' in overriddenRow!), 'expected admin_id (audit actor) to be entirely absent from the public row shape');
+  assert(!('admin_email' in overriddenRow!), 'expected admin_email (audit actor) to be entirely absent from the public row shape');
 }
 
 // ============================================================================
