@@ -72,7 +72,6 @@ if (!process.env.TOURNAMENT_QUICK_RESULT_PREVIEW_SECRET) {
 }
 
 const RUN_TAG = `qr-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-const ACTOR_ID = randomUUID();
 const ACTOR_EMAIL = 'runtime-verify-quick-result@example.com';
 const CATEGORY_CODE = 'B-U12';
 
@@ -88,6 +87,15 @@ interface Ctx {
   teamBId: string;
   matchId: string; // primary disposable match used for most scenarios
   matchIds: string[]; // every match created — for cleanup
+  // tournament_result_submissions.submitted_by and tournament_audit_logs.admin_id
+  // are FK'd to tournament_user_profiles(id) — a fake/non-existent UUID here
+  // violates that FK (this is exactly what broke the first live Staging run:
+  // tournament_result_submissions_submitted_by_fkey). setup() creates one real
+  // disposable profile row and this is its id — tracked and deleted explicitly
+  // in cleanup(), since tournament_user_profiles has no tournament_id column
+  // at all and so cannot cascade from the tournament delete. Same pattern as
+  // verify-full-report-runtime.ts.
+  actorId: string;
 }
 
 interface ScenarioResult {
@@ -138,7 +146,7 @@ async function callSubmit(
       expectedVersion: overrides.expectedVersion as number,
       idempotencyKey: overrides.idempotencyKey || `${RUN_TAG}-key`,
       previewToken: overrides.previewToken as string,
-      actorUserId: ACTOR_ID,
+      actorUserId: ctx.actorId,
       actorEmail: ACTOR_EMAIL,
       sessionId: overrides.sessionId !== undefined ? overrides.sessionId : `${RUN_TAG}-session`,
       deviceMetadata: overrides.deviceMetadata !== undefined ? overrides.deviceMetadata : { platform: 'runtime-verify' },
@@ -174,7 +182,19 @@ async function setup(client: TournamentClient): Promise<Ctx> {
   if (tErr || !tournament) throw new Error(`setup: tournament insert failed: ${tErr?.message}`);
   const tournamentId = tournament.id as string;
 
+  // Tracked outside the try block (mutated as soon as the insert below
+  // succeeds) so the catch handler can clean it up regardless of exactly
+  // where in setup a later step fails — not relying on profile creation
+  // happening to be the last write before returning Ctx.
+  let actorId: string | null = null;
+
   try {
+    actorId = randomUUID();
+    const { error: profileErr } = await client
+      .from('tournament_user_profiles')
+      .insert({ id: actorId, email: ACTOR_EMAIL, full_name: `Runtime Verify Actor ${RUN_TAG}`, active: true });
+    if (profileErr) throw new Error(`actor profile insert failed: ${profileErr.message}`);
+
     const { data: category, error: catErr } = await client
       .from('tournament_categories')
       .insert({ tournament_id: tournamentId, code: CATEGORY_CODE, name: `Runtime Verify ${CATEGORY_CODE} ${RUN_TAG}`, gender: 'mixed' })
@@ -233,14 +253,28 @@ async function setup(client: TournamentClient): Promise<Ctx> {
       teamBId: teamB.id as string,
       matchId,
       matchIds: [matchId],
+      actorId,
     };
   } catch (err) {
-    console.error('[SETUP] failed, attempting emergency cleanup of tournament row...');
+    console.error('[SETUP] failed, attempting emergency cleanup...');
     const { error: cleanupErr } = await client.from('tournaments').delete().eq('id', tournamentId);
     if (cleanupErr) {
-      console.error(`[SETUP] emergency cleanup ALSO failed: ${cleanupErr.message} — manual cleanup required for tournament ${tournamentId}`);
+      console.error(`[SETUP] emergency tournament cleanup ALSO failed: ${cleanupErr.message} — manual cleanup required for tournament ${tournamentId}`);
     } else {
-      console.error('[SETUP] emergency cleanup succeeded.');
+      console.error('[SETUP] emergency tournament cleanup succeeded.');
+    }
+    // tournament_user_profiles has no tournament_id column, so it does NOT
+    // cascade from the tournament delete above — must be cleaned up
+    // separately whenever it was created, regardless of what failed after it.
+    if (actorId) {
+      const { error: profileCleanupErr } = await client.from('tournament_user_profiles').delete().eq('id', actorId);
+      if (profileCleanupErr) {
+        console.error(
+          `[SETUP] emergency actor profile cleanup ALSO failed: ${profileCleanupErr.message} — manual cleanup required for tournament_user_profiles id ${actorId}`
+        );
+      } else {
+        console.error('[SETUP] emergency actor profile cleanup succeeded.');
+      }
     }
     throw err;
   }
@@ -301,7 +335,7 @@ async function scenarioPreviewWritesNothing(ctx: Ctx): Promise<{ previewToken: s
     matchId: ctx.matchId,
     homeScore: 2,
     awayScore: 1,
-    actorUserId: ACTOR_ID,
+    actorUserId: ctx.actorId,
   });
   assert(!!preview.previewToken, 'expected a signed preview token');
   assert(preview.previewToken.split('.').length === 2, 'expected preview token to have payload.signature shape');
@@ -402,7 +436,7 @@ async function scenarioSameKeyDifferentPayloadRejected(ctx: Ctx): Promise<void> 
     matchId: ctx.matchId,
     homeScore: 5,
     awayScore: 5,
-    actorUserId: ACTOR_ID,
+    actorUserId: ctx.actorId,
   });
 
   let threw = false;
@@ -447,7 +481,7 @@ async function scenarioConcurrentSameKey(ctx: Ctx): Promise<void> {
     matchId,
     homeScore: 3,
     awayScore: 2,
-    actorUserId: ACTOR_ID,
+    actorUserId: ctx.actorId,
   });
   const idempotencyKey = `${RUN_TAG}-concurrent-same-key`;
 
@@ -497,7 +531,7 @@ async function scenarioConcurrentDifferentKeySameVersion(ctx: Ctx): Promise<void
     matchId,
     homeScore: 1,
     awayScore: 0,
-    actorUserId: ACTOR_ID,
+    actorUserId: ctx.actorId,
   });
 
   const [a, b] = await Promise.all([
@@ -546,7 +580,7 @@ async function scenarioInvalidInputsRejectedWithoutWrites(ctx: Ctx): Promise<voi
         matchId,
         homeScore: 1,
         awayScore: 0,
-        actorUserId: ACTOR_ID,
+        actorUserId: ctx.actorId,
       });
     } catch {
       threw = true;
@@ -559,7 +593,7 @@ async function scenarioInvalidInputsRejectedWithoutWrites(ctx: Ctx): Promise<voi
     await ctx.client.from('tournament_matches').update({ status: 'cancelled' }).eq('id', matchId);
     let threw = false;
     try {
-      await previewQuickResult({ client: ctx.client, tournamentId: ctx.tournamentId, venueId: ctx.venueId, matchId, homeScore: 1, awayScore: 0, actorUserId: ACTOR_ID });
+      await previewQuickResult({ client: ctx.client, tournamentId: ctx.tournamentId, venueId: ctx.venueId, matchId, homeScore: 1, awayScore: 0, actorUserId: ctx.actorId });
     } catch {
       threw = true;
     }
@@ -572,7 +606,7 @@ async function scenarioInvalidInputsRejectedWithoutWrites(ctx: Ctx): Promise<voi
     await ctx.client.from('tournament_matches').update({ result_workflow_status: 'published' }).eq('id', matchId);
     let threw = false;
     try {
-      await previewQuickResult({ client: ctx.client, tournamentId: ctx.tournamentId, venueId: ctx.venueId, matchId, homeScore: 1, awayScore: 0, actorUserId: ACTOR_ID });
+      await previewQuickResult({ client: ctx.client, tournamentId: ctx.tournamentId, venueId: ctx.venueId, matchId, homeScore: 1, awayScore: 0, actorUserId: ctx.actorId });
     } catch {
       threw = true;
     }
@@ -585,7 +619,7 @@ async function scenarioInvalidInputsRejectedWithoutWrites(ctx: Ctx): Promise<voi
     await ctx.client.from('tournament_matches').update({ away_team_id: null }).eq('id', matchId);
     let threw = false;
     try {
-      await previewQuickResult({ client: ctx.client, tournamentId: ctx.tournamentId, venueId: ctx.venueId, matchId, homeScore: 1, awayScore: 0, actorUserId: ACTOR_ID });
+      await previewQuickResult({ client: ctx.client, tournamentId: ctx.tournamentId, venueId: ctx.venueId, matchId, homeScore: 1, awayScore: 0, actorUserId: ctx.actorId });
     } catch {
       threw = true;
     }
@@ -661,7 +695,14 @@ async function cleanup(ctx: Ctx): Promise<void> {
     throw new Error(`tournament delete failed: ${tournamentErr.message} — MANUAL CLEANUP REQUIRED for tournament ${ctx.tournamentId}`);
   }
 
-  const [tAfter, matchAfter, subAfter, verAfter, auditAfter] = await Promise.all([
+  // tournament_user_profiles has no tournament_id column, so it cannot
+  // cascade from the tournament delete above — must be removed explicitly.
+  const { error: profileErr } = await client.from('tournament_user_profiles').delete().eq('id', ctx.actorId);
+  if (profileErr) {
+    throw new Error(`actor profile delete failed: ${profileErr.message} — MANUAL CLEANUP REQUIRED for tournament_user_profiles id ${ctx.actorId}`);
+  }
+
+  const [tAfter, matchAfter, subAfter, verAfter, auditAfter, profileAfter] = await Promise.all([
     client.from('tournaments').select('id').eq('id', ctx.tournamentId).maybeSingle(),
     client.from('tournament_matches').select('id').in('id', ctx.matchIds),
     client.from('tournament_result_submissions').select('id').in('match_id', ctx.matchIds),
@@ -669,6 +710,7 @@ async function cleanup(ctx: Ctx): Promise<void> {
       ? client.from('tournament_result_versions').select('id').in('submission_id', submissionIds)
       : Promise.resolve({ data: [] as { id: string }[], error: null }),
     client.from('tournament_audit_logs').select('id').in('entity_id', ctx.matchIds),
+    client.from('tournament_user_profiles').select('id').eq('id', ctx.actorId).maybeSingle(),
   ]);
 
   assert(!tAfter.data, `tournament ${ctx.tournamentId} still exists after cleanup`);
@@ -676,6 +718,7 @@ async function cleanup(ctx: Ctx): Promise<void> {
   assert((subAfter.data || []).length === 0, `${(subAfter.data || []).length} submission rows still exist after cleanup`);
   assert((verAfter.data || []).length === 0, `${(verAfter.data || []).length} result-version rows still exist after cleanup`);
   assert((auditAfter.data || []).length === 0, `${(auditAfter.data || []).length} audit log rows still exist after cleanup`);
+  assert(!profileAfter.data, `disposable actor profile ${ctx.actorId} still exists after cleanup`);
 
   console.log('[CLEANUP] Confirmed: zero disposable rows remain.');
 }
