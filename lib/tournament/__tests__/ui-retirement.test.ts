@@ -31,6 +31,15 @@ afterEach(() => {
 
 describe('tournament UI retirement helpers', () => {
   it('hides legacy links by default', () => {
+    // shouldShowTournamentV1Links's default parameter re-reads the ambient
+    // process.env.NEXT_PUBLIC_SHOW_TOURNAMENT_V1_LINKS at call time, so
+    // passing `undefined` only exercises the "unset" default when the
+    // ambient value is actually unset — explicitly clear it here so this
+    // assertion is hermetic regardless of how the test process was started
+    // (e.g. NEXT_PUBLIC_SHOW_TOURNAMENT_V1_LINKS=true npx vitest run ...).
+    // The file-level afterEach below restores the original value afterward.
+    delete process.env.NEXT_PUBLIC_SHOW_TOURNAMENT_V1_LINKS;
+
     expect(shouldShowTournamentV1Links(undefined)).toBe(false);
     expect(shouldShowTournamentV1Links('false')).toBe(false);
     expect(buildPublicTournamentNavLinks(false)).toEqual([
