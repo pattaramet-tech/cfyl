@@ -16,23 +16,15 @@ export interface LogTournamentAdminActionParams {
   newData?: unknown;
 }
 
-export interface LogTournamentAdminActionResult {
-  ok: boolean;
-  error?: string;
-}
-
 /**
  * Write an admin action to tournament_audit_logs.
  *
  * IMPORTANT: this never throws — a failed audit insert must not break the main
- * action. Errors are logged and swallowed. The returned {ok,error} is purely
- * informational for callers that need to react to an audit failure (e.g. a
- * compensating rollback) — existing callers that only `await` this and
- * ignore the return value are unaffected.
+ * action. Errors are logged and swallowed.
  */
 export async function logTournamentAdminAction(
   params: LogTournamentAdminActionParams
-): Promise<LogTournamentAdminActionResult> {
+): Promise<void> {
   try {
     const tournamentClient = getTournamentServiceClient();
 
@@ -50,12 +42,8 @@ export async function logTournamentAdminAction(
 
     if (error) {
       console.error('[TOURNAMENT_AUDIT] insert failed:', error.message);
-      return { ok: false, error: error.message };
     }
-    return { ok: true };
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    console.error('[TOURNAMENT_AUDIT] logTournamentAdminAction error:', message);
-    return { ok: false, error: message };
+    console.error('[TOURNAMENT_AUDIT] logTournamentAdminAction error:', err instanceof Error ? err.message : err);
   }
 }

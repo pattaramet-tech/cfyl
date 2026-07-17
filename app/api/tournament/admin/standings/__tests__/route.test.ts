@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { NextRequest } from 'next/server';
+import { mockSaveStandingsOverrideRpc, type SaveStandingsOverrideRpcArgs } from '../../../../../../lib/tournament/services/__tests__/mockSaveStandingsOverrideRpc';
 
 type Row = Record<string, unknown>;
 type Db = Record<string, Row[]>;
@@ -118,7 +119,16 @@ function createMockClient(db: Db, failConfig: FailConfig = {}) {
     return api;
   }
 
-  return { from: (table: string) => builder(table) };
+  return {
+    from: (table: string) => builder(table),
+    rpc(fnName: string, args: Record<string, unknown>) {
+      if (fnName !== 'save_standings_override') {
+        return Promise.resolve({ data: null, error: { message: `mock client: unknown rpc "${fnName}"` } });
+      }
+      const result = mockSaveStandingsOverrideRpc(db, args as unknown as SaveStandingsOverrideRpcArgs);
+      return Promise.resolve(result);
+    },
+  };
 }
 
 const state = vi.hoisted(() => ({ client: null as ReturnType<typeof createMockClient> | null }));

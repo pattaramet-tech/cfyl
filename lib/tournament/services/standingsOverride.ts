@@ -1,5 +1,4 @@
 import { getTournamentServiceClient } from '../db/supabase-tournament';
-import { logTournamentAdminAction } from './audit';
 import {
   hashStandingsOverrideBeforeState,
   hashStandingsOverrideText,
@@ -19,11 +18,16 @@ import {
 // override table. Change history is provided by tournament_audit_logs, not
 // by versioning this table itself (see TOURNAMENT_V2_DATA_MODEL.md).
 //
-// Not transactional: the override write and the audit-log write are two
-// independent Supabase requests (same limitation as PR #9's Quick Result —
-// no approved RPC/transaction mechanism exists for Tournament V2). See
-// saveStandingsOverride's compensating-rollback comment below for exactly
-// what happens when the audit write fails.
+// ATOMIC (migration 017): the entire write path — the authoritative
+// scope/rank/duplicate revalidation, the expected-before-state check, the
+// tournament_standing_overrides upsert, and the tournament_audit_logs insert
+// — executes inside tournament.save_standings_override() as one Postgres
+// transaction, locking the target Group row first (the same class of fix
+// PR #6's migration 013b, PR #7's migration 015, and PR #9's migration 016
+// applied for their own equivalent gaps). saveStandingsOverride() below makes
+// exactly one client.rpc(...) call for the write; there is no
+// compensating-rollback logic anymore because there is nothing left to
+// compensate for.
 
 type TournamentClient = ReturnType<typeof getTournamentServiceClient>;
 
@@ -82,8 +86,9 @@ interface ScopeContext {
 }
 
 /**
- * Freshly re-validates every scope constraint (must be called at BOTH
- * Preview and Save time — never reused from a cached/prior result):
+ * Freshly re-validates every scope constraint — used at Preview time (and
+ * only at Preview time; Save's authoritative revalidation happens inside the
+ * RPC, under the Group lock, see migration 017):
  *  1. Tournament exists and is not deleted/archived
  *  2. Group belongs to the specified Tournament
  *  3. Team belongs to the same Tournament
@@ -94,6 +99,10 @@ interface ScopeContext {
  *     mistakenly targeted from another Category/Tournament)
  *  8. override_rank does not collide with another team's active override
  *     in the same Group (STANDINGS_OVERRIDE_RANK_CONFLICT)
+ *
+ * This is fast-feedback only — none of it is trusted for correctness at
+ * Save time, since a Preview and a Save can be arbitrarily far apart in
+ * time and another admin's concurrent Save can invalidate any of it.
  */
 async function validateStandingsOverrideScope(params: ScopeValidationParams): Promise<ScopeContext> {
   const [tournamentResult, groupResult, teamResult] = await Promise.all([
@@ -203,6 +212,33 @@ async function validateStandingsOverrideScope(params: ScopeValidationParams): Pr
   };
 }
 
+/**
+ * Minimal, NON-authoritative read used only at Save time to derive the
+ * primitive expected-before-state values the RPC will re-check under its
+ * Group lock. Deliberately not the full validateStandingsOverrideScope() —
+ * all authoritative scope/rank/duplicate validation now happens inside
+ * tournament.save_standings_override() itself (migration 017), where it is
+ * actually race-free. This read can only ever be stale in the direction of
+ * "the row already changed since this read" — which the RPC's own
+ * expected-state comparison, under the lock, catches and rejects with
+ * STANDINGS_OVERRIDE_STATE_CHANGED regardless.
+ */
+async function readExistingOverride(params: {
+  client: TournamentClient;
+  groupId: string;
+  teamId: string;
+}): Promise<StandingsOverrideBeforeState | null> {
+  const { data, error } = await params.client
+    .from('tournament_standing_overrides')
+    .select('override_rank, reason')
+    .eq('group_id', params.groupId)
+    .eq('team_id', params.teamId)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  const row = data as { override_rank: number; reason: string } | null;
+  return row ? { overrideRank: row.override_rank, reason: row.reason } : null;
+}
+
 export interface PreviewStandingsOverrideParams {
   client: TournamentClient;
   tournamentId: string;
@@ -287,34 +323,45 @@ export interface SaveStandingsOverrideResult {
   auditLogged: true;
 }
 
-async function rollbackOverrideWrite(params: {
-  client: TournamentClient;
-  groupId: string;
-  teamId: string;
-  before: StandingsOverrideBeforeState | null;
-}): Promise<{ ok: boolean; error?: string }> {
-  try {
-    if (params.before) {
-      const { error } = await params.client
-        .from('tournament_standing_overrides')
-        .update({ override_rank: params.before.overrideRank, reason: params.before.reason })
-        .eq('group_id', params.groupId)
-        .eq('team_id', params.teamId);
-      if (error) return { ok: false, error: error.message };
-      return { ok: true };
-    }
-    const { error } = await params.client
-      .from('tournament_standing_overrides')
-      .delete()
-      .eq('group_id', params.groupId)
-      .eq('team_id', params.teamId);
-    if (error) return { ok: false, error: error.message };
-    return { ok: true };
-  } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : String(err) };
-  }
+/** Parses the "CODE: message" format tournament.save_standings_override()
+ * raises exceptions in (see migration 017) into a StandingsOverrideError
+ * with the correct established HTTP status — same technique PR #9's
+ * toQuickResultError uses for tournament.submit_quick_result(). */
+const STANDINGS_OVERRIDE_ERROR_STATUS: Record<string, number> = {
+  STANDINGS_OVERRIDE_TOURNAMENT_NOT_FOUND: 404,
+  STANDINGS_OVERRIDE_TOURNAMENT_NOT_ACTIVE: 409,
+  STANDINGS_OVERRIDE_GROUP_NOT_FOUND: 404,
+  STANDINGS_OVERRIDE_GROUP_TOURNAMENT_MISMATCH: 400,
+  STANDINGS_OVERRIDE_TEAM_NOT_FOUND: 404,
+  STANDINGS_OVERRIDE_TEAM_DELETED: 400,
+  STANDINGS_OVERRIDE_TEAM_TOURNAMENT_MISMATCH: 400,
+  STANDINGS_OVERRIDE_TEAM_CATEGORY_MISMATCH: 400,
+  STANDINGS_OVERRIDE_TEAM_NOT_IN_GROUP: 400,
+  STANDINGS_OVERRIDE_RANK_INVALID: 400,
+  STANDINGS_OVERRIDE_RANK_OUT_OF_RANGE: 400,
+  STANDINGS_OVERRIDE_RANK_CONFLICT: 409,
+  STANDINGS_OVERRIDE_REASON_REQUIRED: 400,
+  STANDINGS_OVERRIDE_STATE_CHANGED: 409,
+};
+
+function toStandingsOverrideError(message: string): StandingsOverrideError | null {
+  const match = message.match(/^([A-Z][A-Z_]*):\s*([\s\S]*)$/);
+  if (!match) return null;
+  const code = match[1];
+  return new StandingsOverrideError(code, match[2] || message, STANDINGS_OVERRIDE_ERROR_STATUS[code] || 500);
 }
 
+/**
+ * The entire write path — the authoritative scope/rank/duplicate
+ * revalidation, the expected-before-state check, the override upsert, and
+ * the audit log insert — executes inside
+ * tournament.save_standings_override() (migration 017) as one Postgres
+ * transaction, with the target Group locked first. This function makes
+ * exactly one client.rpc(...) call for the write; there is no
+ * compensating-rollback logic here anymore because there is nothing left to
+ * compensate for — a failure anywhere inside the RPC rolls back the whole
+ * thing atomically.
+ */
 export async function saveStandingsOverride(params: SaveStandingsOverrideParams): Promise<SaveStandingsOverrideResult> {
   const reason = assertReasonAndRank(params.reason, params.overrideRank);
 
@@ -354,17 +401,13 @@ export async function saveStandingsOverride(params: SaveStandingsOverrideParams)
     );
   }
 
-  // Never trust the Preview-time scope snapshot for the actual write —
-  // re-validate everything fresh, including duplicate-rank, at Save time.
-  const scope = await validateStandingsOverrideScope({
-    client: params.client,
-    tournamentId: params.tournamentId,
-    groupId: params.groupId,
-    teamId: params.teamId,
-    overrideRank: params.overrideRank,
-  });
-
-  const currentBeforeHash = hashStandingsOverrideBeforeState(scope.existingOverride);
+  // Fast, NON-authoritative pre-check (see readExistingOverride doc comment
+  // above) — a stale read here can only make the RPC's own expected-state
+  // comparison, under its Group lock, reject with STATE_CHANGED; it can
+  // never let a stale write through, since the RPC re-derives the exact same
+  // comparison from primitives, authoritatively, before ever writing.
+  const existingOverride = await readExistingOverride({ client: params.client, groupId: params.groupId, teamId: params.teamId });
+  const currentBeforeHash = hashStandingsOverrideBeforeState(existingOverride);
   if (currentBeforeHash !== claims.beforeStateHash) {
     throw new StandingsOverrideError(
       'STANDINGS_OVERRIDE_STATE_CHANGED',
@@ -373,58 +416,34 @@ export async function saveStandingsOverride(params: SaveStandingsOverrideParams)
     );
   }
 
-  const { error: upsertError } = await params.client
-    .from('tournament_standing_overrides')
-    .upsert(
-      { group_id: params.groupId, team_id: params.teamId, override_rank: params.overrideRank, reason, created_by: params.actorUserId || null },
-      { onConflict: 'group_id,team_id' }
-    );
-  if (upsertError) throw new Error(upsertError.message);
-
-  const auditResult = await logTournamentAdminAction({
-    tournamentId: params.tournamentId,
-    admin: { id: params.actorUserId, email: params.actorEmail },
-    action: 'standings.manual_override',
-    entityType: 'standing-override',
-    entityId: `${params.groupId}:${params.teamId}`,
-    entityLabel: `group=${params.groupId} team=${params.teamId}`,
-    oldData: scope.existingOverride,
-    newData: { group_id: params.groupId, team_id: params.teamId, override_rank: params.overrideRank, reason },
+  const { data, error } = await params.client.rpc('save_standings_override', {
+    p_tournament_id: params.tournamentId,
+    p_group_id: params.groupId,
+    p_team_id: params.teamId,
+    p_override_rank: params.overrideRank,
+    p_reason: reason,
+    p_actor_id: params.actorUserId,
+    p_actor_email: params.actorEmail,
+    p_expected_row_exists: existingOverride !== null,
+    p_expected_override_rank: existingOverride?.overrideRank ?? null,
+    p_expected_reason: existingOverride?.reason ?? null,
   });
 
-  if (!auditResult.ok) {
-    // The override mutation and the Audit Log write are separate,
-    // non-transactional requests. A required Audit Log is part of what
-    // "success" means for a manual override, so a failed audit write
-    // triggers a best-effort compensating rollback of the override row back
-    // to its exact pre-Save state (restoring the prior row, or deleting a
-    // newly-inserted one) rather than silently reporting success with a
-    // missing audit trail. If the rollback itself also fails, that is
-    // reported as a distinct, more severe error — never swallowed — because
-    // at that point the override row may be inconsistent with the audit
-    // trail and needs manual verification. True atomicity for this
-    // multi-write sequence would require a Postgres RPC, which does not
-    // exist for Tournament V2 (no approved RPC/transaction mechanism, same
-    // as PR #9's Quick Result).
-    const rollback = await rollbackOverrideWrite({
-      client: params.client,
-      groupId: params.groupId,
-      teamId: params.teamId,
-      before: scope.existingOverride,
-    });
-    if (rollback.ok) {
-      throw new StandingsOverrideError(
-        'STANDINGS_OVERRIDE_AUDIT_FAILED_ROLLED_BACK',
-        `Audit log write failed (${auditResult.error || 'unknown error'}) — the override was rolled back to its previous state. No change was applied. Please retry.`,
-        500
-      );
-    }
-    throw new StandingsOverrideError(
-      'STANDINGS_OVERRIDE_AUDIT_FAILED_ROLLBACK_FAILED',
-      `Audit log write failed (${auditResult.error || 'unknown error'}) AND the compensating rollback also failed (${rollback.error || 'unknown error'}). The override row may now be inconsistent with the audit trail and requires manual verification.`,
-      500
-    );
+  if (error) {
+    const parsed = toStandingsOverrideError(error.message);
+    throw parsed || new Error(error.message);
+  }
+  if (!data) {
+    throw new Error('save_standings_override returned no data');
   }
 
-  return { groupId: params.groupId, teamId: params.teamId, overrideRank: params.overrideRank, reason, auditLogged: true };
+  const result = data as { groupId: string; teamId: string; overrideRank: number; reason: string; auditLogged: true };
+
+  return {
+    groupId: result.groupId,
+    teamId: result.teamId,
+    overrideRank: result.overrideRank,
+    reason: result.reason,
+    auditLogged: result.auditLogged,
+  };
 }
