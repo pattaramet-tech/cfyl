@@ -15,7 +15,8 @@
     "seed:tournament-phase2": "ts-node -P scripts/tournament-v2/tsconfig.verify.json scripts/tournament-v2/seed-phase2-core-domain.ts",
     "verify:tournament-phase2-crud": "ts-node -P scripts/tournament-v2/tsconfig.verify.json scripts/tournament-v2/verify-phase2-crud.ts",
     "verify:tournament-schedule-import-runtime": "ts-node -P scripts/tournament-v2/tsconfig.verify.json scripts/tournament-v2/verify-schedule-import-runtime.ts",
-    "verify:tournament-qualification-draw-runtime": "ts-node -r ./scripts/tournament-v2/register-path-alias.js -P scripts/tournament-v2/tsconfig.verify.json scripts/tournament-v2/verify-qualification-draw-runtime.ts"
+    "verify:tournament-qualification-draw-runtime": "ts-node -r ./scripts/tournament-v2/register-path-alias.js -P scripts/tournament-v2/tsconfig.verify.json scripts/tournament-v2/verify-qualification-draw-runtime.ts",
+    "verify:tournament-quick-result-runtime": "ts-node -r ./scripts/tournament-v2/register-path-alias.js -P scripts/tournament-v2/tsconfig.verify.json scripts/tournament-v2/verify-quick-result-runtime.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.108.2",
