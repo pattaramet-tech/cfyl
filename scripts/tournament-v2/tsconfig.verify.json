@@ -12,6 +12,10 @@
   "include": [
     "./verify-foundation.ts",
     "./verify-schedule-import-runtime.ts",
-    "../../lib/tournament/db/**/*.ts"
+    "./verify-qualification-draw-runtime.ts",
+    "../../lib/tournament/db/**/*.ts",
+    "../../lib/tournament/services/qualification-draws.ts",
+    "../../lib/tournament/services/audit.ts",
+    "../../lib/tournament/scheduling/drawSelected.ts"
   ]
 }
