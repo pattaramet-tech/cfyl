@@ -7,6 +7,7 @@ import {
   listVenueMatchdayMatches,
 } from '../quickResult';
 import { issuePreviewToken } from '../previewToken';
+import { mockSubmitQuickResultRpc, type RpcFailureInjection } from './mockSubmitQuickResultRpc';
 
 describe('validateScoreInput', () => {
   it('accepts 0', () => {
@@ -40,22 +41,17 @@ describe('validateScoreInput', () => {
 
 // ---------------------------------------------------------------------------
 // Minimal in-memory Supabase-like query builder mock, shared style with other
-// Tournament V2 route/service tests in this repo. Supports injecting a
-// one-time insert failure on a given table to test the multi-write
-// failure-path (see 'submitQuickResult — multi-write failure safety' below).
+// Tournament V2 route/service tests in this repo, plus an .rpc() hook wired
+// to the transactional submit_quick_result mock — this is now the ONLY write
+// path Submit exercises. select()-only usage covers Preview and the
+// non-authoritative idempotency pre-check in submitQuickResult().
 // ---------------------------------------------------------------------------
 type Row = Record<string, unknown>;
 type Db = Record<string, Row[]>;
 
-function createMockClient(db: Db, options: { failInsertOnce?: Set<string> } = {}) {
-  const failInsertOnce = options.failInsertOnce || new Set<string>();
-
+function createMockClient(db: Db, options: { injection?: RpcFailureInjection } = {}) {
   function builder(table: string) {
-    let mode: 'select' | 'update' | 'insert' = 'select';
-    let patch: Row | null = null;
-    let insertRows: Row[] = [];
     const filters: Array<['eq' | 'is' | 'in', string, unknown]> = [];
-
     const rows = (): Row[] => db[table] || (db[table] = []);
 
     function matches(row: Row): boolean {
@@ -67,24 +63,7 @@ function createMockClient(db: Db, options: { failInsertOnce?: Set<string> } = {}
       });
     }
 
-    function execute(): { data: Row[]; error: { message: string } | null } {
-      if (mode === 'update') {
-        const matched = rows().filter(matches);
-        matched.forEach((row) => Object.assign(row, patch));
-        return { data: matched, error: null };
-      }
-      if (mode === 'insert') {
-        if (failInsertOnce.has(table)) {
-          failInsertOnce.delete(table);
-          return { data: [], error: { message: `simulated insert failure on ${table}` } };
-        }
-        const created = insertRows.map((row) => {
-          const withId: Row = { id: `mock-${Math.random().toString(36).slice(2)}`, ...row };
-          rows().push(withId);
-          return withId;
-        });
-        return { data: created, error: null };
-      }
+    function execute(): { data: Row[]; error: null } {
       return { data: rows().filter(matches), error: null };
     }
 
@@ -107,16 +86,6 @@ function createMockClient(db: Db, options: { failInsertOnce?: Set<string> } = {}
       order() {
         return api;
       },
-      update(p: Row) {
-        mode = 'update';
-        patch = p;
-        return api;
-      },
-      insert(p: Row | Row[]) {
-        mode = 'insert';
-        insertRows = Array.isArray(p) ? p : [p];
-        return api;
-      },
       maybeSingle() {
         const { data, error } = execute();
         return Promise.resolve({ data: data.length ? data[0] : null, error });
@@ -136,6 +105,18 @@ function createMockClient(db: Db, options: { failInsertOnce?: Set<string> } = {}
     from(table: string) {
       return builder(table);
     },
+    rpc(fnName: string, args: Record<string, unknown>) {
+      if (fnName !== 'submit_quick_result') {
+        return Promise.resolve({ data: null, error: { message: `mock client: unknown rpc "${fnName}"` } });
+      }
+      // Synchronous body — by the time this Promise is constructed, the
+      // staged-write-then-commit sequence has already fully run (or failed
+      // without touching `db`). Two concurrent callers therefore cannot
+      // interleave mid-transaction, mirroring the real RPC's Match row lock
+      // for this test's purposes.
+      const result = mockSubmitQuickResultRpc(db, args as never, options.injection);
+      return Promise.resolve(result);
+    },
   } as unknown as Parameters<typeof submitQuickResult>[0]['client'];
 }
 
@@ -152,9 +133,15 @@ function baseMatch(overrides: Row = {}): Row {
     match_time: '08:30',
     home_team_id: 'team-a',
     away_team_id: 'team-b',
+    home_source_type: 'team',
+    away_source_type: 'team',
+    schedule_status: 'published',
     status: 'scheduled',
     result_workflow_status: 'not_started',
     result_type: 'normal',
+    regulation_home_score: null,
+    regulation_away_score: null,
+    winner_team_id: null,
     version: 3,
     deleted_at: null,
     ...overrides,
@@ -163,6 +150,7 @@ function baseMatch(overrides: Row = {}): Row {
 
 function buildDb(matchOverrides: Row = {}): Db {
   return {
+    tournaments: [{ id: 'tour-1', slug: 'cfyl-2026', deleted_at: null }],
     tournament_matches: [baseMatch(matchOverrides)],
     tournament_teams: [
       { id: 'team-a', name: 'Home School' },
@@ -173,6 +161,7 @@ function buildDb(matchOverrides: Row = {}): Db {
     tournament_categories: [{ id: 'cat-1', code: 'B-U12', name: 'Boys U12' }],
     tournament_result_submissions: [],
     tournament_result_versions: [],
+    tournament_audit_logs: [],
   };
 }
 
@@ -204,6 +193,8 @@ describe('previewQuickResult', () => {
     expect(preview.previewToken.split('.')).toHaveLength(2);
     expect(preview.previewExpiresAt).toEqual(expect.any(String));
     expect(db.tournament_result_submissions).toHaveLength(0);
+    expect(db.tournament_result_versions).toHaveLength(0);
+    expect(db.tournament_audit_logs).toHaveLength(0);
     expect(db.tournament_matches[0].version).toBe(3);
   });
 
@@ -264,9 +255,14 @@ async function preview(db: Db, overrides: Partial<Parameters<typeof previewQuick
   });
 }
 
-function submitParamsFromPreview(db: Db, previewResult: Awaited<ReturnType<typeof previewQuickResult>>, idempotencyKey = 'idem-key-1') {
+function submitParamsFromPreview(
+  db: Db,
+  previewResult: Awaited<ReturnType<typeof previewQuickResult>>,
+  idempotencyKey = 'idem-key-1',
+  options: { injection?: RpcFailureInjection } = {}
+) {
   return {
-    client: createMockClient(db),
+    client: createMockClient(db, options),
     tournamentId: 'tour-1',
     venueId: 'venue-1',
     matchId: 'match-1',
@@ -278,7 +274,7 @@ function submitParamsFromPreview(db: Db, previewResult: Awaited<ReturnType<typeo
     actorUserId: ACTOR,
     actorEmail: 'operator@test.com',
     sessionId: 'session-1',
-    deviceMetadata: null,
+    deviceMetadata: null as Record<string, unknown> | null,
   };
 }
 
@@ -329,7 +325,6 @@ describe('submitQuickResult — preview token enforcement', () => {
   });
 
   it('rejects an expired token', async () => {
-    const db = buildDb();
     const expiredToken = issuePreviewToken({
       tournamentId: 'tour-1',
       matchId: 'match-1',
@@ -350,9 +345,10 @@ describe('submitQuickResult — preview token enforcement', () => {
       .digest('base64url');
     const reSignedExpiredToken = `${rePayload}.${signature}`;
 
+    const db2 = buildDb();
     await expect(
       submitQuickResult({
-        client: createMockClient(db),
+        client: createMockClient(db2),
         tournamentId: 'tour-1',
         venueId: 'venue-1',
         matchId: 'match-1',
@@ -367,7 +363,7 @@ describe('submitQuickResult — preview token enforcement', () => {
         deviceMetadata: null,
       })
     ).rejects.toMatchObject({ code: 'QUICK_RESULT_PREVIEW_EXPIRED' });
-    expect(db.tournament_result_submissions).toHaveLength(0);
+    expect(db2.tournament_result_submissions).toHaveLength(0);
   });
 
   it('rejects a token issued for a different match', async () => {
@@ -449,7 +445,7 @@ describe('submitQuickResult — preview token enforcement', () => {
   });
 });
 
-describe('submitQuickResult — existing validation (still enforced)', () => {
+describe('submitQuickResult — authoritative validation inside the RPC (not just TS)', () => {
   it('rejects a wrong venue for the match', async () => {
     const db = buildDb();
     const previewResult = await previewQuickResult({
@@ -474,6 +470,17 @@ describe('submitQuickResult — existing validation (still enforced)', () => {
     });
   });
 
+  it('rejects a match whose tournament was deleted since preview', async () => {
+    const db = buildDb();
+    const previewResult = await preview(db);
+    db.tournaments[0].deleted_at = '2026-01-01T00:00:00Z';
+
+    await expect(submitQuickResult(submitParamsFromPreview(db, previewResult))).rejects.toMatchObject({
+      code: 'TOURNAMENT_MISMATCH',
+    });
+    expect(db.tournament_result_submissions).toHaveLength(0);
+  });
+
   it('blocks submission when the home placeholder becomes unresolved after preview', async () => {
     const db = buildDb();
     const previewResult = await preview(db);
@@ -493,23 +500,107 @@ describe('submitQuickResult — existing validation (still enforced)', () => {
       code: 'RESULT_ALREADY_PUBLISHED',
     });
   });
+
+  it('rejects a match with an incompatible status (e.g. cancelled) even with a valid token', async () => {
+    const db = buildDb();
+    const previewResult = await preview(db);
+    db.tournament_matches[0].status = 'cancelled';
+
+    await expect(submitQuickResult(submitParamsFromPreview(db, previewResult))).rejects.toMatchObject({
+      code: 'MATCH_STATUS_INCOMPATIBLE',
+    });
+    expect(db.tournament_result_submissions).toHaveLength(0);
+  });
 });
 
-describe('submitQuickResult — idempotent retries', () => {
-  it('returns the stored result for a duplicate idempotency key with the same payload, without re-checking the token', async () => {
+describe('submitQuickResult — atomic write via RPC', () => {
+  it('performs exactly one client.rpc write call for a genuinely new submission', async () => {
+    const db = buildDb();
+    const previewResult = await preview(db);
+    const client = createMockClient(db);
+    let rpcCallCount = 0;
+    const originalRpc = client.rpc.bind(client);
+    client.rpc = ((fnName: string, args: Record<string, unknown>) => {
+      rpcCallCount += 1;
+      return originalRpc(fnName, args);
+    }) as typeof client.rpc;
+
+    await submitQuickResult({ ...submitParamsFromPreview(db, previewResult), client });
+
+    expect(rpcCallCount).toBe(1);
+  });
+
+  it('creates exactly one version increment, one submission, one result version, and one audit log', async () => {
+    const db = buildDb();
+    const previewResult = await preview(db);
+    const result = await submitQuickResult(submitParamsFromPreview(db, previewResult));
+
+    expect(db.tournament_matches[0].version).toBe(4);
+    expect(db.tournament_result_submissions).toHaveLength(1);
+    expect(db.tournament_result_versions).toHaveLength(1);
+    const auditEntries = db.tournament_audit_logs.filter((log) => log.entity_id === 'match-1');
+    expect(auditEntries).toHaveLength(1);
+    expect(auditEntries[0].action).toBe('tournament.quick_result.submit');
+    expect(result.newMatchVersion).toBe(4);
+    expect(result.previousMatchVersion).toBe(3);
+  });
+
+  it('never changes official result, source, schedule, or team fields — remains provisional and operational-only', async () => {
+    const db = buildDb();
+    const previewResult = await preview(db);
+    await submitQuickResult(submitParamsFromPreview(db, previewResult));
+
+    const match = db.tournament_matches[0];
+    expect(match.result_workflow_status).toBe('not_started');
+    expect(match.result_type).toBe('normal');
+    expect(match.schedule_status).toBe('published');
+    expect(match.status).toBe('scheduled');
+    expect(match.regulation_home_score).toBeNull();
+    expect(match.regulation_away_score).toBeNull();
+    expect(match.winner_team_id).toBeNull();
+    expect(match.home_team_id).toBe('team-a');
+    expect(match.away_team_id).toBe('team-b');
+    expect(match.home_source_type).toBe('team');
+    expect(match.away_source_type).toBe('team');
+  });
+
+  it('records the audit log inside the same RPC call with actor, session, and device metadata', async () => {
+    const db = buildDb();
+    const previewResult = await preview(db);
+    await submitQuickResult({
+      ...submitParamsFromPreview(db, previewResult),
+      sessionId: 'session-xyz',
+      deviceMetadata: { user_agent: 'test-agent', platform: 'android' },
+    });
+
+    const entry = db.tournament_audit_logs.find((log) => log.action === 'tournament.quick_result.submit');
+    expect(entry).toBeDefined();
+    const newData = entry?.new_data as Row;
+    expect(newData.session_id).toBe('session-xyz');
+    expect(newData.device_metadata).toMatchObject({ user_agent: 'test-agent' });
+    expect(newData.actor_id).toBe(ACTOR);
+    expect(newData.actor_email).toBe('operator@test.com');
+    expect(newData.provisional).toBe(true);
+  });
+});
+
+describe('submitQuickResult — idempotency (authoritative, canonical-payload equality)', () => {
+  it('returns the stored result for a duplicate idempotency key with the same canonical request', async () => {
     const db = buildDb();
     const previewResult = await preview(db);
     const params = submitParamsFromPreview(db, previewResult);
 
     const first = await submitQuickResult(params);
-    // Retry reuses the SAME (now token-consumed-in-spirit, but not literally
-    // invalidated) token — per the idempotency-first order of operations,
-    // the token is not even re-verified on a same-payload replay.
     const second = await submitQuickResult(params);
 
     expect(second.idempotent).toBe(true);
     expect(second.submissionId).toBe(first.submissionId);
+    expect(second.newMatchVersion).toBe(first.newMatchVersion);
     expect(db.tournament_result_submissions).toHaveLength(1);
+    expect(db.tournament_result_versions).toHaveLength(1);
+    expect(db.tournament_audit_logs).toHaveLength(1);
+    // Match version must not be bumped a second time.
+    expect(db.tournament_matches[0].version).toBe(4);
   });
 
   it('rejects a duplicate idempotency key used with a different score payload', async () => {
@@ -524,17 +615,65 @@ describe('submitQuickResult — idempotent retries', () => {
     expect(db.tournament_result_submissions).toHaveLength(1);
   });
 
-  it('rejects a duplicate idempotency key used against a different match', async () => {
+  it('rejects a duplicate idempotency key used with a different venue_id — proves venue participates in idempotency equality', async () => {
+    const db = buildDb();
+    const previewResult = await preview(db);
+    const params = submitParamsFromPreview(db, previewResult);
+    await submitQuickResult(params);
+
+    await expect(submitQuickResult({ ...params, venueId: null })).rejects.toMatchObject({
+      code: 'IDEMPOTENCY_KEY_PAYLOAD_MISMATCH',
+    });
+    expect(db.tournament_result_submissions).toHaveLength(1);
+  });
+
+  it('rejects a duplicate idempotency key used with a different session_id — proves session participates in idempotency equality', async () => {
+    const db = buildDb();
+    const previewResult = await preview(db);
+    const params = submitParamsFromPreview(db, previewResult);
+    await submitQuickResult(params);
+
+    await expect(submitQuickResult({ ...params, sessionId: 'a-different-session' })).rejects.toMatchObject({
+      code: 'IDEMPOTENCY_KEY_PAYLOAD_MISMATCH',
+    });
+    expect(db.tournament_result_submissions).toHaveLength(1);
+  });
+
+  it('rejects a duplicate idempotency key used with different device_metadata — proves device metadata participates in idempotency equality', async () => {
+    const db = buildDb();
+    const previewResult = await preview(db);
+    const params = submitParamsFromPreview(db, previewResult);
+    await submitQuickResult(params);
+
+    await expect(
+      submitQuickResult({ ...params, deviceMetadata: { platform: 'ios' } })
+    ).rejects.toMatchObject({ code: 'IDEMPOTENCY_KEY_PAYLOAD_MISMATCH' });
+    expect(db.tournament_result_submissions).toHaveLength(1);
+  });
+
+  it('rejects a duplicate idempotency key used with a different expected_version — proves expected version participates in idempotency equality', async () => {
+    const db = buildDb();
+    const previewResult = await preview(db);
+    const params = submitParamsFromPreview(db, previewResult);
+    await submitQuickResult(params);
+
+    // A different expected_version alone, with a fresh preview token minted
+    // for that version, would still be a different canonical request under
+    // the same key.
+    const secondPreview = await preview(db);
+    await expect(
+      submitQuickResult({ ...params, expectedVersion: 4, previewToken: secondPreview.previewToken })
+    ).rejects.toMatchObject({ code: 'IDEMPOTENCY_KEY_PAYLOAD_MISMATCH' });
+    expect(db.tournament_result_submissions).toHaveLength(1);
+  });
+
+  it('rejects a duplicate idempotency key used against a different match as a genuinely new write (unique constraint is per match_id)', async () => {
     const db = buildDb();
     db.tournament_matches.push(baseMatch({ id: 'match-2', match_code: 'B-U12-GA-002' }));
     const previewResult = await preview(db);
     const params = submitParamsFromPreview(db, previewResult, 'shared-key');
     await submitQuickResult(params);
 
-    // Same idempotency key, but scoped by match_id in the unique constraint —
-    // a different match_id means no existing row is found for THIS match, so
-    // it is treated as a genuinely new write and still requires a valid
-    // matching token (which it has, since this is match-2's own preview).
     const secondPreview = await previewQuickResult({
       client: createMockClient(db),
       tournamentId: 'tour-1',
@@ -552,24 +691,6 @@ describe('submitQuickResult — idempotent retries', () => {
     expect(db.tournament_result_submissions).toHaveLength(2);
   });
 
-  it('allows only one successful writer for concurrent submissions with different idempotency keys', async () => {
-    const db = buildDb();
-    const previewA = await preview(db);
-    const first = await submitQuickResult(submitParamsFromPreview(db, previewA, 'key-A'));
-
-    // A second concurrent caller previewed before the first submit landed,
-    // so it still holds a token claiming matchVersion 3 — but the DB is now
-    // at version 4.
-    const previewB = await preview(db); // this reload sees version 3 too (mock db not yet aware — simulate stale by reusing previewA's token instead)
-    void previewB;
-    await expect(
-      submitQuickResult({ ...submitParamsFromPreview(db, previewA, 'key-B') })
-    ).rejects.toMatchObject({ code: 'QUICK_RESULT_VERSION_CONFLICT' });
-
-    expect(first.idempotent).toBe(false);
-    expect(db.tournament_result_submissions).toHaveLength(1);
-  });
-
   it('rejects a missing idempotency key', async () => {
     const db = buildDb();
     const previewResult = await preview(db);
@@ -579,39 +700,91 @@ describe('submitQuickResult — idempotent retries', () => {
   });
 });
 
-describe('submitQuickResult — multi-write failure safety (NOT a database transaction)', () => {
-  it('rolls back the version claim (best-effort) when the submission insert fails, leaving no orphaned write', async () => {
+describe('submitQuickResult — concurrency', () => {
+  it('allows only one successful writer for concurrent submissions with different idempotency keys but the same expected version', async () => {
     const db = buildDb();
-    const previewResult = await preview(db);
+    const previewA = await preview(db);
 
-    const failingClient = createMockClient(db, { failInsertOnce: new Set(['tournament_result_submissions']) });
-    await expect(
-      submitQuickResult({ ...submitParamsFromPreview(db, previewResult), client: failingClient })
-    ).rejects.toThrow(/simulated insert failure/);
+    const [outcomeA, outcomeB] = await Promise.all([
+      submitQuickResult(submitParamsFromPreview(db, previewA, 'key-A')).then(
+        (r) => ({ ok: true as const, result: r }),
+        (e) => ({ ok: false as const, error: e instanceof QuickResultError ? e.code : String(e) })
+      ),
+      submitQuickResult(submitParamsFromPreview(db, previewA, 'key-B')).then(
+        (r) => ({ ok: true as const, result: r }),
+        (e) => ({ ok: false as const, error: e instanceof QuickResultError ? e.code : String(e) })
+      ),
+    ]);
 
-    // The compensating rollback restored the original version — no orphaned
-    // version bump, no submission row. This is a best-effort code-level
-    // rollback (a second UPDATE call), not a database transaction: if that
-    // rollback UPDATE itself failed, the match would be left claimed with no
-    // submission, and a retry would correctly surface
-    // QUICK_RESULT_VERSION_CONFLICT (fail-safe: never silently fabricates or
-    // duplicates a result) rather than succeeding against stale state.
-    expect(db.tournament_matches[0].version).toBe(3);
-    expect(db.tournament_result_submissions).toHaveLength(0);
+    const succeeded = [outcomeA, outcomeB].filter((o) => o.ok);
+    const failed = [outcomeA, outcomeB].filter((o) => !o.ok) as Array<{ ok: false; error: string }>;
+    expect(succeeded).toHaveLength(1);
+    expect(failed).toHaveLength(1);
+    expect(failed[0].error).toBe('QUICK_RESULT_VERSION_CONFLICT');
+    expect(db.tournament_result_submissions).toHaveLength(1);
+    expect(db.tournament_matches[0].version).toBe(4);
   });
 
-  it('does not fail the submission when only the result_versions history insert fails', async () => {
+  it('creates exactly one physical submission for concurrent same-key, same-request calls — the other returns idempotent success', async () => {
+    const db = buildDb();
+    const previewResult = await preview(db);
+    const params = submitParamsFromPreview(db, previewResult, 'shared-concurrent-key');
+
+    const [a, b] = await Promise.all([submitQuickResult(params), submitQuickResult(params)]);
+
+    const idempotentCount = [a, b].filter((r) => r.idempotent).length;
+    const newCount = [a, b].filter((r) => !r.idempotent).length;
+    expect(newCount).toBe(1);
+    expect(idempotentCount).toBe(1);
+    expect(a.submissionId).toBe(b.submissionId);
+    expect(db.tournament_result_submissions).toHaveLength(1);
+    expect(db.tournament_result_versions).toHaveLength(1);
+    expect(db.tournament_audit_logs).toHaveLength(1);
+    expect(db.tournament_matches[0].version).toBe(4);
+  });
+});
+
+describe('submitQuickResult — rollback on mid-sequence failure (RPC failure injection)', () => {
+  it('a submission-insert failure rolls back the Match version claim entirely', async () => {
     const db = buildDb();
     const previewResult = await preview(db);
 
-    const failingClient = createMockClient(db, { failInsertOnce: new Set(['tournament_result_versions']) });
-    const result = await submitQuickResult({ ...submitParamsFromPreview(db, previewResult), client: failingClient });
+    await expect(
+      submitQuickResult(submitParamsFromPreview(db, previewResult, 'idem-key-1', { injection: { failAt: 'submission' } }))
+    ).rejects.toMatchObject({ code: 'SIMULATED_FAILURE' });
 
-    // Non-fatal: the submission (source of truth for the provisional score)
-    // is saved; only the supplementary audit-history row is missing.
-    expect(result.status).toBe('submitted');
-    expect(db.tournament_result_submissions).toHaveLength(1);
+    expect(db.tournament_matches[0].version).toBe(3);
+    expect(db.tournament_result_submissions).toHaveLength(0);
     expect(db.tournament_result_versions).toHaveLength(0);
+    expect(db.tournament_audit_logs).toHaveLength(0);
+  });
+
+  it('a result-version-insert failure rolls back the Match version claim and the submission insert', async () => {
+    const db = buildDb();
+    const previewResult = await preview(db);
+
+    await expect(
+      submitQuickResult(submitParamsFromPreview(db, previewResult, 'idem-key-1', { injection: { failAt: 'resultVersion' } }))
+    ).rejects.toMatchObject({ code: 'SIMULATED_FAILURE' });
+
+    expect(db.tournament_matches[0].version).toBe(3);
+    expect(db.tournament_result_submissions).toHaveLength(0);
+    expect(db.tournament_result_versions).toHaveLength(0);
+    expect(db.tournament_audit_logs).toHaveLength(0);
+  });
+
+  it('an audit-insert failure rolls back every prior write in the sequence', async () => {
+    const db = buildDb();
+    const previewResult = await preview(db);
+
+    await expect(
+      submitQuickResult(submitParamsFromPreview(db, previewResult, 'idem-key-1', { injection: { failAt: 'audit' } }))
+    ).rejects.toMatchObject({ code: 'SIMULATED_FAILURE' });
+
+    expect(db.tournament_matches[0].version).toBe(3);
+    expect(db.tournament_result_submissions).toHaveLength(0);
+    expect(db.tournament_result_versions).toHaveLength(0);
+    expect(db.tournament_audit_logs).toHaveLength(0);
   });
 });
 

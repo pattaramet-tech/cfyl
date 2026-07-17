@@ -1,16 +1,18 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import fs from 'fs';
+import path from 'path';
 import type { NextRequest } from 'next/server';
+import {
+  mockSubmitQuickResultRpc,
+  type RpcFailureInjection,
+} from '../../../../../../../../lib/tournament/services/__tests__/mockSubmitQuickResultRpc';
 
 type Row = Record<string, unknown>;
 type Db = Record<string, Row[]>;
 
-function createMockClient(db: Db) {
+function createMockClient(db: Db, options: { injection?: RpcFailureInjection } = {}) {
   function builder(table: string) {
-    let mode: 'select' | 'update' | 'insert' = 'select';
-    let patch: Row | null = null;
-    let insertRows: Row[] = [];
     const filters: Array<['eq' | 'is' | 'in', string, unknown]> = [];
-
     const rows = (): Row[] => db[table] || (db[table] = []);
 
     function matches(row: Row): boolean {
@@ -23,19 +25,6 @@ function createMockClient(db: Db) {
     }
 
     function execute(): { data: Row[]; error: null } {
-      if (mode === 'update') {
-        const matched = rows().filter(matches);
-        matched.forEach((row) => Object.assign(row, patch));
-        return { data: matched, error: null };
-      }
-      if (mode === 'insert') {
-        const created = insertRows.map((row) => {
-          const withId: Row = { id: `mock-${Math.random().toString(36).slice(2)}`, ...row };
-          rows().push(withId);
-          return withId;
-        });
-        return { data: created, error: null };
-      }
       return { data: rows().filter(matches), error: null };
     }
 
@@ -58,16 +47,6 @@ function createMockClient(db: Db) {
       order() {
         return api;
       },
-      update(p: Row) {
-        mode = 'update';
-        patch = p;
-        return api;
-      },
-      insert(p: Row | Row[]) {
-        mode = 'insert';
-        insertRows = Array.isArray(p) ? p : [p];
-        return api;
-      },
       maybeSingle() {
         const { data, error } = execute();
         return Promise.resolve({ data: data.length ? data[0] : null, error });
@@ -76,7 +55,7 @@ function createMockClient(db: Db) {
         const { data, error } = execute();
         return Promise.resolve({ data: data.length ? data[0] : null, error });
       },
-      then(resolve: (value: { data: Row[]; error: null }) => unknown, reject?: (reason: unknown) => unknown) {
+      then(resolve: (value: { data: Row[]; error: unknown }) => unknown, reject?: (reason: unknown) => unknown) {
         return Promise.resolve(execute()).then(resolve, reject);
       },
     };
@@ -87,10 +66,19 @@ function createMockClient(db: Db) {
     from(table: string) {
       return builder(table);
     },
+    rpc(fnName: string, args: Record<string, unknown>) {
+      if (fnName !== 'submit_quick_result') {
+        return Promise.resolve({ data: null, error: { message: `mock client: unknown rpc "${fnName}"` } });
+      }
+      const result = mockSubmitQuickResultRpc(db, args as never, options.injection);
+      return Promise.resolve(result);
+    },
   };
 }
 
-const state = vi.hoisted(() => ({ client: null as ReturnType<typeof createMockClient> | null }));
+const state = vi.hoisted(() => ({
+  client: null as ReturnType<typeof createMockClient> | null,
+}));
 const authState = vi.hoisted(() => ({ authorized: true as boolean, userId: 'operator-1' as string }));
 
 vi.mock('@/lib/tournament/db/supabase-tournament', () => ({
@@ -216,6 +204,7 @@ describe('POST /api/tournament/admin/matches/[matchId]/quick-result', () => {
     expect(body.data.preview_token).toEqual(expect.any(String));
     expect(body.data.preview_expires_at).toEqual(expect.any(String));
     expect(db.tournament_result_submissions).toHaveLength(0);
+    expect(db.tournament_audit_logs).toHaveLength(0);
     expect(db.tournament_matches[0].version).toBe(3);
   });
 
@@ -232,9 +221,16 @@ describe('POST /api/tournament/admin/matches/[matchId]/quick-result', () => {
     expect(db.tournament_matches[0].version).toBe(3);
   });
 
-  it('valid preview followed by submit with the token succeeds and remains provisional', async () => {
+  it('valid preview followed by submit with the token succeeds, remains provisional, and performs exactly one RPC write with no separate audit call', async () => {
     const db = buildDb();
-    state.client = createMockClient(db);
+    const client = createMockClient(db);
+    let rpcCallCount = 0;
+    const originalRpc = client.rpc.bind(client);
+    client.rpc = (fnName: string, args: Record<string, unknown>) => {
+      rpcCallCount += 1;
+      return originalRpc(fnName, args);
+    };
+    state.client = client;
 
     const token = await getPreviewToken();
     const submitResponse = await POST(makeRequest(submitBodyWithToken(token)), makeParams('match-1'));
@@ -244,6 +240,16 @@ describe('POST /api/tournament/admin/matches/[matchId]/quick-result', () => {
     expect(submitPayload.data.provisional).toBe(true);
     expect(submitPayload.data.status).toBe('submitted');
     expect(db.tournament_matches[0].result_workflow_status).toBe('not_started');
+    // Preview itself doesn't call the RPC — only Submit does, exactly once.
+    expect(rpcCallCount).toBe(1);
+
+    const auditEntries = db.tournament_audit_logs.filter((log) => log.action === 'tournament.quick_result.submit');
+    expect(auditEntries).toHaveLength(1);
+  });
+
+  it('route.ts does not import the audit service module (audit write lives only inside the RPC)', () => {
+    const source = fs.readFileSync(path.join(__dirname, '../route.ts'), 'utf-8');
+    expect(source).not.toMatch(/from ['"]@\/lib\/tournament\/services\/audit['"]/);
   });
 
   it('rejects a tampered preview token', async () => {
@@ -328,6 +334,7 @@ describe('POST /api/tournament/admin/matches/[matchId]/quick-result', () => {
     expect(second.status).toBe(200);
     expect(secondBody.data.idempotent).toBe(true);
     expect(db.tournament_result_submissions).toHaveLength(1);
+    expect(db.tournament_audit_logs).toHaveLength(1);
   });
 
   it('rejects a duplicate idempotency key used with a different payload', async () => {
@@ -369,7 +376,7 @@ describe('POST /api/tournament/admin/matches/[matchId]/quick-result', () => {
     expect(db.tournament_result_submissions).toHaveLength(1);
   });
 
-  it('records audit entry with actor, session, and device metadata', async () => {
+  it('records audit entry with actor, session, and device metadata, written inside the RPC', async () => {
     const db = buildDb();
     state.client = createMockClient(db);
 
@@ -384,6 +391,20 @@ describe('POST /api/tournament/admin/matches/[matchId]/quick-result', () => {
     expect(newData.session_id).toBe('session-abc');
     expect(newData.device_metadata).toMatchObject({ user_agent: 'test-agent' });
     expect(newData.idempotency_key).toBe('idem-key-1');
+  });
+
+  it('a submission-insert failure inside the RPC rolls back the Match version and leaves zero writes', async () => {
+    const db = buildDb();
+    const client = createMockClient(db, { injection: { failAt: 'submission' } });
+    state.client = client;
+
+    const token = await getPreviewToken();
+    const response = await POST(makeRequest(submitBodyWithToken(token)), makeParams('match-1'));
+
+    expect(response.status).toBe(500);
+    expect(db.tournament_matches[0].version).toBe(3);
+    expect(db.tournament_result_submissions).toHaveLength(0);
+    expect(db.tournament_audit_logs).toHaveLength(0);
   });
 
   it('blocks submission when a placeholder side is unresolved', async () => {

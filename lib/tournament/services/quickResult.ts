@@ -10,11 +10,17 @@ import { issuePreviewToken, verifyPreviewToken } from './previewToken';
 // tournament_result_submissions.stage='quick_result' (migration 010, no
 // schema change needed).
 //
-// Optimistic locking reuses the existing tournament_matches.version column
-// (already used by the schedule-import optimistic lock in PR #6) — a Quick
-// Result submission atomically bumps it via a conditional UPDATE, which also
-// doubles as the "only one concurrent writer succeeds" guarantee. No new
-// column or table was added for this feature.
+// WRITE PATH: submitQuickResult() performs exactly one
+// client.rpc('submit_quick_result', ...) call — migration 016
+// (scripts/tournament-v2/016-quick-result-atomic-submit.sql). The idempotency
+// decision, the tournament_matches.version claim (reusing the existing
+// optimistic-lock column — no new column added), the
+// tournament_result_submissions insert, the tournament_result_versions
+// insert, and the audit log insert all run inside that single Postgres
+// transaction. Preview Token verification stays here in TypeScript (its HMAC
+// secret is application configuration, not database state) — see
+// submitQuickResult() for how the token gate composes with the RPC's
+// authoritative idempotency check.
 
 const QUICK_RESULT_STAGE = 'quick_result';
 const INCOMPATIBLE_MATCH_STATUSES = new Set(['cancelled', 'abandoned', 'void', 'bye']);
@@ -258,14 +264,6 @@ export async function previewQuickResult(params: PreviewQuickResultParams): Prom
   };
 }
 
-interface ExistingSubmissionRow {
-  id: string;
-  payload: { home_score: number; away_score: number };
-  version: number;
-  status: string;
-  submitted_at: string | null;
-}
-
 export interface SubmitQuickResultParams {
   client: TournamentClient;
   tournamentId: string;
@@ -294,6 +292,21 @@ export interface SubmitQuickResultResult {
   idempotent: boolean;
 }
 
+function toQuickResultError(message: string): QuickResultError | null {
+  const match = message.match(/^([A-Z][A-Z_]*):\s*([\s\S]*)$/);
+  if (!match) return null;
+  return new QuickResultError(match[1], match[2] || message);
+}
+
+/**
+ * The entire write path — the idempotency decision, the version claim, the
+ * submission insert, the result-version insert, and the audit log — executes
+ * inside tournament.submit_quick_result() (migration 016) as one Postgres
+ * transaction. This function makes exactly one client.rpc(...) call for any
+ * genuinely new write; there is no compensating-rollback logic here anymore
+ * because there is nothing left to compensate for — a failure anywhere
+ * inside the RPC rolls back the whole thing atomically.
+ */
 export async function submitQuickResult(params: SubmitQuickResultParams): Promise<SubmitQuickResultResult> {
   if (!params.idempotencyKey || !params.idempotencyKey.trim()) {
     throw new QuickResultError('IDEMPOTENCY_KEY_REQUIRED', 'idempotencyKey is required');
@@ -306,192 +319,111 @@ export async function submitQuickResult(params: SubmitQuickResultParams): Promis
   const homeScore = homeScoreResult.value as number;
   const awayScore = awayScoreResult.value as number;
 
-  // Idempotency check first — a retried request with the same key must never
-  // re-validate against a database state that may have moved on (e.g. the
-  // match version already bumped by the original successful attempt).
+  // Fast, NON-authoritative pre-check: does a submission already exist for
+  // this idempotency key? Used only to decide whether to demand and verify a
+  // Preview Token before ever calling the RPC — the Preview Token's HMAC
+  // secret is application configuration and must stay out of Postgres, so
+  // only this service layer can enforce "a genuinely new write requires a
+  // valid token." The RPC re-checks idempotency itself, under the Match row
+  // lock, and is the sole authority on whether a given call is a replay or a
+  // genuinely new write — this pre-check can only ever be stale in the
+  // direction of under-trusting (a concurrent submit committing between this
+  // read and the RPC call), which just means a token gets verified here that
+  // the RPC then didn't strictly need (it still correctly returns idempotent
+  // success). It can never let a token-less new write through, because a
+  // positive "found" read here can only reflect a row that was genuinely
+  // already committed.
   const { data: existingData, error: existingError } = await params.client
     .from('tournament_result_submissions')
-    .select('id, payload, version, status, submitted_at')
+    .select('id')
     .eq('match_id', params.matchId)
     .eq('stage', QUICK_RESULT_STAGE)
     .eq('idempotency_key', params.idempotencyKey)
     .maybeSingle();
-
   if (existingError) throw new Error(existingError.message);
+  const isLikelyReplay = !!existingData;
 
-  if (existingData) {
-    const existing = existingData as ExistingSubmissionRow;
-    const samePayload = existing.payload.home_score === homeScore && existing.payload.away_score === awayScore;
-    if (!samePayload) {
+  if (!isLikelyReplay) {
+    // Preview Token required for any call this pre-check doesn't already
+    // recognize as a replay. Without this, a caller could send
+    // expected_version + idempotency_key straight to Submit without ever
+    // calling Preview.
+    if (!params.previewToken || !params.previewToken.trim()) {
+      throw new QuickResultError('QUICK_RESULT_PREVIEW_REQUIRED', 'A valid Quick Result preview is required before submission.');
+    }
+
+    const tokenVerification = verifyPreviewToken(params.previewToken);
+    if (!tokenVerification.ok) {
       throw new QuickResultError(
-        'IDEMPOTENCY_KEY_PAYLOAD_MISMATCH',
-        'This idempotency key was already used with a different score payload'
+        tokenVerification.code,
+        tokenVerification.code === 'QUICK_RESULT_PREVIEW_EXPIRED'
+          ? 'Quick Result preview has expired — request a new preview before submitting'
+          : 'Quick Result preview token is invalid or was tampered with'
       );
     }
-    return {
-      submissionId: existing.id,
-      matchId: params.matchId,
-      matchCode: '',
-      homeScore,
-      awayScore,
-      previousMatchVersion: params.expectedVersion,
-      newMatchVersion: params.expectedVersion,
-      status: 'submitted',
-      idempotent: true,
-    };
+
+    const claims = tokenVerification.claims;
+    const claimsMatchRequest =
+      claims.tournamentId === params.tournamentId &&
+      claims.matchId === params.matchId &&
+      claims.venueId === params.venueId &&
+      claims.homeScore === homeScore &&
+      claims.awayScore === awayScore &&
+      claims.matchVersion === params.expectedVersion &&
+      claims.actorUserId === params.actorUserId;
+
+    if (!claimsMatchRequest) {
+      throw new QuickResultError(
+        'QUICK_RESULT_PREVIEW_MISMATCH',
+        'The submitted request no longer matches the previewed match, venue, score, version, or actor — preview again'
+      );
+    }
   }
 
-  // This is a genuinely new write (no matching idempotency key found above)
-  // — a signed Preview Token is mandatory. Without this check, a caller
-  // could send expected_version + idempotency_key straight to Submit
-  // without ever calling Preview.
-  if (!params.previewToken || !params.previewToken.trim()) {
-    throw new QuickResultError('QUICK_RESULT_PREVIEW_REQUIRED', 'A valid Quick Result preview is required before submission.');
-  }
-
-  const tokenVerification = verifyPreviewToken(params.previewToken);
-  if (!tokenVerification.ok) {
-    throw new QuickResultError(
-      tokenVerification.code,
-      tokenVerification.code === 'QUICK_RESULT_PREVIEW_EXPIRED'
-        ? 'Quick Result preview has expired — request a new preview before submitting'
-        : 'Quick Result preview token is invalid or was tampered with'
-    );
-  }
-
-  const claims = tokenVerification.claims;
-  const claimsMatchRequest =
-    claims.tournamentId === params.tournamentId &&
-    claims.matchId === params.matchId &&
-    claims.venueId === params.venueId &&
-    claims.homeScore === homeScore &&
-    claims.awayScore === awayScore &&
-    claims.matchVersion === params.expectedVersion &&
-    claims.actorUserId === params.actorUserId;
-
-  if (!claimsMatchRequest) {
-    throw new QuickResultError(
-      'QUICK_RESULT_PREVIEW_MISMATCH',
-      'The submitted request no longer matches the previewed match, venue, score, version, or actor — preview again'
-    );
-  }
-
-  const { match } = await loadMatchContext({
-    client: params.client,
-    matchId: params.matchId,
-    tournamentId: params.tournamentId,
+  const { data, error } = await params.client.rpc('submit_quick_result', {
+    p_tournament_id: params.tournamentId,
+    p_match_id: params.matchId,
+    p_venue_id: params.venueId,
+    p_home_score: homeScore,
+    p_away_score: awayScore,
+    p_expected_version: params.expectedVersion,
+    p_idempotency_key: params.idempotencyKey,
+    p_actor_id: params.actorUserId,
+    p_actor_email: params.actorEmail,
+    p_session_id: params.sessionId,
+    p_device_metadata: params.deviceMetadata,
   });
-  assertEligible({ match, venueId: params.venueId });
 
-  if (match.version !== params.expectedVersion) {
-    throw new QuickResultError(
-      'QUICK_RESULT_VERSION_CONFLICT',
-      `Match has changed since Preview (expected version ${params.expectedVersion}, current version ${match.version})`
-    );
+  if (error) {
+    const parsed = toQuickResultError(error.message);
+    throw parsed || new Error(error.message);
+  }
+  if (!data) {
+    throw new Error('submit_quick_result returned no data');
   }
 
-  const now = new Date().toISOString();
-
-  // Atomic conditional claim: only one concurrent submitter can win this
-  // UPDATE (WHERE version = expectedVersion). This is the single-writer
-  // guarantee for concurrent submissions, reusing the existing
-  // tournament_matches.version optimistic-lock column — no new column added.
-  const { data: claimedMatch, error: claimError } = await params.client
-    .from('tournament_matches')
-    .update({ version: match.version + 1, updated_by: params.actorUserId, updated_at: now })
-    .eq('id', params.matchId)
-    .eq('version', params.expectedVersion)
-    .select('id, version')
-    .maybeSingle();
-
-  if (claimError) throw new Error(claimError.message);
-  if (!claimedMatch) {
-    throw new QuickResultError(
-      'QUICK_RESULT_VERSION_CONFLICT',
-      'Match was modified by another request between Preview and Submit'
-    );
-  }
-
-  const newVersion = (claimedMatch as { id: string; version: number }).version;
-  const payload = {
-    home_score: homeScore,
-    away_score: awayScore,
-    venue_id: params.venueId,
-    match_version_before: params.expectedVersion,
-    match_version_after: newVersion,
-    session_id: params.sessionId,
-    device_metadata: params.deviceMetadata,
+  const result = data as {
+    submissionId: string;
+    matchId: string;
+    matchCode: string;
+    homeScore: number;
+    awayScore: number;
+    previousMatchVersion: number;
+    newMatchVersion: number;
+    status: 'submitted';
+    idempotent: boolean;
   };
 
-  const { data: submissionData, error: submissionError } = await params.client
-    .from('tournament_result_submissions')
-    .insert({
-      match_id: params.matchId,
-      stage: QUICK_RESULT_STAGE,
-      payload,
-      status: 'submitted',
-      version: 1,
-      idempotency_key: params.idempotencyKey,
-      submitted_by: params.actorUserId,
-      submitted_at: now,
-    })
-    .select('id')
-    .single();
-
-  if (submissionError || !submissionData) {
-    // NOT a database transaction: supabase-js issues each .from() call as an
-    // independent request, and this codebase has no approved RPC/transaction
-    // mechanism for Tournament V2 (confirmed: no .rpc( call exists anywhere
-    // in lib/tournament or app/api/tournament). This is a best-effort
-    // compensating rollback of the version claim above, not atomicity — if
-    // this rollback UPDATE itself fails (e.g. connection drop), the match is
-    // left with an incremented version and no submission. That failure mode
-    // is fail-safe, not silent corruption: no result is ever fabricated, and
-    // the operator sees QUICK_RESULT_VERSION_CONFLICT on retry and must
-    // Preview again (which reads the true current version) rather than the
-    // retry silently succeeding against stale state or duplicating data.
-    // True atomicity would require a Postgres RPC wrapping the version claim
-    // + submission insert + version-history insert in one transaction — not
-    // implemented here; see PR description.
-    // Use params.expectedVersion (a captured primitive, already asserted
-    // equal to the pre-claim match.version above) rather than re-reading
-    // match.version here — some Supabase client / mock implementations may
-    // return the same row reference across calls, so match.version could
-    // already reflect the post-claim state by this point.
-    await params.client
-      .from('tournament_matches')
-      .update({ version: params.expectedVersion })
-      .eq('id', params.matchId)
-      .eq('version', newVersion);
-    throw new Error(submissionError?.message || 'Failed to create quick result submission');
-  }
-
-  const submissionId = (submissionData as { id: string }).id;
-
-  const { error: versionInsertError } = await params.client.from('tournament_result_versions').insert({
-    submission_id: submissionId,
-    version: 1,
-    payload,
-    changed_by: params.actorUserId,
-  });
-  if (versionInsertError) {
-    // Non-fatal: the submission itself (the actual provisional result) is
-    // already saved and is the source of truth; tournament_result_versions
-    // is supplementary audit history. Same "log and continue" pattern used
-    // by the schedule-import version insert in PR #6.
-    console.error('[QUICK_RESULT] result_versions insert failed:', versionInsertError.message);
-  }
-
   return {
-    submissionId,
-    matchId: params.matchId,
-    matchCode: match.match_code,
-    homeScore,
-    awayScore,
-    previousMatchVersion: params.expectedVersion,
-    newMatchVersion: newVersion,
+    submissionId: result.submissionId,
+    matchId: result.matchId,
+    matchCode: result.matchCode,
+    homeScore: result.homeScore,
+    awayScore: result.awayScore,
+    previousMatchVersion: result.previousMatchVersion,
+    newMatchVersion: result.newMatchVersion,
     status: 'submitted',
-    idempotent: false,
+    idempotent: result.idempotent,
   };
 }
 

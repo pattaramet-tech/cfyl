@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getTournamentServiceClient } from '@/lib/tournament/db/supabase-tournament';
 import { requireTournamentResultOperator } from '@/lib/tournament/services/auth';
-import { logTournamentAdminAction } from '@/lib/tournament/services/audit';
 import {
   previewQuickResult,
   submitQuickResult,
@@ -150,6 +149,12 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     }
     const previewToken = asText(body.preview_token);
 
+    // Single-RPC write boundary (tournament.submit_quick_result, migration
+    // 016): idempotency decision, version claim, submission insert,
+    // result-version insert, and audit log all run inside one Postgres
+    // transaction. There is deliberately no separate logTournamentAdminAction()
+    // call here — a second, decoupled audit write after this returns would
+    // reintroduce the exact non-atomicity this migration fixes.
     const result = (await submitQuickResult({
       client,
       tournamentId,
@@ -165,29 +170,6 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       sessionId: body.session_id ? asText(body.session_id) : null,
       deviceMetadata: (body.device_metadata as Record<string, unknown> | undefined) || null,
     })) as SubmitQuickResultResult;
-
-    if (!result.idempotent) {
-      await logTournamentAdminAction({
-        tournamentId,
-        admin: { id: auth.userId, email: auth.email },
-        action: 'tournament.quick_result.submit',
-        entityType: 'tournament_match',
-        entityId: matchId,
-        entityLabel: result.matchCode,
-        newData: {
-          submission_id: result.submissionId,
-          venue_id: venueId,
-          home_score: result.homeScore,
-          away_score: result.awayScore,
-          idempotency_key: idempotencyKey,
-          previous_match_version: result.previousMatchVersion,
-          new_match_version: result.newMatchVersion,
-          session_id: body.session_id ? asText(body.session_id) : null,
-          device_metadata: body.device_metadata || null,
-          actor_email: auth.email || null,
-        },
-      });
-    }
 
     return NextResponse.json({
       data: {
