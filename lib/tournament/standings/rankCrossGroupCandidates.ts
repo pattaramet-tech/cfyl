@@ -42,6 +42,23 @@ function extractThirdPlaceRows(groupStandings: GroupStandingsResult[]): {
       incompleteGroups.push(group.groupCode);
       continue;
     }
+    // Qualification Cutoff Tie Draw (D-30) gate — SEPARATE from the
+    // isComplete/tieState checks below. A group's displayed 3rd place can be
+    // `tieState === 'resolved'` (H2H/GD/GF/Fair Play successfully ordered
+    // the group for DISPLAY) while its qualifyRankPerGroup cutoff is still
+    // `pending_draw`/`stale_draw` (points-tied across the cutoff, awaiting a
+    // manual draw) — in that case the group's own qualification decision
+    // isn't final yet, so it must not feed a candidate into cross-group
+    // best-third-place ranking. 'resolved' and 'draw_recorded' both mean the
+    // group's own cutoff decision IS final. See
+    // "Deferred Decision: Cross-group qualification after group-cutoff draw"
+    // in TOURNAMENT_V2_DECISION_CHECKLIST.md (D-30) — this PR only gates
+    // readiness here; it never guesses whether a group-cutoff-draw-affected
+    // team becomes a cross-group candidate.
+    if (group.qualificationCutoffState !== 'resolved' && group.qualificationCutoffState !== 'draw_recorded') {
+      incompleteGroups.push(`${group.groupCode} (รอผลจับฉลากตัดสินสิทธิ์เข้ารอบภายในกลุ่ม)`);
+      continue;
+    }
     const thirdPlaceRow = group.rows.find((row) => row.position === 3);
     if (!thirdPlaceRow) {
       incompleteGroups.push(group.groupCode);
