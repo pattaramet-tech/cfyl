@@ -1,11 +1,12 @@
-import { createHmac, timingSafeEqual } from 'crypto';
+import { issueSignedToken, verifySignedToken, type SignedTokenBase } from './signedToken';
 
 // Server-signed, stateless proof that a Quick Result Preview actually
 // happened before Submit — closes the gap where a caller could send
 // `expected_version`/`idempotency_key` directly to Submit without ever
-// calling Preview. No existing signing helper was found in the repo (only
-// Supabase JWT verification via auth.getUser(), which is a different
-// mechanism entirely), so this is a new, narrowly-scoped HMAC token.
+// calling Preview. Built on the generic HMAC helper in signedToken.ts (see
+// that file — this module is now a thin, purpose-specific wrapper so other
+// features, e.g. the Standings Override Preview Token, can reuse the same
+// signing primitive instead of re-implementing HMAC signing/verification).
 //
 // No database migration: the token is entirely self-contained (base64url
 // payload + HMAC-SHA256 signature), verified server-side on every Submit.
@@ -23,7 +24,9 @@ export const QUICK_RESULT_PREVIEW_TOKEN_PURPOSE = 'quick_result_preview_v1';
 // carry a valid (non-conflicting) match version by the time it's used.
 export const QUICK_RESULT_PREVIEW_TOKEN_TTL_MS = 15 * 60 * 1000;
 
-export interface PreviewTokenClaims {
+const SECRET_ENV_VAR = 'TOURNAMENT_QUICK_RESULT_PREVIEW_SECRET';
+
+export interface PreviewTokenClaims extends SignedTokenBase {
   purpose: typeof QUICK_RESULT_PREVIEW_TOKEN_PURPOSE;
   tournamentId: string;
   matchId: string;
@@ -32,8 +35,6 @@ export interface PreviewTokenClaims {
   awayScore: number;
   matchVersion: number;
   actorUserId: string | null;
-  issuedAt: number;
-  expiresAt: number;
 }
 
 export type IssuePreviewTokenParams = Omit<PreviewTokenClaims, 'purpose' | 'issuedAt' | 'expiresAt'>;
@@ -43,29 +44,12 @@ export interface IssuedPreviewToken {
   expiresAt: string;
 }
 
-function getSecret(): string {
-  const secret = process.env.TOURNAMENT_QUICK_RESULT_PREVIEW_SECRET;
-  if (!secret) {
-    throw new Error('[QUICK_RESULT_PREVIEW] Missing TOURNAMENT_QUICK_RESULT_PREVIEW_SECRET');
-  }
-  return secret;
-}
-
-function sign(payload: string, secret: string): string {
-  return createHmac('sha256', secret).update(payload).digest('base64url');
-}
-
 export function issuePreviewToken(claims: IssuePreviewTokenParams): IssuedPreviewToken {
-  const now = Date.now();
-  const full: PreviewTokenClaims = {
-    ...claims,
-    purpose: QUICK_RESULT_PREVIEW_TOKEN_PURPOSE,
-    issuedAt: now,
-    expiresAt: now + QUICK_RESULT_PREVIEW_TOKEN_TTL_MS,
-  };
-  const payload = Buffer.from(JSON.stringify(full), 'utf-8').toString('base64url');
-  const signature = sign(payload, getSecret());
-  return { token: `${payload}.${signature}`, expiresAt: new Date(full.expiresAt).toISOString() };
+  return issueSignedToken<PreviewTokenClaims>({
+    claims: { ...claims, purpose: QUICK_RESULT_PREVIEW_TOKEN_PURPOSE },
+    ttlMs: QUICK_RESULT_PREVIEW_TOKEN_TTL_MS,
+    secretEnvVar: SECRET_ENV_VAR,
+  });
 }
 
 export type PreviewTokenVerificationCode = 'QUICK_RESULT_PREVIEW_INVALID' | 'QUICK_RESULT_PREVIEW_EXPIRED';
@@ -79,39 +63,14 @@ export type PreviewTokenVerification =
  * themselves against the live request (see QUICK_RESULT_PREVIEW_MISMATCH in
  * lib/tournament/services/quickResult.ts). */
 export function verifyPreviewToken(token: string): PreviewTokenVerification {
-  const parts = token.split('.');
-  if (parts.length !== 2 || !parts[0] || !parts[1]) {
-    return { ok: false, code: 'QUICK_RESULT_PREVIEW_INVALID' };
-  }
-  const [payload, signature] = parts;
-
-  let secret: string;
-  try {
-    secret = getSecret();
-  } catch {
-    return { ok: false, code: 'QUICK_RESULT_PREVIEW_INVALID' };
-  }
-
-  const expectedSignature = sign(payload, secret);
-  const providedBuffer = Buffer.from(signature, 'utf-8');
-  const expectedBuffer = Buffer.from(expectedSignature, 'utf-8');
-  if (providedBuffer.length !== expectedBuffer.length || !timingSafeEqual(providedBuffer, expectedBuffer)) {
-    return { ok: false, code: 'QUICK_RESULT_PREVIEW_INVALID' };
-  }
-
-  let claims: PreviewTokenClaims;
-  try {
-    claims = JSON.parse(Buffer.from(payload, 'base64url').toString('utf-8')) as PreviewTokenClaims;
-  } catch {
-    return { ok: false, code: 'QUICK_RESULT_PREVIEW_INVALID' };
-  }
-
-  if (claims.purpose !== QUICK_RESULT_PREVIEW_TOKEN_PURPOSE) {
-    return { ok: false, code: 'QUICK_RESULT_PREVIEW_INVALID' };
-  }
-  if (Date.now() > claims.expiresAt) {
-    return { ok: false, code: 'QUICK_RESULT_PREVIEW_EXPIRED' };
-  }
-
-  return { ok: true, claims };
+  const result = verifySignedToken<PreviewTokenClaims>({
+    token,
+    purpose: QUICK_RESULT_PREVIEW_TOKEN_PURPOSE,
+    secretEnvVar: SECRET_ENV_VAR,
+  });
+  if (result.ok) return result;
+  return {
+    ok: false,
+    code: result.code === 'EXPIRED' ? 'QUICK_RESULT_PREVIEW_EXPIRED' : 'QUICK_RESULT_PREVIEW_INVALID',
+  };
 }

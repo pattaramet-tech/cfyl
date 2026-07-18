@@ -44,6 +44,7 @@ interface DrawState {
   category_id: string;
   active_draw_id: string | null;
   candidate_options: CandidateOption[];
+  candidates_incomplete_reason: string | null;
   placeholder_source_refs: string[];
   versions: DrawVersion[];
 }
@@ -343,7 +344,13 @@ export default function QualificationDrawPage() {
         </div>
       )}
 
-      {drawState && drawState.placeholder_source_refs.length > 0 && (
+      {drawState && drawState.placeholder_source_refs.length > 0 && drawState.candidates_incomplete_reason && (
+        <div className="rounded-lg border-l-4 border-orange-500 bg-orange-50 px-4 py-3 text-orange-900">
+          {drawState.candidates_incomplete_reason}
+        </div>
+      )}
+
+      {drawState && drawState.placeholder_source_refs.length > 0 && !drawState.candidates_incomplete_reason && (
         <>
           {activeVersion && (
             <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">

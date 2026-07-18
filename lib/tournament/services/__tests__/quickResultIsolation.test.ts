@@ -89,12 +89,22 @@ describe('Quick Result — public and downstream isolation (source-level)', () =
   });
 
   it('the preview token secret is read lazily, never at module load, so a missing secret cannot break build-time page compilation', () => {
-    const source = readSource('lib/tournament/services/previewToken.ts');
+    // previewToken.ts itself no longer reads process.env directly — it
+    // delegates to the shared signedToken.ts helper (extracted so the
+    // Standings Override Preview Token can reuse the same HMAC primitive).
+    // The lazy-read guarantee now lives in signedToken.ts; previewToken.ts
+    // must not reintroduce any top-level/eager secret read of its own.
+    const wrapperSource = readSource('lib/tournament/services/previewToken.ts');
+    expect(wrapperSource).not.toMatch(/^const secret = process\.env/m);
+    expect(wrapperSource).not.toMatch(/^if \(!.*secret.*\) throw/m);
+    expect(wrapperSource).not.toContain('process.env');
+
+    const helperSource = readSource('lib/tournament/services/signedToken.ts');
     // getSecret() must be called from inside functions (issue/verify), not
     // as a top-level `if (!secret) throw` at module scope.
-    expect(source).not.toMatch(/^const secret = process\.env/m);
-    expect(source).not.toMatch(/^if \(!.*secret.*\) throw/m);
-    expect(source).toContain('function getSecret()');
+    expect(helperSource).not.toMatch(/^const secret = process\.env/m);
+    expect(helperSource).not.toMatch(/^if \(!.*secret.*\) throw/m);
+    expect(helperSource).toContain('function getSecret(');
   });
 });
 

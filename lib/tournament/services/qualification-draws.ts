@@ -5,15 +5,21 @@ import {
   type DrawSelectedAssignmentInput,
 } from '@/lib/tournament/scheduling/drawSelected';
 import { getTournamentServiceClient } from '@/lib/tournament/db/supabase-tournament';
+import { G16_INCOMPLETE_MESSAGE, getG16ThirdPlaceCandidates } from '@/lib/tournament/services/standings';
 
-// NOTE: The Tournament V2 Standings Engine is not implemented yet. This
-// service therefore does NOT calculate group standings or infer third-place
-// rank from match results. The physical draw for G-U16 third-place
+// The physical draw for G-U16 (and any other 'draw' method) third-place
 // qualification is conducted on paper at the venue; this service only
 // records what an authorized tournament_super_admin manually confirms
 // afterward — both the three eligible candidate teams and the two selected
 // results. See TOURNAMENT_V2_SCHEDULING_AND_IMPORT.md §D-29 and the
 // "Manual Qualification Placeholder Assignment" feature notes in PR #7.
+//
+// CANDIDATE SOURCE: the THREE ELIGIBLE candidates come from the Tournament
+// V2 Standings Engine (lib/tournament/services/standings.ts,
+// getG16ThirdPlaceCandidates), never from "all teams in category". If
+// Standings are incomplete/unpublished, no candidates are offered and the
+// caller must show G16_INCOMPLETE_MESSAGE — there is no silent fallback to
+// all teams in category in normal production behavior.
 //
 // WRITE PATH: saveQualificationDrawSelections() performs exactly one
 // client.rpc('save_qualification_draw_assignment', ...) call — migration 015
@@ -22,9 +28,10 @@ import { getTournamentServiceClient } from '@/lib/tournament/db/supabase-tournam
 // affected Matches, and write the audit log run inside that single Postgres
 // transaction; the RPC is the sole write boundary and the sole source of
 // truth for validation. The TS-side pre-validation below (candidate/
-// assignment checks, reusing the same helpers Preview uses) exists only for
-// fast user feedback without a network round trip — it is never trusted for
-// correctness, and the RPC re-validates everything from scratch.
+// assignment checks, reusing the same helpers Preview uses, plus the
+// Standings-match assertion) exists only for fast user feedback without a
+// network round trip — it is never trusted for correctness, and the RPC
+// re-validates everything from scratch.
 
 type TournamentClient = ReturnType<typeof getTournamentServiceClient>;
 
@@ -90,6 +97,7 @@ export interface QualificationDrawStateResult {
   categoryId: string;
   activeDrawId: string | null;
   candidateOptions: CandidateOption[];
+  candidatesIncompleteReason: string | null;
   placeholderSourceRefs: string[];
   versions: DrawVersionSummary[];
 }
@@ -156,6 +164,38 @@ async function resolveActiveDrawId(params: {
   return (data?.id as string | undefined) || null;
 }
 
+/**
+ * Defense-in-depth: even though the UI dropdown is already sourced from the
+ * Standings Engine (see getQualificationDrawState), the write path
+ * (preview/save) independently re-verifies that the submitted candidates are
+ * EXACTLY the Standings-computed eligible set — never a caller-supplied
+ * substitute. Throws (never silently substitutes "all teams") if Standings
+ * are incomplete or the submitted set doesn't match.
+ */
+async function assertCandidatesMatchStandings(params: {
+  client: TournamentClient;
+  tournamentId: string;
+  categoryCode: string;
+  candidateTeamIds: string[];
+}): Promise<void> {
+  const g16Candidates = await getG16ThirdPlaceCandidates({
+    client: params.client,
+    tournamentId: params.tournamentId,
+    categoryCode: params.categoryCode,
+  });
+  if (!g16Candidates.isComplete) {
+    throw new Error(g16Candidates.incompleteReason || MANUAL_CANDIDATE_CONFIRMATION_MARKER);
+  }
+  const standingsTeamIds = new Set(g16Candidates.candidates.map((c) => c.teamId));
+  const submittedTeamIds = new Set(params.candidateTeamIds.map((id) => id.trim()));
+  const matches =
+    standingsTeamIds.size === submittedTeamIds.size &&
+    [...standingsTeamIds].every((id) => submittedTeamIds.has(id));
+  if (!matches) {
+    throw new Error('candidate teams do not match the Standings Engine eligible third-place teams');
+  }
+}
+
 export async function getQualificationDrawState(params: {
   client: TournamentClient;
   tournamentId: string;
@@ -213,11 +253,29 @@ export async function getQualificationDrawState(params: {
     (team) => team.category_id === category.id
   );
   const teamsById = new Map(teamsInCategory.map((team) => [team.id, team]));
-  const candidateOptions: CandidateOption[] = teamsInCategory.map((team) => ({
-    teamId: team.id,
-    teamCode: team.team_code,
-    teamName: team.name,
-  }));
+
+  // Candidate source: the Standings Engine's exactly-three eligible
+  // third-place teams — never "all teams in category". If a category has no
+  // draw-method placeholders configured, there is nothing to source
+  // candidates for at all.
+  let candidateOptions: CandidateOption[] = [];
+  let candidatesIncompleteReason: string | null = null;
+  if (placeholderConfigs.length > 0) {
+    const g16Candidates = await getG16ThirdPlaceCandidates({
+      client: params.client,
+      tournamentId: params.tournamentId,
+      categoryCode,
+    });
+    if (g16Candidates.isComplete) {
+      candidateOptions = g16Candidates.candidates.map((candidate) => ({
+        teamId: candidate.teamId,
+        teamCode: candidate.teamCode,
+        teamName: candidate.teamName,
+      }));
+    } else {
+      candidatesIncompleteReason = G16_INCOMPLETE_MESSAGE;
+    }
+  }
 
   const draws = ((drawsResult.data || []) as DrawRow[]).filter((draw) => draw.category_id === category.id);
   const drawIds = draws.map((draw) => draw.id);
@@ -263,6 +321,7 @@ export async function getQualificationDrawState(params: {
     categoryId: category.id,
     activeDrawId,
     candidateOptions,
+    candidatesIncompleteReason,
     placeholderSourceRefs: placeholderConfigs.map((config) => config.sourceRef),
     versions,
   };
@@ -371,6 +430,12 @@ export async function previewQualificationDrawSelections(params: {
     teamsInCategory: teamsInCategoryIds,
   });
   if (candidateErrors.length > 0) throw new Error(candidateErrors[0]);
+  await assertCandidatesMatchStandings({
+    client: params.client,
+    tournamentId: params.tournamentId,
+    categoryCode,
+    candidateTeamIds: params.candidateTeamIds,
+  });
   const eligibleTeamIds = new Set(params.candidateTeamIds.map((id) => id.trim()));
 
   const assignmentErrors = validateDrawSelectedAssignments({
@@ -509,6 +574,12 @@ export async function saveQualificationDrawSelections(
   if (candidateErrors.length > 0) {
     throw new Error(candidateErrors[0]);
   }
+  await assertCandidatesMatchStandings({
+    client: params.client,
+    tournamentId: params.tournamentId,
+    categoryCode,
+    candidateTeamIds: params.candidateTeamIds,
+  });
   const candidateTeamIds = params.candidateTeamIds.map((id) => id.trim());
   const eligibleTeamIds = new Set(candidateTeamIds);
 

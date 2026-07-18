@@ -87,6 +87,9 @@ function isValidationErrorMessage(message: string): boolean {
     'QUALIFICATION_DRAW_UNKNOWN_ASSIGNMENT_REF',
     'QUALIFICATION_DRAW_ASSIGNMENT_NOT_CANDIDATE',
     'QUALIFICATION_DRAW_DUPLICATE_ASSIGNMENT_TEAM',
+    'candidate teams do not match the Standings Engine',
+    'ยังไม่สามารถระบุทีมอันดับ 3 ได้',
+    'กลุ่มที่ยังไม่พร้อม',
   ].some((needle) => message.includes(needle));
 }
 
@@ -139,6 +142,7 @@ export async function GET(request: NextRequest) {
           team_code: option.teamCode,
           team_name: option.teamName,
         })),
+        candidates_incomplete_reason: state.candidatesIncompleteReason,
         placeholder_source_refs: state.placeholderSourceRefs,
         versions: state.versions.map((version) => ({
           draw_id: version.drawId,
