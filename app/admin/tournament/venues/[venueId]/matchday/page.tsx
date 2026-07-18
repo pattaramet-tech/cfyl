@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { useEffect, useMemo, useState, use as usePromise } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { clearLocalDraft, loadLocalDraft, saveLocalDraft } from '@/lib/tournament/services/localDraft';
@@ -517,6 +518,17 @@ export default function VenueMatchdayPage({ params }: { params: Promise<{ venueI
             <div className="mt-1 text-sm text-slate-500">
               {selectedMatch.category_code} · สนามนี้ · {selectedMatch.match_time || '—'}
             </div>
+
+            <Link
+              href={`/admin/tournament/matches/${selectedMatch.match_id}/report?tournament_slug=${tournamentSlug}&venue_id=${venueId}`}
+              className="mt-3 flex items-center justify-between rounded-lg border border-blue-300 bg-blue-50 px-3 py-2.5 text-sm font-semibold text-blue-800 hover:bg-blue-100"
+            >
+              <span>เปิดรายงานผลการแข่งขันฉบับสมบูรณ์</span>
+              <span aria-hidden="true">→</span>
+            </Link>
+            <p className="mt-1 text-xs text-slate-500">
+              ผลด่วนจากหน้างานเป็นข้อมูลอ้างอิงเบื้องต้นเท่านั้น — ผลการแข่งขันอย่างเป็นทางการต้องบันทึกผ่านรายงานผลฉบับสมบูรณ์
+            </p>
 
             {!selectedMatch.eligible ? (
               <div className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-sm font-semibold text-red-700">
