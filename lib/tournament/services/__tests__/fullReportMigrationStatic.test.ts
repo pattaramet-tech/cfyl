@@ -3,22 +3,27 @@ import { readFileSync } from 'fs';
 import { join } from 'path';
 
 // Static/textual review of Migration 014 — the atomic Official Publish RPC.
-// Per task instructions, this migration is a DRAFT: reviewed statically
-// only, never applied to any environment (Staging or Production) during
-// this PR. These tests prove structural properties of the SQL source text;
-// they do NOT prove the function actually executes correctly against a
-// live Postgres instance — that would require applying it to an isolated,
-// disposable database, which was not done here (see the PR's final report).
-
+// These tests prove structural properties of the SQL source text; they do
+// NOT prove the function actually executes correctly against a live
+// Postgres instance — that is proven separately by
+// scripts/tournament-v2/verify-full-report-runtime.ts, which the owner has
+// since run against CFYL-Tournament-Staging (all 10 scenarios passed — see
+// scripts/tournament-v2/README.md "Migration 014 runtime verification").
+//
+// readSource() strips \r so these \n-anchored regexes are correct
+// regardless of the checking-out machine's line-ending settings
+// (Windows core.autocrlf=true converts LF -> CRLF on checkout, which would
+// otherwise silently break every literal \n pattern below without
+// reflecting any real change to the SQL/doc content itself).
 const repoRoot = join(__dirname, '..', '..', '..', '..');
 
 function readSource(relativePath: string): string {
-  return readFileSync(join(repoRoot, relativePath), 'utf-8');
+  return readFileSync(join(repoRoot, relativePath), 'utf-8').replace(/\r\n/g, '\n');
 }
 
 const MIGRATION_PATH = 'scripts/tournament-v2/014-full-result-publish-transaction.sql';
 
-describe('Migration 014 — static structural review (draft, not applied)', () => {
+describe('Migration 014 — static structural review', () => {
   it('defines the tournament.publish_full_match_report function', () => {
     const source = readSource(MIGRATION_PATH);
     expect(source).toMatch(/create or replace function tournament\.publish_full_match_report\(/);
@@ -212,9 +217,14 @@ describe('README migration run order', () => {
     expect(index014).toBeGreaterThan(index013);
   });
 
-  it('states that 012/013/014 have not been applied during this task and Staging comes before Production', () => {
+  it('states that Migration 014 is applied to Staging, not Production, and documents the Staging-first policy', () => {
     const source = readSource('scripts/tournament-v2/README.md');
     expect(source.toLowerCase()).toMatch(/staging/);
-    expect(source).toMatch(/not (been )?applied/i);
+    expect(source).toMatch(/CFYL-Tournament-Staging/);
+    expect(source).toMatch(/Migration 014 is\s+(also\s+)?applied to\s*`?CFYL-Tournament-Staging/);
+    // Production must never be silently reported as done — "None of ... have
+    // been applied to Production" is this doc's own established phrasing for
+    // that (see the identical construction already used for 001–013b above).
+    expect(source).toMatch(/None of 001.*have been applied\s*\n?\s*to Production/);
   });
 });
