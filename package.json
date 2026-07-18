@@ -18,7 +18,8 @@
     "verify:tournament-qualification-draw-runtime": "ts-node -r ./scripts/tournament-v2/register-path-alias.js -P scripts/tournament-v2/tsconfig.verify.json scripts/tournament-v2/verify-qualification-draw-runtime.ts",
     "verify:tournament-quick-result-runtime": "ts-node -r ./scripts/tournament-v2/register-path-alias.js -P scripts/tournament-v2/tsconfig.verify.json scripts/tournament-v2/verify-quick-result-runtime.ts",
     "verify:tournament-standings-override-runtime": "ts-node -r ./scripts/tournament-v2/register-path-alias.js -P scripts/tournament-v2/tsconfig.verify.json scripts/tournament-v2/verify-standings-override-runtime.ts",
-    "verify:tournament-full-report-runtime": "ts-node -r ./scripts/tournament-v2/register-path-alias.js -P scripts/tournament-v2/tsconfig.verify.json scripts/tournament-v2/verify-full-report-runtime.ts"
+    "verify:tournament-full-report-runtime": "ts-node -r ./scripts/tournament-v2/register-path-alias.js -P scripts/tournament-v2/tsconfig.verify.json scripts/tournament-v2/verify-full-report-runtime.ts",
+    "verify:tournament-result-correction-runtime": "ts-node -r ./scripts/tournament-v2/register-path-alias.js -P scripts/tournament-v2/tsconfig.verify.json scripts/tournament-v2/verify-result-correction-runtime.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.108.2",

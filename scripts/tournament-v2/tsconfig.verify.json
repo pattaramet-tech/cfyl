@@ -19,6 +19,7 @@
     "./verify-qualification-draw-runtime.ts",
     "./verify-quick-result-runtime.ts",
     "./verify-full-report-runtime.ts",
+    "./verify-result-correction-runtime.ts",
     "../../lib/tournament/db/**/*.ts",
     "../../lib/tournament/services/qualification-draws.ts",
     "../../lib/tournament/services/audit.ts",
