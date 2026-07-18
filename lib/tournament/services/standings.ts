@@ -7,6 +7,7 @@ import {
   rankBestThirdPlacedTeams,
 } from '@/lib/tournament/standings/rankCrossGroupCandidates';
 import type { BestThirdPlacedRankingResult, G16ThirdPlaceCandidatesResult, GroupStandingsResult, OfficialMatchResult } from '@/lib/tournament/standings/types';
+import { buildOfficialResultRevision, type ExistingQualificationDrawInput } from '@/lib/tournament/standings/resolveQualificationCutoff';
 
 // Data-loading layer for the Tournament V2 Standings Engine. This module is
 // the ONLY place that queries Supabase for standings input — it enforces the
@@ -55,6 +56,7 @@ interface MatchRow {
   status: string;
   result_workflow_status: string;
   deleted_at: string | null;
+  version: number;
 }
 
 interface CardRow {
@@ -136,12 +138,16 @@ async function loadCategoryContext(params: { client: TournamentClient; tournamen
 
 async function loadGroupMatchesAndCards(params: { client: TournamentClient; tournamentId: string; groupIds: string[] }) {
   if (params.groupIds.length === 0) {
-    return { officialMatchesByGroup: new Map<string, OfficialMatchResult[]>(), cardsByGroup: new Map<string, RawCardRow[]>() };
+    return {
+      officialMatchesByGroup: new Map<string, OfficialMatchResult[]>(),
+      cardsByGroup: new Map<string, RawCardRow[]>(),
+      officialResultRevisionByGroup: new Map<string, string>(),
+    };
   }
 
   const matchesResult = await params.client
     .from('tournament_matches')
-    .select('id, group_id, category_id, home_team_id, away_team_id, regulation_home_score, regulation_away_score, winner_team_id, decided_by, status, result_workflow_status, deleted_at')
+    .select('id, group_id, category_id, home_team_id, away_team_id, regulation_home_score, regulation_away_score, winner_team_id, decided_by, status, result_workflow_status, deleted_at, version')
     .in('group_id', params.groupIds);
   if (matchesResult.error) throw new Error(matchesResult.error.message);
 
@@ -187,7 +193,27 @@ async function loadGroupMatchesAndCards(params: { client: TournamentClient; tour
     cardsByGroup.set(groupId, list);
   }
 
-  return { officialMatchesByGroup, cardsByGroup };
+  // Qualification Cutoff Tie Draw (D-30) resurrection-safety fingerprint —
+  // see resolveQualificationCutoff.ts buildOfficialResultRevision(). Built
+  // from the SAME official-match rows already loaded above, grouped by
+  // group_id, using each match's (id, version) — version is the existing
+  // optimistic-lock column every publish/correction RPC already increments,
+  // so this can never repeat once any official match in the group has been
+  // revised again, even if the derived points/candidate pool coincidentally
+  // reverts to an earlier state.
+  const matchIdsAndVersionsByGroup = new Map<string, { matchId: string; version: number }[]>();
+  for (const match of officialMatches) {
+    if (!match.group_id) continue;
+    const list = matchIdsAndVersionsByGroup.get(match.group_id) || [];
+    list.push({ matchId: match.id, version: match.version });
+    matchIdsAndVersionsByGroup.set(match.group_id, list);
+  }
+  const officialResultRevisionByGroup = new Map<string, string>();
+  for (const [groupId, entries] of matchIdsAndVersionsByGroup) {
+    officialResultRevisionByGroup.set(groupId, buildOfficialResultRevision(entries));
+  }
+
+  return { officialMatchesByGroup, cardsByGroup, officialResultRevisionByGroup };
 }
 
 async function loadOverridesByGroup(params: { client: TournamentClient; groupIds: string[] }) {
@@ -206,6 +232,61 @@ async function loadOverridesByGroup(params: { client: TournamentClient; groupIds
     overridesByGroup.set(row.group_id, list);
   }
   return overridesByGroup;
+}
+
+interface QualificationCutoffDrawRow {
+  group_id: string;
+  candidate_snapshot: string;
+}
+
+interface QualificationCutoffDrawCandidateRow {
+  draw_id: string;
+  team_id: string;
+  is_selected: boolean;
+}
+
+/** Loads the currently active (non-superseded) Qualification Cutoff Tie
+ * Draw (D-30, Migration 019) for each group, if one exists — used so
+ * calculateGroupStandings can resolve a recorded draw's result into
+ * qualificationStatus, exactly like tournament_standing_overrides already
+ * does for display ordering. Never falls back to a superseded/stale row —
+ * only `superseded_at is null`. */
+async function loadActiveCutoffDrawsByGroup(params: { client: TournamentClient; groupIds: string[] }) {
+  const byGroup = new Map<string, ExistingQualificationDrawInput>();
+  if (params.groupIds.length === 0) return byGroup;
+
+  const drawsResult = await params.client
+    .from('tournament_qualification_cutoff_draws')
+    .select('id, group_id, candidate_snapshot')
+    .in('group_id', params.groupIds)
+    .is('superseded_at', null);
+  if (drawsResult.error) throw new Error(drawsResult.error.message);
+
+  const draws = (drawsResult.data || []) as (QualificationCutoffDrawRow & { id: string })[];
+  if (draws.length === 0) return byGroup;
+
+  const drawIds = draws.map((d) => d.id);
+  const candidatesResult = await params.client
+    .from('tournament_qualification_cutoff_draw_candidates')
+    .select('draw_id, team_id, is_selected')
+    .in('draw_id', drawIds);
+  if (candidatesResult.error) throw new Error(candidatesResult.error.message);
+
+  const selectedByDrawId = new Map<string, string[]>();
+  for (const candidate of (candidatesResult.data || []) as QualificationCutoffDrawCandidateRow[]) {
+    if (!candidate.is_selected) continue;
+    const list = selectedByDrawId.get(candidate.draw_id) || [];
+    list.push(candidate.team_id);
+    selectedByDrawId.set(candidate.draw_id, list);
+  }
+
+  for (const draw of draws) {
+    byGroup.set(draw.group_id, {
+      selectedTeamIds: selectedByDrawId.get(draw.id) || [],
+      candidateSnapshot: draw.candidate_snapshot,
+    });
+  }
+  return byGroup;
 }
 
 export interface CategoryStandingsResult {
@@ -231,9 +312,10 @@ export async function getCategoryStandings(params: {
   const { category, groups, qualificationRule, teams } = await loadCategoryContext(params);
   const groupIds = groups.map((g) => g.id);
 
-  const [{ officialMatchesByGroup, cardsByGroup }, overridesByGroup, groupMembersResult] = await Promise.all([
+  const [{ officialMatchesByGroup, cardsByGroup, officialResultRevisionByGroup }, overridesByGroup, cutoffDrawsByGroup, groupMembersResult] = await Promise.all([
     loadGroupMatchesAndCards({ client: params.client, tournamentId: params.tournamentId, groupIds }),
     loadOverridesByGroup({ client: params.client, groupIds }),
+    loadActiveCutoffDrawsByGroup({ client: params.client, groupIds }),
     params.client.from('tournament_group_members').select('group_id, team_id').in('group_id', groupIds.length > 0 ? groupIds : ['00000000-0000-0000-0000-000000000000']),
   ]);
   if (groupMembersResult.error) throw new Error(groupMembersResult.error.message);
@@ -265,6 +347,8 @@ export async function getCategoryStandings(params: {
       overrides: overridesByGroup.get(group.id) || [],
       qualifyRankPerGroup: qualificationRule.qualify_rank_per_group,
       bestThirdPlacedEligible,
+      existingCutoffDraw: cutoffDrawsByGroup.get(group.id) || null,
+      officialResultRevision: officialResultRevisionByGroup.get(group.id) || '',
     };
     return calculateGroupStandings(calcParams);
   });

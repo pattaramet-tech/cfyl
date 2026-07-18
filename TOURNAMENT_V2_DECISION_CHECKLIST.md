@@ -55,6 +55,7 @@
 | D-28 | Published Schedule Revision Workflow (Auto-downgrade Schedule Status) | ✅ DECIDED (2026-07-15) | (b) ต้องมีคนกดยืนยันก่อนถึงจะ Downgrade `published` → `revision_required` | Phase 4b, Phase 4c ปลดล็อก |
 | D-26 | จำนวน Version ย้อนหลังของ Schedule | 🟢 Can Defer | ไม่จำกัด | ไม่ Block งานใด |
 | D-29 | G-U16 Third-place Qualification by Draw | ✅ DECIDED (2026-07-14) | จับฉลากเลือก 2 จาก 3 ทีมอันดับ 3 เข้ารอบ 8 ทีม (ไม่ใช้คะแนน/GD/GF) | Phase 6/Phase 7 — เฉพาะ Category G-U16 |
+| D-30 | Qualification Cutoff Tie Draw within Group | ✅ DECIDED (2026-07-18) | Tie Cluster คร่อมเส้นโควตาภายในกลุ่ม → จับฉลากเสมอ (ไม่ใช้ H2H/GD/GF/Fair Play/FIFA); Cross-group เป็น Deferred Decision แยก | Phase 6 — ทุก Category ที่มี Tie Cluster คร่อมเส้น |
 | Q27 | Full Auto Scheduler ใน MVP รอบนี้ | ⚪ RESOLVED | ไม่ทำใน MVP (เก็บไว้เป็น Future Phase) | — (ปิดแล้ว) |
 
 ---
@@ -232,6 +233,27 @@
 - **Phase ที่ถูก Block/ปลดล็อก**: Phase 6 (Standings/Qualification Engine), Phase 7 (Knockout Structure Generation) — เฉพาะ Category G-U16 เท่านั้น Category อื่นยังใช้กติกาทั่วไปของ D-07
 - **Owner ที่ตัดสินใจ**: เจ้าของระบบ
 - **Final Decision Date**: 2026-07-14
+
+---
+
+## D-30. Qualification Cutoff Tie Draw within Group (Decision ใหม่ — ไม่ใช่ Override ของ D-07/D-29)
+
+- **คำถาม**: เมื่อหลายทีมภายในกลุ่มเดียวกันคะแนนเท่ากัน และ Tie Cluster นั้นคร่อมเส้นโควตาเข้ารอบอัตโนมัติ (`qualify_rank_per_group`) จะตัดสินสิทธิ์เข้ารอบด้วยวิธีใด?
+- **เหตุผลที่ต้องตัดสินใจ**: D-09 กำหนดลำดับ Tiebreak (H2H → GD → GF → Fair Play → Draw) ไว้สำหรับ**การจัดอันดับแสดงผล**เท่านั้น แต่เจ้าของระบบสั่งชัดเจนในรอบนี้ว่า**สิทธิ์เข้ารอบ**เมื่อคะแนนเท่ากันตรงเส้นโควตา **ห้ามใช้เกณฑ์เดียวกันนั้นตัดสิน** — ต้องจับฉลากจริงเสมอ ไม่ว่า H2H/GD/GF/Fair Play จะแยกอันดับแสดงผลได้หรือไม่ก็ตาม ทีม Audit จึงต้องแยก Concept "Standings Ordering" ออกจาก "Qualification Decision" อย่างชัดเจน ไม่ปะปนกัน
+- **Final Decision**:
+  - **Standings Ordering ไม่เปลี่ยน**: `resolveTournamentTiebreak()`/`calculateGroupStandings()` ยังคงเรียงลำดับทีมด้วยกติกา D-09 เดิมเพื่อการแสดงผล (`position`, `tiebreakExplanation`, `tieState`)
+  - **Qualification Decision แยกเป็น Pure Logic ใหม่**: `resolveQualificationCutoff()` (`lib/tournament/standings/resolveQualificationCutoff.ts`) ตัดสินสิทธิ์เข้ารอบจาก**คะแนนเท่านั้น** — หา Tie Cluster ที่คร่อมเส้นโควตา แล้วคืนค่า `automaticQualifiers` / `automaticEliminated` / `drawCandidates` / `availableSlots` — **ไม่เคยเลือกทีมเอง**
+  - **ห้ามใช้เกณฑ์ต่อไปนี้ตัดสินสิทธิ์เข้ารอบจาก Tie Cluster ที่คร่อมเส้น**: Head-to-head, Head-to-head Goal Difference, Head-to-head Goals For, ผลต่างประตูรวม, ประตูได้รวม, Fair Play, FIFA Ranking หรือเกณฑ์ FIFA อื่นใด — Software ไม่มีฟังก์ชันสุ่มเช่นกัน
+  - **Manual Draw Workflow**: Candidate Pool จาก Standings ล่าสุด (Published Official Results เท่านั้น) → Admin จับฉลากจริงที่หน้างาน → บันทึกผลผ่าน Mandatory Preview → Confirm → Atomic Save (Migration 019, `tournament.save_qualification_cutoff_draw`) — `tournament_super_admin` เท่านั้น
+  - **Stale Draw**: เมื่อ Official Result เปลี่ยน (Full Match Report Publish หรือ Score Correction) Candidate Pool ต้องคำนวณใหม่ และ Draw เดิมที่บันทึกไว้ต้องไม่ถูกใช้ต่ออัตโนมัติ (`qualificationState: 'stale_draw'`) — Quick Result **ไม่**เปลี่ยน Candidate Pool เพราะไม่ใช่ Published Official Result
+  - **Stale-detection ต้องกันการ "ฟื้นคืนชีพ" ของ Draw เก่า (Addendum, 2026-07-18, Migration 020)**: ตรวจพบจาก Runtime Verification บน Staging ว่า `candidate_snapshot` เดิม (v1, Migration 019) เก็บเฉพาะ Candidate ID Set + `available_slots` — ถ้า Official Result ถูกแก้ไขจน Tie Cluster หายไป (`resolved`) แล้วถูกแก้ไขอีกครั้งจน Candidate ID Set กลับมาตรงกับเดิมทุกตัวอักษร ระบบจะคำนวณ `candidate_snapshot` เดิมซ้ำได้ ทำให้ Draw เก่า (ที่บันทึกไว้ก่อนการแก้ไขรอบหลัง และยังไม่เคย Superseded เพราะไม่มีการจับฉลากใหม่ระหว่างช่วง `resolved`) ถูกนำกลับมาใช้เป็น `draw_recorded` โดยไม่มีการจับฉลากใหม่จริง — ถือเป็น **Core Stale-detection Bug** — **แก้โดยผนวก Official Result Revision Fingerprint** (สร้างจาก `tournament_matches.version` ของทุก Official Match ในกลุ่ม, รูปแบบ `matchId:version` เรียงและต่อกัน) เข้าไปใน `candidate_snapshot` (รูปแบบใหม่ v2: `v2|slots=...|candidates=...|rev=...`) — การแก้ไข Official Result ครั้งใดก็ตาม (แม้ผลลัพธ์สุดท้ายจะเหมือนเดิม) จะทำให้ Fingerprint เปลี่ยนเสมอ จึงไม่มีทาง Byte-match กับ Draw ที่บันทึกไว้ก่อนหน้าการแก้ไขนั้นได้อีก — ดู `buildOfficialResultRevision()` ใน `lib/tournament/standings/resolveQualificationCutoff.ts` และ Migration 020 (`020-qualification-cutoff-draw-resurrection-fix.sql`, `CREATE OR REPLACE FUNCTION` เท่านั้น ไม่แก้ Migration 019 ย้อนหลัง)
+  - **Standings Override ไม่ใช่ Qualification Draw**: `tournament_standing_overrides` อาจเปลี่ยนลำดับแสดงผล แต่ไม่มีผลต่อ Candidate Pool/สิทธิ์เข้ารอบ (คนละ Concept)
+- **การจัดเก็บข้อมูล**: ตารางใหม่ 2 ตาราง — `tournament_qualification_cutoff_draws` / `tournament_qualification_cutoff_draw_candidates` (Data Model §2.14c) — **แยกจาก** `tournament_qualification_draws`/`tournament_qualification_draw_candidates` เดิมของ D-29 (G-U16 ข้ามกลุ่ม) เพราะพิสูจน์จาก Source แล้วว่า Unique Index เดิมของตารางนั้น (`uniq_tqualdraw_active_category_slot` จาก Migration 012, คีย์ `(category_id, qualification_slot)`) ไม่รองรับ "1 Draw Active ต่อกลุ่ม" เมื่อหมวดเดียวกันมีหลายกลุ่มพร้อมกัน — ดู Header Comment ของ Migration 019 สำหรับรายละเอียดการพิสูจน์
+- **Cross-group Best-third-place เป็น Deferred Decision แยกต่างหาก**: PR นี้**ไม่เปลี่ยน**กติกา D-07/D-29 ข้ามกลุ่ม — หากอันดับ 3 ภายในกลุ่มอยู่ใน Tie Cluster ที่คร่อม Cutoff ของกลุ่มนั้นเอง ต้องถือว่ากลุ่มยังไม่พร้อมสำหรับการจัดอันดับข้ามกลุ่ม (`rankCrossGroupCandidates.ts` gate ด้วย `qualificationCutoffState`) จนกว่า Group Cutoff Draw จะเสร็จ — ผลกระทบของทีมที่ถูกจับฉลากคัดออกจากโควตาภายในกลุ่มต่อ Best-third-place ข้ามกลุ่ม **ยังไม่ตัดสินใจ** และไม่เดาในรอบนี้ (**Deferred Decision: Cross-group qualification after group-cutoff draw**)
+- **PR นี้ไม่ Resolve Knockout Match**: ไม่แตะ `tournament_matches`, `draw_selected` Placeholder หรือ Knockout Structure ใดๆ
+- **Phase ที่ถูก Block/ปลดล็อก**: Phase 6 (Standings/Qualification Engine) — ทุก Category ที่มี Tie Cluster คร่อมเส้นโควตาภายในกลุ่ม (ไม่จำกัดเฉพาะ G-U16)
+- **Owner ที่ตัดสินใจ**: เจ้าของระบบ
+- **Final Decision Date**: 2026-07-18
 
 ---
 

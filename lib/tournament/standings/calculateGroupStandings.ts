@@ -1,6 +1,7 @@
 import type { GroupStandingsResult, OfficialMatchResult, StandingsRow, TeamRawStats } from './types';
 import { calculateFairPlayScore, type RawCardRow } from './calculateFairPlayScore';
 import { resolveTournamentTiebreak } from './resolveTournamentTiebreak';
+import { resolveQualificationCutoff, type ExistingQualificationDrawInput } from './resolveQualificationCutoff';
 
 export interface TeamInput {
   teamId: string;
@@ -31,6 +32,22 @@ export interface CalculateGroupStandingsParams {
    * below qualifyRankPerGroup is 'pending' (still possibly qualifying) or
    * 'eliminated'. */
   bestThirdPlacedEligible: boolean;
+  /** The currently active (non-superseded) Qualification Cutoff Tie Draw
+   * result for this group, if the group has ever needed one and an admin
+   * has recorded it. Absent/null when no cutoff tie exists or no draw has
+   * been recorded yet — see resolveQualificationCutoff.ts. */
+  existingCutoffDraw?: ExistingQualificationDrawInput | null;
+  /** Deterministic fingerprint of every official match's (id, version) pair
+   * in this group — see resolveQualificationCutoff.ts
+   * buildOfficialResultRevision(). Computed by the caller (not derived from
+   * `matches` here) because `OfficialMatchResult` deliberately has no
+   * `version` field — this keeps that shared type's shape unchanged for
+   * every other Standings consumer. REQUIRED: this is what makes
+   * `existingCutoffDraw` staleness detection safe against "resurrection"
+   * (see resolveQualificationCutoff.ts's own doc comment) — a caller that
+   * never intends to use Qualification Cutoff Tie Draw at all may pass an
+   * empty string here safely, since it only affects that one feature. */
+  officialResultRevision: string;
 }
 
 function computeRawStats(teams: TeamInput[], matches: OfficialMatchResult[], groupId: string, cardRows: RawCardRow[]): TeamRawStats[] {
@@ -104,6 +121,34 @@ export function calculateGroupStandings(params: CalculateGroupStandingsParams): 
   const rawStats = computeRawStats(params.teams, params.matches, params.groupId, params.cardRows);
   const sortedByPoints = [...rawStats].sort((a, b) => b.points - a.points);
   const pointsClusters = clusterByPoints(sortedByPoints);
+
+  // Round-robin completeness — computed once, up front, since it gates both
+  // standings-ordering display (isComplete below) AND the Qualification
+  // Cutoff decision (never made for an incomplete group).
+  const expectedMatchCount = (params.teams.length * (params.teams.length - 1)) / 2;
+  const isComplete = params.matches.length >= expectedMatchCount;
+
+  // Qualification Cutoff Tie Draw (D-30) — a decision using POINTS ONLY,
+  // computed independently of the D-09 tiebreak ordering below. See
+  // resolveQualificationCutoff.ts for why these must never be conflated:
+  // this module's own ordering (H2H/GD/GF/Fair Play, below) is allowed to
+  // fully separate two same-points teams for DISPLAY, but that separation
+  // must never be used to decide WHO ADVANCES when the tie straddles the
+  // automatic-qualify cutoff.
+  const cutoffResolution = resolveQualificationCutoff({
+    teams: rawStats.map((t) => ({ teamId: t.teamId, points: t.points })),
+    qualifyRankPerGroup: params.qualifyRankPerGroup,
+    isGroupComplete: isComplete,
+    officialResultRevision: params.officialResultRevision,
+    existingDraw: params.existingCutoffDraw,
+  });
+  const qualifiedTeamIds = new Set([...cutoffResolution.automaticQualifiers, ...cutoffResolution.selectedByDraw]);
+  const eliminatedTeamIds = new Set([...cutoffResolution.automaticEliminated, ...cutoffResolution.eliminatedByDraw]);
+  const pendingCutoffTeamIds = new Set(
+    cutoffResolution.qualificationState === 'pending_draw' || cutoffResolution.qualificationState === 'stale_draw'
+      ? cutoffResolution.drawCandidates
+      : []
+  );
 
   const orderedWithExplanation: Array<{ stats: TeamRawStats; explanation: string; tieState: 'resolved' | 'pending_draw' | 'pending_manual_override' }> = [];
 
@@ -201,18 +246,45 @@ export function calculateGroupStandings(params: CalculateGroupStandingsParams): 
     );
   }
 
-  const expectedMatchCount = (params.teams.length * (params.teams.length - 1)) / 2;
-  const isComplete = params.matches.length >= expectedMatchCount;
+  // Best-third-place "next in line" — ONLY meaningful when the group's own
+  // Qualification Cutoff is already fully decided by points alone (no tie
+  // draw pending or in progress). This preserves the pre-existing behavior
+  // for the simple/common case (exactly one team, at the natural position
+  // right after the cutoff, is a cross-group candidate) without ever
+  // overriding a cutoff-draw-pending or cutoff-draw-recorded team — those
+  // are governed entirely by qualifiedTeamIds/eliminatedTeamIds/
+  // pendingCutoffTeamIds above.
+  const nextInLineTeamId =
+    params.bestThirdPlacedEligible && (cutoffResolution.qualificationState === 'resolved' || cutoffResolution.qualificationState === 'incomplete')
+      ? finalOrder[params.qualifyRankPerGroup]?.stats.teamId
+      : undefined;
 
   const rows: StandingsRow[] = finalOrder.map((entry, index) => {
     const position = index + 1;
     const appliedOverride = validOverridesByTeamId.get(entry.stats.teamId);
+    const teamId = entry.stats.teamId;
+
+    // Qualification Cutoff Tie Draw (D-30) is the Source of Truth for
+    // qualified/eliminated/pending — NEVER `position <= qualifyRankPerGroup`
+    // alone. See resolveQualificationCutoff.ts.
     let qualificationStatus: StandingsRow['qualificationStatus'];
     if (!isComplete) {
       qualificationStatus = 'pending';
-    } else if (position <= params.qualifyRankPerGroup) {
+    } else if (qualifiedTeamIds.has(teamId)) {
       qualificationStatus = 'qualified';
-    } else if (position === params.qualifyRankPerGroup + 1 && params.bestThirdPlacedEligible) {
+    } else if (pendingCutoffTeamIds.has(teamId)) {
+      qualificationStatus = 'pending';
+    } else if (eliminatedTeamIds.has(teamId)) {
+      // A team eliminated BY the physical cutoff draw (as opposed to
+      // automatically, by points alone) whose category is also
+      // best-third-eligible sits in a genuinely undecided spot: "Cross-group
+      // qualification after group-cutoff draw" is an explicit Deferred
+      // Decision (see docs) — this PR does not guess whether such a team
+      // becomes a cross-group best-third candidate, so it stays 'pending'
+      // rather than a guessed 'eliminated'.
+      qualificationStatus =
+        params.bestThirdPlacedEligible && cutoffResolution.eliminatedByDraw.includes(teamId) ? 'pending' : 'eliminated';
+    } else if (teamId === nextInLineTeamId) {
       qualificationStatus = 'pending';
     } else {
       qualificationStatus = 'eliminated';
@@ -246,5 +318,11 @@ export function calculateGroupStandings(params: CalculateGroupStandingsParams): 
     };
   });
 
-  return { groupId: params.groupId, groupCode: params.groupCode, rows, isComplete };
+  return {
+    groupId: params.groupId,
+    groupCode: params.groupCode,
+    rows,
+    isComplete,
+    qualificationCutoffState: cutoffResolution.qualificationState,
+  };
 }

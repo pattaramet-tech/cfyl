@@ -37,6 +37,7 @@ function group(overrides: Partial<GroupStandingsResult> = {}): GroupStandingsRes
     groupId: 'group-a',
     groupCode: 'A',
     isComplete: true,
+    qualificationCutoffState: 'resolved',
     rows: [
       row({ position: 1, points: 9 }),
       row({ position: 2, points: 6 }),
@@ -72,6 +73,25 @@ describe('rankCrossGroupCandidates — D-07 ranked method', () => {
     expect(candidates).toHaveLength(0);
     expect(isComplete).toBe(false);
     expect(incompleteReason).toContain('A');
+  });
+
+  it('excludes a group whose Qualification Cutoff Tie Draw is still pending, even when the 3rd-place row display order is fully resolved (H2H/GD/GF separated them)', () => {
+    // Deliberately tieState='resolved' at position 3 (standings ORDERING is
+    // fully decided) but qualificationCutoffState='pending_draw' (the
+    // group's own qualifyRankPerGroup cutoff is points-tied and awaiting a
+    // manual draw) — proves these two concepts are gated independently.
+    const groups = [group({ qualificationCutoffState: 'pending_draw' })];
+    const { candidates, isComplete, incompleteReason } = extractEligibleThirdPlaceCandidates(groups);
+    expect(candidates).toHaveLength(0);
+    expect(isComplete).toBe(false);
+    expect(incompleteReason).toContain('รอผลจับฉลาก');
+  });
+
+  it('includes a group whose Qualification Cutoff Tie Draw has been recorded (draw_recorded is treated as final, same as resolved)', () => {
+    const groups = [group({ qualificationCutoffState: 'draw_recorded' })];
+    const { candidates, isComplete } = extractEligibleThirdPlaceCandidates(groups);
+    expect(isComplete).toBe(true);
+    expect(candidates).toHaveLength(1);
   });
 
   it('excludes a third place still pending a tiebreak draw (not yet resolved)', () => {

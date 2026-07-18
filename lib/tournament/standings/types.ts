@@ -96,6 +96,18 @@ export interface GroupStandingsResult {
    * and by cross-group ranking to decide whether a group's 3rd place is
    * final enough to be treated as an eligible qualification candidate. */
   isComplete: boolean;
+  /** Qualification Cutoff Tie Draw state for this group's automatic-qualify
+   * boundary (qualifyRankPerGroup) — see resolveQualificationCutoff.ts. This
+   * is a SEPARATE concept from `isComplete`/`tieState` (which describe
+   * standings ordering): a group can be `isComplete=true` with every row's
+   * `tieState='resolved'` and still have `qualificationCutoffState` be
+   * 'pending_draw' or 'stale_draw', because a Standings-ordering tiebreak
+   * (H2H/GD/GF/Fair Play) is never allowed to decide qualification when
+   * points are tied across the cutoff. Cross-group best-third-place logic
+   * (rankCrossGroupCandidates.ts) treats any group whose
+   * qualificationCutoffState is not 'resolved' as not-yet-ready — see
+   * "Deferred Decision: Cross-group qualification after group-cutoff draw". */
+  qualificationCutoffState: 'resolved' | 'pending_draw' | 'draw_recorded' | 'incomplete' | 'stale_draw';
 }
 
 export interface CrossGroupCandidate {

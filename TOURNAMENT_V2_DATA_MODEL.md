@@ -549,6 +549,48 @@ create index idx_tqualcand_draw on tournament.tournament_qualification_draw_cand
 
 **ตัวอย่างข้อมูลสำหรับ G-U16 (D-29)**: `tournament_qualification_draws` 1 แถว (`qualification_slot='group_third_place'`, `slots_available=2`) + `tournament_qualification_draw_candidates` 3 แถว (ทีมอันดับ 3 ของกลุ่ม A/B/C ทั้งหมด, `is_selected` เป็น `true` สำหรับ 2 ทีมที่จับได้)
 
+### 2.14c `tournament_qualification_cutoff_draws` / `tournament_qualification_cutoff_draw_candidates` (ใหม่ — DECISION LOCKED D-30, 2026-07-18)
+
+> **แยกจาก §2.14b โดยเจตนา** — รองรับกติกาคนละแบบ: §2.14b (D-07/D-29) คือ "จับฉลากทีมอันดับ 3 **ข้ามกลุ่ม**" (Category-scoped, 3 candidates คงที่, ผูกกับ `draw_selected` Placeholder ใน `tournament_matches`) ส่วนตารางนี้คือ "จับฉลากทีมคะแนนเท่ากันคร่อมเส้นโควตา**ภายในกลุ่มเดียวกัน**" (Group-scoped, จำนวน candidates/slots ไม่คงที่ ขึ้นกับขนาด Tie Cluster จริง, **ไม่แตะ** `tournament_matches`/Placeholder ใดๆ) **พิสูจน์จาก Source แล้วว่า** Unique Index เดิมของ §2.14b (`uniq_tqualdraw_active_category_slot`, Migration 012, คีย์ `(category_id, qualification_slot) WHERE superseded_at IS NULL`) ไม่รองรับ "1 Draw Active ต่อกลุ่ม" เมื่อหมวดเดียวกันมีหลายกลุ่มพร้อมกันต้องจับฉลากพร้อมกัน — จึงต้องเป็นตารางใหม่ ไม่ใช่การเพิ่มคอลัมน์ลงตารางเดิม
+
+```sql
+create table tournament.tournament_qualification_cutoff_draws (
+  id uuid primary key default gen_random_uuid(),
+  tournament_id uuid not null references tournament.tournaments(id) on delete cascade,
+  category_id uuid not null references tournament.tournament_categories(id) on delete cascade,
+  group_id uuid not null references tournament.tournament_groups(id) on delete cascade,
+  cutoff_position int not null,        -- = qualify_rank_per_group ตอนจับฉลาก
+  available_slots int not null,        -- จำนวนสิทธิ์ที่เหลือให้ Tie Cluster แย่งชิง
+  candidate_snapshot text not null,    -- Fingerprint ของ Candidate Pool ตอนจับฉลาก ใช้ตรวจ Stale Draw
+  idempotency_key text not null,
+  version int not null default 1,
+  drawn_by uuid,
+  drawn_at timestamptz not null default now(),
+  note text,
+  superseded_at timestamptz,           -- ไม่ null = ถูกแทนที่ด้วย version ใหม่กว่าแล้ว (append-only)
+  created_at timestamptz not null default now()
+);
+-- 1 Draw Active ต่อกลุ่มเท่านั้น — Scope ด้วย group_id จริง (แก้ปัญหาที่ §2.14b ทำไม่ได้)
+create unique index uniq_tqualcutoff_active_group
+  on tournament.tournament_qualification_cutoff_draws (group_id)
+  where superseded_at is null;
+
+create table tournament.tournament_qualification_cutoff_draw_candidates (
+  id uuid primary key default gen_random_uuid(),
+  draw_id uuid not null references tournament.tournament_qualification_cutoff_draws(id) on delete cascade,
+  team_id uuid not null references tournament.tournament_teams(id) on delete cascade,
+  points_at_draw int not null,
+  is_selected boolean not null default false,
+  draw_order int,
+  created_at timestamptz not null default now(),
+  unique (draw_id, team_id)
+);
+```
+
+**เหตุผล**: ตอบข้อกำหนด D-30 — Candidate Pool ต้องคำนวณจาก Published Official Results เท่านั้น (ไม่ใช้ Quick Result), Stale Draw ต้องตรวจได้เมื่อผลการแข่งขันเปลี่ยน (`candidate_snapshot` เปลี่ยน), และ RPC (`tournament.save_qualification_cutoff_draw`, Migration 019) ต้องคำนวณ Candidate Pool/`cutoff_position`/`available_slots` เองเสมอ ไม่เชื่อค่าจาก Client — ดู Migration 019 และ `lib/tournament/standings/resolveQualificationCutoff.ts` สำหรับ Logic แบบเต็ม
+
+**`candidate_snapshot` format v2 (Migration 020, addendum 2026-07-18 — resurrection-safety fix)**: รูปแบบเดิม v1 (`v1|slots=<n>|candidates=<sorted team ids>`) เก็บเฉพาะ Candidate ID Set + `available_slots` ซึ่งเป็น Fingerprint ที่ไม่สมบูรณ์ — พิสูจน์ได้ว่า Official Result ที่ถูกแก้ไขจน Tie Cluster หายไปแล้วถูกแก้ไขกลับจน Candidate ID Set ตรงกับเดิมทุกตัวอักษร จะทำให้ `candidate_snapshot` v1 ซ้ำกับของเดิมได้ แม้ผลการแข่งขันจะผ่านการแก้ไขมาระหว่างทางแล้วก็ตาม (Core Stale-detection Bug — Draw เก่า "ฟื้นคืนชีพ" เป็น `draw_recorded` โดยไม่มีการจับฉลากใหม่จริง) รูปแบบ v2 (`v2|slots=<n>|candidates=<sorted team ids>|rev=<sorted "matchId:version" pairs of every official match in the group>`) ผนวก Official Result Revision Fingerprint จาก `tournament_matches.version` (คอลัมน์ Optimistic Lock เดิมที่ RPC Publish/Correction ทุกตัวเพิ่มค่าเสมอเมื่อมีการเขียน ไม่ว่าเนื้อหาสุดท้ายจะเหมือนเดิมหรือไม่) เข้าไปด้วย ทำให้การแก้ไข Official Result ใดๆ เปลี่ยน Fingerprint เสมอ — ดู `buildOfficialResultRevision()` ใน `resolveQualificationCutoff.ts` และ Migration 020 (`020-qualification-cutoff-draw-resurrection-fix.sql`, `CREATE OR REPLACE FUNCTION` เท่านั้น ไม่แก้ Migration 019 ย้อนหลัง, ไม่มีการเปลี่ยน Column/Table)
+
 ### 2.15 `tournament_knockout_rounds` (ปรับใน Scheduling Addendum — `tournament_bracket_matches` ถูกยุบรวมแล้ว)
 
 ```sql
