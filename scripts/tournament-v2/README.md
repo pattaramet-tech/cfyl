@@ -40,15 +40,20 @@ be fixed and the same file re-run safely.
 | 13b | `013b-schedule-rollback-concurrency-fix.sql` | `CREATE OR REPLACE FUNCTION` only, no column changes. Fixes two bugs verified in 013a's rollback RPC (see "Rollback workflow" below): a TOCTOU/lost-update race between its conflict-check and apply passes, and a conflict-triggered `status='failed'` write that a subsequent `RAISE EXCEPTION` silently rolled back. Does not modify the already-applied 013a retroactively. |
 | 14 | `014-full-result-publish-transaction.sql` | `tournament.publish_full_match_report(...)` — atomic Official Full Match Report publish RPC (service-role only; see the file's own security comments) |
 | 18 | `018-score-only-result-correction.sql` | Widens `tournament_result_submissions.stage` to allow `'correction'`; `tournament.correct_published_match_result(...)` — atomic score-only correction of an already-published official result (service-role only, `tournament_super_admin` gated at the app layer; see the file's own security comments) |
+| 19 | `019-qualification-cutoff-tie-draw.sql` | Creates `tournament_qualification_cutoff_draws`/`tournament_qualification_cutoff_draw_candidates` (new tables, separate from the G-U16 `tournament_qualification_draws`/`_candidates` — see the migration's own header for why); `tournament.save_qualification_cutoff_draw(...)` — atomic Qualification Cutoff Tie Draw (D-30) save RPC (service-role only, `tournament_super_admin` gated at the app layer) |
 
 (Migrations 015–017 — Qualification Draw, Quick Result, and Standings Override's own atomic
 RPCs — exist in this folder and are reachable via their own runtime verifiers, but predate
 this table row being added; see their own PRs' documentation.)
 
-**Migration 018 status**: DRAFT. Reviewed statically only. **Has not been applied to any
+**Migration 018 status**: applied to `CFYL-Tournament-Staging` and runtime-verified — all 10
+`verify:tournament-result-correction-runtime` scenarios passed there (see PR #12's final
+review). Not applied to Production.
+
+**Migration 019 status**: DRAFT. Reviewed statically only. **Has not been applied to any
 environment** (Staging or Production) yet — the owner must manually apply it to
-`CFYL-Tournament-Staging` before `npm run verify:tournament-result-correction-runtime` may
-be run. This PR does not run that verifier and does not apply the migration anywhere.
+`CFYL-Tournament-Staging` before `npm run verify:tournament-qualification-cutoff-draw-runtime`
+may be run. This PR does not run that verifier and does not apply the migration anywhere.
 
 **Migration status as of this task**: 001–013b are applied to `CFYL-Tournament-Staging`
 (see the Schedule Import and Qualification Draw sections below). **Migration 014 is also
