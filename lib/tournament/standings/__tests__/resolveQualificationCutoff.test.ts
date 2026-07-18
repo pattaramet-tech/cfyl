@@ -1,7 +1,22 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'fs';
 import { join } from 'path';
-import { resolveQualificationCutoff, validateQualificationDrawSelection } from '../resolveQualificationCutoff';
+import {
+  buildOfficialResultRevision,
+  resolveQualificationCutoff,
+  validateQualificationDrawSelection,
+  type ResolveQualificationCutoffParams,
+} from '../resolveQualificationCutoff';
+
+const DEFAULT_REVISION = 'rev-default';
+
+/** Test convenience wrapper — supplies a default officialResultRevision so
+ * individual test cases (which mostly aren't testing revision-fingerprint
+ * behavior at all) don't need to repeat it. The dedicated
+ * "resurrection safety" describe block below overrides it explicitly. */
+function resolve(params: Omit<ResolveQualificationCutoffParams, 'officialResultRevision'> & { officialResultRevision?: string }) {
+  return resolveQualificationCutoff({ officialResultRevision: DEFAULT_REVISION, ...params });
+}
 
 // The task's canonical example: A=6, B=5, C=5, D=3, quota=2.
 // automaticQualifiers=[A], drawCandidates=[B,C], availableSlots=1, pending_draw.
@@ -14,7 +29,7 @@ const EXAMPLE_TEAMS = [
 
 describe('resolveQualificationCutoff — canonical example', () => {
   it('A=6,B=5,C=5,D=3 quota=2 -> automaticQualifiers=[A], drawCandidates=[B,C], availableSlots=1, pending_draw', () => {
-    const result = resolveQualificationCutoff({ teams: EXAMPLE_TEAMS, qualifyRankPerGroup: 2, isGroupComplete: true });
+    const result = resolve({ teams: EXAMPLE_TEAMS, qualifyRankPerGroup: 2, isGroupComplete: true });
     expect(result.automaticQualifiers).toEqual(['A']);
     expect(result.drawCandidates.sort()).toEqual(['B', 'C']);
     expect(result.availableSlots).toBe(1);
@@ -23,8 +38,8 @@ describe('resolveQualificationCutoff — canonical example', () => {
   });
 
   it('after Admin records B as drawn -> automaticQualifiers=[A], selectedByDraw=[B], eliminatedByDraw=[C], draw_recorded', () => {
-    const snapshot = resolveQualificationCutoff({ teams: EXAMPLE_TEAMS, qualifyRankPerGroup: 2, isGroupComplete: true }).candidateSnapshot;
-    const result = resolveQualificationCutoff({
+    const snapshot = resolve({ teams: EXAMPLE_TEAMS, qualifyRankPerGroup: 2, isGroupComplete: true }).candidateSnapshot;
+    const result = resolve({
       teams: EXAMPLE_TEAMS,
       qualifyRankPerGroup: 2,
       isGroupComplete: true,
@@ -39,7 +54,7 @@ describe('resolveQualificationCutoff — canonical example', () => {
 
 describe('resolveQualificationCutoff — pure logic (tasks 1-18)', () => {
   it('1. no tie at the cutoff -> resolved automatically', () => {
-    const result = resolveQualificationCutoff({
+    const result = resolve({
       teams: [{ teamId: 'A', points: 9 }, { teamId: 'B', points: 6 }, { teamId: 'C', points: 3 }, { teamId: 'D', points: 0 }],
       qualifyRankPerGroup: 2,
       isGroupComplete: true,
@@ -51,7 +66,7 @@ describe('resolveQualificationCutoff — pure logic (tasks 1-18)', () => {
   });
 
   it('2. two teams tied for 1 slot -> pending_draw', () => {
-    const result = resolveQualificationCutoff({
+    const result = resolve({
       teams: [{ teamId: 'A', points: 9 }, { teamId: 'B', points: 5 }, { teamId: 'C', points: 5 }],
       qualifyRankPerGroup: 2,
       isGroupComplete: true,
@@ -62,7 +77,7 @@ describe('resolveQualificationCutoff — pure logic (tasks 1-18)', () => {
   });
 
   it('3. three teams tied for 1 slot -> pending_draw, 1 of 3', () => {
-    const result = resolveQualificationCutoff({
+    const result = resolve({
       teams: [{ teamId: 'A', points: 9 }, { teamId: 'B', points: 5 }, { teamId: 'C', points: 5 }, { teamId: 'D', points: 5 }],
       qualifyRankPerGroup: 2,
       isGroupComplete: true,
@@ -73,7 +88,7 @@ describe('resolveQualificationCutoff — pure logic (tasks 1-18)', () => {
   });
 
   it('4. three teams tied for 2 slots -> pending_draw, 2 of 3', () => {
-    const result = resolveQualificationCutoff({
+    const result = resolve({
       teams: [{ teamId: 'A', points: 5 }, { teamId: 'B', points: 5 }, { teamId: 'C', points: 5 }, { teamId: 'D', points: 0 }],
       qualifyRankPerGroup: 2,
       isGroupComplete: true,
@@ -84,7 +99,7 @@ describe('resolveQualificationCutoff — pure logic (tasks 1-18)', () => {
   });
 
   it('5. tie cluster entirely above the cutoff -> all qualify, no draw', () => {
-    const result = resolveQualificationCutoff({
+    const result = resolve({
       teams: [{ teamId: 'A', points: 5 }, { teamId: 'B', points: 5 }, { teamId: 'C', points: 5 }, { teamId: 'D', points: 0 }],
       qualifyRankPerGroup: 3,
       isGroupComplete: true,
@@ -95,7 +110,7 @@ describe('resolveQualificationCutoff — pure logic (tasks 1-18)', () => {
   });
 
   it('6. tie cluster entirely below the cutoff -> all eliminated, no draw', () => {
-    const result = resolveQualificationCutoff({
+    const result = resolve({
       teams: [{ teamId: 'A', points: 9 }, { teamId: 'B', points: 9 }, { teamId: 'C', points: 3 }, { teamId: 'D', points: 3 }],
       qualifyRankPerGroup: 2,
       isGroupComplete: true,
@@ -108,7 +123,7 @@ describe('resolveQualificationCutoff — pure logic (tasks 1-18)', () => {
   it('7. tie straddles cutoff even though H2H would separate them -> pending_draw (resolver never sees H2H, points alone decide)', () => {
     // Points-only input — the resolver has no H2H concept at all, proving it
     // cannot possibly use it.
-    const result = resolveQualificationCutoff({
+    const result = resolve({
       teams: [{ teamId: 'A', points: 9 }, { teamId: 'B', points: 5 }, { teamId: 'C', points: 5 }],
       qualifyRankPerGroup: 2,
       isGroupComplete: true,
@@ -117,7 +132,7 @@ describe('resolveQualificationCutoff — pure logic (tasks 1-18)', () => {
   });
 
   it('8. tie straddles cutoff regardless of GD -> pending_draw (resolver has no GD concept)', () => {
-    const result = resolveQualificationCutoff({
+    const result = resolve({
       teams: [{ teamId: 'A', points: 9 }, { teamId: 'B', points: 5 }, { teamId: 'C', points: 5 }],
       qualifyRankPerGroup: 2,
       isGroupComplete: true,
@@ -126,7 +141,7 @@ describe('resolveQualificationCutoff — pure logic (tasks 1-18)', () => {
   });
 
   it('9. tie straddles cutoff regardless of GF -> pending_draw (resolver has no GF concept)', () => {
-    const result = resolveQualificationCutoff({
+    const result = resolve({
       teams: [{ teamId: 'A', points: 9 }, { teamId: 'B', points: 5 }, { teamId: 'C', points: 5 }],
       qualifyRankPerGroup: 2,
       isGroupComplete: true,
@@ -135,7 +150,7 @@ describe('resolveQualificationCutoff — pure logic (tasks 1-18)', () => {
   });
 
   it('10. tie straddles cutoff regardless of Fair Play -> pending_draw (resolver has no Fair Play concept)', () => {
-    const result = resolveQualificationCutoff({
+    const result = resolve({
       teams: [{ teamId: 'A', points: 9 }, { teamId: 'B', points: 5 }, { teamId: 'C', points: 5 }],
       qualifyRankPerGroup: 2,
       isGroupComplete: true,
@@ -149,8 +164,8 @@ describe('resolveQualificationCutoff — pure logic (tasks 1-18)', () => {
   });
 
   it('12. manual result filling exactly the available slots -> draw_recorded', () => {
-    const pending = resolveQualificationCutoff({ teams: EXAMPLE_TEAMS, qualifyRankPerGroup: 2, isGroupComplete: true });
-    const result = resolveQualificationCutoff({
+    const pending = resolve({ teams: EXAMPLE_TEAMS, qualifyRankPerGroup: 2, isGroupComplete: true });
+    const result = resolve({
       teams: EXAMPLE_TEAMS,
       qualifyRankPerGroup: 2,
       isGroupComplete: true,
@@ -180,8 +195,8 @@ describe('resolveQualificationCutoff — pure logic (tasks 1-18)', () => {
 
   it('17. eliminatedByDraw is exactly the cluster minus selected', () => {
     const teams = [{ teamId: 'A', points: 5 }, { teamId: 'B', points: 5 }, { teamId: 'C', points: 5 }, { teamId: 'D', points: 0 }];
-    const pending = resolveQualificationCutoff({ teams, qualifyRankPerGroup: 2, isGroupComplete: true });
-    const result = resolveQualificationCutoff({
+    const pending = resolve({ teams, qualifyRankPerGroup: 2, isGroupComplete: true });
+    const result = resolve({
       teams,
       qualifyRankPerGroup: 2,
       isGroupComplete: true,
@@ -192,7 +207,7 @@ describe('resolveQualificationCutoff — pure logic (tasks 1-18)', () => {
   });
 
   it('18. incomplete group -> incomplete state, no decision made', () => {
-    const result = resolveQualificationCutoff({ teams: EXAMPLE_TEAMS, qualifyRankPerGroup: 2, isGroupComplete: false });
+    const result = resolve({ teams: EXAMPLE_TEAMS, qualifyRankPerGroup: 2, isGroupComplete: false });
     expect(result.qualificationState).toBe('incomplete');
     expect(result.automaticQualifiers).toEqual([]);
     expect(result.drawCandidates).toEqual([]);
@@ -201,20 +216,77 @@ describe('resolveQualificationCutoff — pure logic (tasks 1-18)', () => {
 
 describe('resolveQualificationCutoff — stale draw detection', () => {
   it('a recorded draw whose candidateSnapshot no longer matches the fresh pool is stale_draw, not silently reused', () => {
-    const result = resolveQualificationCutoff({
+    const result = resolve({
       teams: EXAMPLE_TEAMS,
       qualifyRankPerGroup: 2,
       isGroupComplete: true,
-      existingDraw: { selectedTeamIds: ['B'], candidateSnapshot: 'v1|slots=1|candidates=STALE,VALUE' },
+      existingDraw: { selectedTeamIds: ['B'], candidateSnapshot: 'v2|slots=1|candidates=STALE,VALUE|rev=irrelevant' },
     });
     expect(result.qualificationState).toBe('stale_draw');
     expect(result.selectedByDraw).toEqual([]);
   });
 });
 
+describe('resolveQualificationCutoff — resurrection safety (officialResultRevision)', () => {
+  it('buildOfficialResultRevision is deterministic and order-independent, and changes when any match version changes', () => {
+    const a = buildOfficialResultRevision([{ matchId: 'm1', version: 1 }, { matchId: 'm2', version: 3 }]);
+    const b = buildOfficialResultRevision([{ matchId: 'm2', version: 3 }, { matchId: 'm1', version: 1 }]);
+    expect(a).toBe(b);
+
+    const c = buildOfficialResultRevision([{ matchId: 'm1', version: 2 }, { matchId: 'm2', version: 3 }]);
+    expect(c).not.toBe(a);
+  });
+
+  it('a draw recorded against one revision is stale_draw when read back under a DIFFERENT revision, even if the candidate set and slots are byte-identical (the actual resurrection bug this fix prevents)', () => {
+    const teams = EXAMPLE_TEAMS;
+    const revisionAtDrawTime = buildOfficialResultRevision([{ matchId: 'm1', version: 1 }, { matchId: 'm2', version: 1 }]);
+    const originalResolution = resolveQualificationCutoff({
+      teams,
+      qualifyRankPerGroup: 2,
+      isGroupComplete: true,
+      officialResultRevision: revisionAtDrawTime,
+    });
+    expect(originalResolution.qualificationState).toBe('pending_draw');
+    const recordedDraw = { selectedTeamIds: ['B'], candidateSnapshot: originalResolution.candidateSnapshot };
+
+    // Two Score Corrections happen (m1's version bumps twice: 1 -> 2 -> 3),
+    // but suppose the SECOND correction reverts scores so the derived
+    // points/candidate SET is byte-identical to the original (still
+    // A=6,B=5,C=5,D=3) — this is exactly the "candidate pool comes back"
+    // scenario. Without officialResultRevision, the old lossy snapshot
+    // ('v1|slots=1|candidates=B,C') would match again and silently
+    // resurrect the stale draw as 'draw_recorded'.
+    const revisionAfterRevert = buildOfficialResultRevision([{ matchId: 'm1', version: 3 }, { matchId: 'm2', version: 1 }]);
+    expect(revisionAfterRevert).not.toBe(revisionAtDrawTime);
+
+    const afterRevert = resolveQualificationCutoff({
+      teams, // byte-identical points to the original draw's candidate pool
+      qualifyRankPerGroup: 2,
+      isGroupComplete: true,
+      officialResultRevision: revisionAfterRevert,
+      existingDraw: recordedDraw,
+    });
+    expect(afterRevert.qualificationState).toBe('stale_draw');
+    expect(afterRevert.selectedByDraw).toEqual([]);
+  });
+
+  it('a draw recorded and read back under the EXACT SAME revision is correctly draw_recorded (no false positives)', () => {
+    const revision = buildOfficialResultRevision([{ matchId: 'm1', version: 1 }, { matchId: 'm2', version: 1 }]);
+    const preview = resolveQualificationCutoff({ teams: EXAMPLE_TEAMS, qualifyRankPerGroup: 2, isGroupComplete: true, officialResultRevision: revision });
+    const result = resolveQualificationCutoff({
+      teams: EXAMPLE_TEAMS,
+      qualifyRankPerGroup: 2,
+      isGroupComplete: true,
+      officialResultRevision: revision,
+      existingDraw: { selectedTeamIds: ['B'], candidateSnapshot: preview.candidateSnapshot },
+    });
+    expect(result.qualificationState).toBe('draw_recorded');
+  });
+});
+
 describe('resolveQualificationCutoff — edge cases', () => {
   it('group size equal to quota -> everyone qualifies, no cutoff at all', () => {
-    const result = resolveQualificationCutoff({
+    const result = resolve({
       teams: [{ teamId: 'A', points: 3 }, { teamId: 'B', points: 0 }],
       qualifyRankPerGroup: 2,
       isGroupComplete: true,
@@ -225,8 +297,8 @@ describe('resolveQualificationCutoff — edge cases', () => {
   });
 
   it('does not use team array order to decide who is in the cluster (order-independent)', () => {
-    const a = resolveQualificationCutoff({ teams: EXAMPLE_TEAMS, qualifyRankPerGroup: 2, isGroupComplete: true });
-    const b = resolveQualificationCutoff({ teams: [...EXAMPLE_TEAMS].reverse(), qualifyRankPerGroup: 2, isGroupComplete: true });
+    const a = resolve({ teams: EXAMPLE_TEAMS, qualifyRankPerGroup: 2, isGroupComplete: true });
+    const b = resolve({ teams: [...EXAMPLE_TEAMS].reverse(), qualifyRankPerGroup: 2, isGroupComplete: true });
     expect(a.drawCandidates).toEqual(b.drawCandidates);
     expect(a.automaticQualifiers).toEqual(b.automaticQualifiers);
   });

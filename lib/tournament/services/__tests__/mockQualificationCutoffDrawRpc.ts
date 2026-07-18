@@ -18,15 +18,31 @@ function err(message: string): RpcResult {
   return { data: null, error: { message } };
 }
 
-function candidateSnapshot(clusterTeamIds: string[], availableSlots: number): string {
-  return `v1|slots=${availableSlots}|candidates=${[...clusterTeamIds].sort().join(',')}`;
+/** MUST mirror resolveQualificationCutoff.ts's buildOfficialResultRevision()
+ * + candidateSnapshot format exactly (same "v2|slots=...|candidates=...|rev=..."
+ * shape, same sort-then-join for both the candidate list and the
+ * matchId:version pairs) — this is what makes a draw recorded via the app
+ * layer/pure resolver comparable against what THIS mock (standing in for
+ * Migration 020's SQL) recomputes, and is exactly the mechanism that
+ * prevents a stale draw from silently "resurrecting" when the derived
+ * candidate pool coincidentally reverts to an earlier state (see D-30 /
+ * Migration 020's header comment). */
+function officialResultRevision(matches: { id: string; version: number }[]): string {
+  return [...matches]
+    .map((m) => `${m.id}:${m.version}`)
+    .sort()
+    .join(',');
+}
+
+function candidateSnapshot(clusterTeamIds: string[], availableSlots: number, revision: string): string {
+  return `v2|slots=${availableSlots}|candidates=${[...clusterTeamIds].sort().join(',')}|rev=${revision}`;
 }
 
 /** Creates a `.rpc()` handler bound to `db`. `db` must already contain
  * `tournament_group_members` (rows: {group_id, team_id}) and
- * `tournament_matches` (official rows: {group_id, status,
+ * `tournament_matches` (official rows: {id, group_id, status,
  * result_workflow_status, deleted_at, home_team_id, away_team_id,
- * winner_team_id}) and `tournament_qualification_rules` (rows:
+ * winner_team_id, version}) and `tournament_qualification_rules` (rows:
  * {category_id, qualify_rank_per_group}) so the mock can compute the same
  * authoritative candidate pool the real RPC would. */
 export function createMockSaveQualificationCutoffDrawRpc(db: Db, params: { categoryId: string; groupId: string }) {
@@ -94,7 +110,8 @@ export function createMockSaveQualificationCutoffDrawRpc(db: Db, params: { categ
       return err('QUALIFICATION_CUTOFF_DRAW_NOT_APPLICABLE: group has no tie cluster straddling the cutoff — no draw is needed');
     }
 
-    const freshSnapshot = candidateSnapshot(cluster, availableSlots);
+    const revision = officialResultRevision(officialMatches.map((m) => ({ id: m.id as string, version: m.version as number })));
+    const freshSnapshot = candidateSnapshot(cluster, availableSlots, revision);
     if (args.p_expected_candidate_snapshot !== freshSnapshot) {
       return err(`QUALIFICATION_CUTOFF_DRAW_STALE_CANDIDATES: candidate pool changed since Preview — expected ${args.p_expected_candidate_snapshot}, got ${freshSnapshot}`);
     }

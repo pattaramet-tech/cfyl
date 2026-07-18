@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { calculateGroupStandings, type TeamInput } from '../calculateGroupStandings';
+import { resolveQualificationCutoff } from '../resolveQualificationCutoff';
 import type { OfficialMatchResult } from '../types';
 import type { RawCardRow } from '../calculateFairPlayScore';
 
@@ -32,6 +33,7 @@ function baseParams(teams: TeamInput[], matches: OfficialMatchResult[], cardRows
     cardRows,
     qualifyRankPerGroup: 2,
     bestThirdPlacedEligible: true,
+    officialResultRevision: 'rev-test-default',
   };
 }
 
@@ -201,6 +203,7 @@ describe('calculateGroupStandings — three/four-team mini-league and recursion'
       cardRows: [],
       qualifyRankPerGroup: 2,
       bestThirdPlacedEligible: true,
+      officialResultRevision: 'rev-test-default',
     });
     const a = result.rows.find((r) => r.teamId === 'team-a')!;
     const b = result.rows.find((r) => r.teamId === 'team-b')!;
@@ -221,6 +224,7 @@ describe('calculateGroupStandings — three/four-team mini-league and recursion'
       cardRows,
       qualifyRankPerGroup: 2,
       bestThirdPlacedEligible: true,
+      officialResultRevision: 'rev-test-default',
     });
     const a = result.rows.find((r) => r.teamId === 'team-a')!;
     const b = result.rows.find((r) => r.teamId === 'team-b')!;
@@ -243,6 +247,7 @@ describe('calculateGroupStandings — three/four-team mini-league and recursion'
       cardRows: [],
       qualifyRankPerGroup: 2,
       bestThirdPlacedEligible: true,
+      officialResultRevision: 'rev-test-default',
     });
     const a = result.rows.find((r) => r.teamId === 'team-a')!;
     const b = result.rows.find((r) => r.teamId === 'team-b')!;
@@ -365,6 +370,30 @@ function fourTeamCutoffTieMatches(): OfficialMatchResult[] {
   ];
 }
 
+/** A=9, B=C=D=3 (see fourTeamCutoffTieMatches) — computes the exact
+ * candidateSnapshot resolveQualificationCutoff would produce for {B,C,D}
+ * under baseParams' default officialResultRevision, so tests can construct
+ * a valid `existingCutoffDraw` without hand-writing the snapshot string
+ * format (which now includes the resurrection-safety revision fingerprint
+ * — see resolveQualificationCutoff.ts). Ignores its `pending` argument's
+ * own fields on purpose: it independently recomputes from the known fixture
+ * points so it can never silently drift out of sync with what
+ * calculateGroupStandings itself will compare against. */
+function fourTeamTieCandidateSnapshot(pending: { qualificationCutoffState: string }): string {
+  expect(pending.qualificationCutoffState).toBe('pending_draw');
+  return resolveQualificationCutoff({
+    teams: [
+      { teamId: 'team-a', points: 9 },
+      { teamId: 'team-b', points: 3 },
+      { teamId: 'team-c', points: 3 },
+      { teamId: 'team-d', points: 3 },
+    ],
+    qualifyRankPerGroup: 2,
+    isGroupComplete: true,
+    officialResultRevision: 'rev-test-default',
+  }).candidateSnapshot;
+}
+
 describe('calculateGroupStandings — Qualification Cutoff Tie Draw (D-30) integration', () => {
   it('26. qualificationStatus does NOT select from H2H/GD/GF/Fair Play when points tie across the cutoff — B/C/D stay pending even though group-wide GD/GF fully resolves their display order', () => {
     const matches = fourTeamCutoffTieMatches();
@@ -400,7 +429,7 @@ describe('calculateGroupStandings — Qualification Cutoff Tie Draw (D-30) integ
     const matches = fourTeamCutoffTieMatches();
     const pending = calculateGroupStandings({ ...baseParams([teamA, teamB, teamC, teamD], matches), qualifyRankPerGroup: 2, bestThirdPlacedEligible: false });
     expect(pending.qualificationCutoffState).toBe('pending_draw');
-    const snapshot = 'v1|slots=1|candidates=team-b,team-c,team-d';
+    const snapshot = fourTeamTieCandidateSnapshot(pending);
 
     // Simulate the admin recording that D (last by GD/GF display order) won
     // the physical draw — proving the draw result, not GD/GF, decides.
@@ -425,7 +454,8 @@ describe('calculateGroupStandings — Qualification Cutoff Tie Draw (D-30) integ
 
   it('when bestThirdPlacedEligible=true, teams eliminated BY the cutoff draw stay "pending" (Deferred Decision: cross-group qualification after group-cutoff draw is not guessed)', () => {
     const matches = fourTeamCutoffTieMatches();
-    const snapshot = 'v1|slots=1|candidates=team-b,team-c,team-d';
+    const pending = calculateGroupStandings({ ...baseParams([teamA, teamB, teamC, teamD], matches), qualifyRankPerGroup: 2, bestThirdPlacedEligible: true });
+    const snapshot = fourTeamTieCandidateSnapshot(pending);
     const withDraw = calculateGroupStandings({
       ...baseParams([teamA, teamB, teamC, teamD], matches),
       qualifyRankPerGroup: 2,

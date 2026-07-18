@@ -19,6 +19,7 @@ function readSource(relativePath: string): string {
 }
 
 const MIGRATION_PATH = 'scripts/tournament-v2/019-qualification-cutoff-tie-draw.sql';
+const MIGRATION_020_PATH = 'scripts/tournament-v2/020-qualification-cutoff-draw-resurrection-fix.sql';
 
 describe('Migration 019 — static structural review', () => {
   it('defines the tournament.save_qualification_cutoff_draw function', () => {
@@ -164,6 +165,111 @@ describe('Migration 019 — static structural review', () => {
     const source = readSource(MIGRATION_PATH);
     // Confirms this migration only creates ITS OWN new objects — no DROP/ALTER
     // targeting pre-existing tables from other migrations.
+    expect(source).not.toMatch(/alter table tournament\.tournament_result_submissions/);
+    expect(source).not.toMatch(/alter table tournament\.tournament_matches/);
+    expect(source).not.toMatch(/drop constraint/i);
+  });
+});
+
+describe('Migration 019 — untouched by the resurrection fix (additive-only repair)', () => {
+  it('still uses the original v1 candidate_snapshot format — migration 019 was never rewritten', () => {
+    const source = readSource(MIGRATION_PATH);
+    expect(source).toMatch(/v_candidate_snapshot := 'v1\|slots=' \|\| v_available_slots \|\| '\|candidates=' \|\|/);
+    expect(source).not.toContain('officialResultRevision');
+    expect(source).not.toContain('v_official_result_revision');
+  });
+
+  it('still declares itself DRAFT/NOT applied — its own header was not edited to reflect migration 020\'s existence', () => {
+    const source = readSource(MIGRATION_PATH);
+    expect(source).toMatch(/STATUS: DRAFT/);
+    expect(source).toMatch(/NOT applied/);
+  });
+});
+
+describe('Migration 020 — static structural review (additive stale-draw resurrection fix)', () => {
+  it('is CREATE OR REPLACE FUNCTION only — no new/altered tables, columns, or indexes', () => {
+    const source = readSource(MIGRATION_020_PATH);
+    expect(source).toMatch(/create or replace function tournament\.save_qualification_cutoff_draw\(/);
+    expect(source).not.toMatch(/create table/i);
+    expect(source).not.toMatch(/alter table/i);
+    expect(source).not.toMatch(/create (unique )?index/i);
+  });
+
+  it('does not modify migration 019\'s file (no reference to editing 019, and this is a separate file)', () => {
+    const source = readSource(MIGRATION_020_PATH);
+    expect(source).toMatch(/already applied to Staging[\s\S]*?NOT modified[\s\S]*?retroactively/);
+  });
+
+  it('sets an explicit, safe search_path and is security definer', () => {
+    const source = readSource(MIGRATION_020_PATH);
+    expect(source).toMatch(/set search_path = tournament, pg_temp/);
+    expect(source).toMatch(/security definer/);
+  });
+
+  it('revokes broad execute permissions and grants only service_role', () => {
+    const source = readSource(MIGRATION_020_PATH);
+    expect(source).toMatch(/revoke all on function tournament\.save_qualification_cutoff_draw\([\s\S]*?\) from public;/);
+    expect(source).toMatch(/revoke all on function tournament\.save_qualification_cutoff_draw\([\s\S]*?\) from anon;/);
+    expect(source).toMatch(/revoke all on function tournament\.save_qualification_cutoff_draw\([\s\S]*?\) from authenticated;/);
+    expect(source).toMatch(/grant execute on function tournament\.save_qualification_cutoff_draw\([\s\S]*?\) to service_role;/);
+  });
+
+  it('folds an official-result revision fingerprint (matchId:version, sorted) into the v2 candidate snapshot', () => {
+    const source = readSource(MIGRATION_020_PATH);
+    expect(source).toMatch(/v_official_result_revision/);
+    expect(source).toMatch(/m\.id::text \|\| ':' \|\| m\.version::text/);
+    expect(source).toMatch(/v_candidate_snapshot := 'v2\|slots=' \|\| v_available_slots \|\| '\|candidates=' \|\|/);
+    expect(source).toContain("'|rev=' || v_official_result_revision");
+  });
+
+  it('still computes team points from official (finished + published + not-deleted) matches only', () => {
+    const source = readSource(MIGRATION_020_PATH);
+    expect(source).toMatch(/m\.status = 'finished'/);
+    expect(source).toMatch(/m\.result_workflow_status = 'published'/);
+    expect(source).toMatch(/m\.deleted_at is null/);
+  });
+
+  it('rejects a stale candidate pool BEFORE any write', () => {
+    const source = readSource(MIGRATION_020_PATH);
+    const bodyMatch = source.match(/as \$\$([\s\S]*?)\$\$;/);
+    const body = bodyMatch ? bodyMatch[1] : '';
+    const staleIndex = body.indexOf('QUALIFICATION_CUTOFF_DRAW_STALE_CANDIDATES');
+    const firstInsertIndex = body.indexOf('insert into tournament.tournament_qualification_cutoff_draws');
+    expect(staleIndex).toBeGreaterThan(-1);
+    expect(firstInsertIndex).toBeGreaterThan(-1);
+    expect(staleIndex).toBeLessThan(firstInsertIndex);
+  });
+
+  it('locks the group row (FOR UPDATE) BEFORE checking idempotency', () => {
+    const source = readSource(MIGRATION_020_PATH);
+    const bodyMatch = source.match(/as \$\$([\s\S]*?)\$\$;/);
+    const body = bodyMatch ? bodyMatch[1] : '';
+    const lockIndex = body.indexOf('for update');
+    const idempotencyIndex = body.indexOf('idempotency_key = p_idempotency_key');
+    expect(lockIndex).toBeGreaterThan(-1);
+    expect(idempotencyIndex).toBeGreaterThan(-1);
+    expect(lockIndex).toBeLessThan(idempotencyIndex);
+  });
+
+  it('has no exception handler that could swallow a write failure (no "exception when" block)', () => {
+    const bodyMatch = readSource(MIGRATION_020_PATH).match(/as \$\$([\s\S]*?)\$\$;/);
+    const body = bodyMatch ? bodyMatch[1] : '';
+    expect(body).not.toMatch(/exception\s+when/i);
+  });
+
+  it('performs no randomization anywhere', () => {
+    const source = readSource(MIGRATION_020_PATH);
+    expect(source).not.toMatch(/random\(\)/i);
+  });
+
+  it('is marked as a draft, not applied, in its own header/footer comment', () => {
+    const source = readSource(MIGRATION_020_PATH);
+    expect(source).toMatch(/STATUS: DRAFT/);
+    expect(source).toMatch(/NOT applied/);
+  });
+
+  it('does not modify migrations 001-019 (no ALTER on any table/index/function they define outside this file)', () => {
+    const source = readSource(MIGRATION_020_PATH);
     expect(source).not.toMatch(/alter table tournament\.tournament_result_submissions/);
     expect(source).not.toMatch(/alter table tournament\.tournament_matches/);
     expect(source).not.toMatch(/drop constraint/i);

@@ -41,6 +41,7 @@ be fixed and the same file re-run safely.
 | 14 | `014-full-result-publish-transaction.sql` | `tournament.publish_full_match_report(...)` — atomic Official Full Match Report publish RPC (service-role only; see the file's own security comments) |
 | 18 | `018-score-only-result-correction.sql` | Widens `tournament_result_submissions.stage` to allow `'correction'`; `tournament.correct_published_match_result(...)` — atomic score-only correction of an already-published official result (service-role only, `tournament_super_admin` gated at the app layer; see the file's own security comments) |
 | 19 | `019-qualification-cutoff-tie-draw.sql` | Creates `tournament_qualification_cutoff_draws`/`tournament_qualification_cutoff_draw_candidates` (new tables, separate from the G-U16 `tournament_qualification_draws`/`_candidates` — see the migration's own header for why); `tournament.save_qualification_cutoff_draw(...)` — atomic Qualification Cutoff Tie Draw (D-30) save RPC (service-role only, `tournament_super_admin` gated at the app layer) |
+| 20 | `020-qualification-cutoff-draw-resurrection-fix.sql` | `CREATE OR REPLACE FUNCTION` only, no table/column changes. Fixes a verified stale-detection bug in 019's RPC: the `candidate_snapshot` fingerprint only summarized the derived candidate id set + available slots, so an official-result correction that made a tie cluster disappear and a LATER correction that reverted it back to an identical candidate set could make an already-recorded (but never-superseded) draw silently "resurrect" as `draw_recorded` even though the group's official results were revised in between. Folds a monotonic official-result-revision fingerprint (`matchId:version` pairs, from `tournament_matches.version`) into the snapshot (format bumped `v1` → `v2`) so any official-result revision in the group invalidates a previously recorded draw's snapshot, even if the derived candidate set coincidentally repeats. Does not modify the already-applied 019 retroactively. |
 
 (Migrations 015–017 — Qualification Draw, Quick Result, and Standings Override's own atomic
 RPCs — exist in this folder and are reachable via their own runtime verifiers, but predate
@@ -50,10 +51,18 @@ this table row being added; see their own PRs' documentation.)
 `verify:tournament-result-correction-runtime` scenarios passed there (see PR #12's final
 review). Not applied to Production.
 
-**Migration 019 status**: DRAFT. Reviewed statically only. **Has not been applied to any
-environment** (Staging or Production) yet — the owner must manually apply it to
-`CFYL-Tournament-Staging` before `npm run verify:tournament-qualification-cutoff-draw-runtime`
-may be run. This PR does not run that verifier and does not apply the migration anywhere.
+**Migration 019 status**: applied to `CFYL-Tournament-Staging` by the owner. The first
+runtime-verification run there found a fixture/scenario-ordering bug in the verifier script
+itself (not in 019's RPC — see "Migration 020" below for the one genuine production-logic bug
+that run did surface) — the verifier has since been rewritten (5-team main-group fixture,
+dedicated concurrency fixture, dedicated resurrection-safety fixture) and needs to be re-run
+by the owner. Not applied to Production.
+
+**Migration 020 status**: DRAFT. Reviewed statically only. **Has not been applied to any
+environment** (Staging or Production) yet — this PR does not apply it. The owner must
+manually apply 020 to `CFYL-Tournament-Staging` (019 is already applied there) before
+re-running `npm run verify:tournament-qualification-cutoff-draw-runtime`. This PR does not
+run that verifier and does not apply either migration anywhere.
 
 **Migration status as of this task**: 001–013b are applied to `CFYL-Tournament-Staging`
 (see the Schedule Import and Qualification Draw sections below). **Migration 014 is also

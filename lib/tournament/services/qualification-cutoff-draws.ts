@@ -1,6 +1,7 @@
 import { getTournamentServiceClient } from '@/lib/tournament/db/supabase-tournament';
 import { getGroupStandings } from '@/lib/tournament/services/standings';
 import {
+  buildOfficialResultRevision,
   resolveQualificationCutoff,
   validateQualificationDrawSelection,
   type ExistingQualificationDrawInput,
@@ -121,6 +122,30 @@ async function loadActiveDraw(params: { client: TournamentClient; groupId: strin
   return { draw, existingDraw: { selectedTeamIds, candidateSnapshot: draw.candidate_snapshot } };
 }
 
+interface OfficialMatchRevisionRow {
+  id: string;
+  version: number;
+}
+
+/** Qualification Cutoff Tie Draw (D-30) resurrection-safety fingerprint —
+ * see resolveQualificationCutoff.ts buildOfficialResultRevision(). MUST use
+ * the exact same official-match filter as
+ * lib/tournament/services/standings.ts's isOfficialMatch() (finished,
+ * published, not deleted), or this service's staleness comparisons would
+ * silently diverge from what Standings itself considers official. */
+async function loadOfficialResultRevision(params: { client: TournamentClient; groupId: string }): Promise<string> {
+  const { data, error } = await params.client
+    .from('tournament_matches')
+    .select('id, version')
+    .eq('group_id', params.groupId)
+    .eq('status', 'finished')
+    .eq('result_workflow_status', 'published')
+    .is('deleted_at', null);
+  if (error) throw new Error(error.message);
+  const rows = (data || []) as OfficialMatchRevisionRow[];
+  return buildOfficialResultRevision(rows.map((r) => ({ matchId: r.id, version: r.version })));
+}
+
 async function resolveCurrentCutoff(params: {
   client: TournamentClient;
   tournamentId: string;
@@ -128,15 +153,17 @@ async function resolveCurrentCutoff(params: {
   groupCode: string;
 }): Promise<{ category: CategoryRow; group: GroupRow; resolution: ResolveQualificationCutoffResult; activeDraw: CutoffDrawRow | null }> {
   const { category, group, qualifyRankPerGroup } = await resolveTournamentGroup(params);
-  const [groupStandings, { draw, existingDraw }] = await Promise.all([
+  const [groupStandings, { draw, existingDraw }, officialResultRevision] = await Promise.all([
     getGroupStandings({ client: params.client, tournamentId: params.tournamentId, categoryCode: params.categoryCode, groupCode: params.groupCode }),
     loadActiveDraw({ client: params.client, groupId: group.id }),
+    loadOfficialResultRevision({ client: params.client, groupId: group.id }),
   ]);
 
   const resolution = resolveQualificationCutoff({
     teams: groupStandings.rows.map((r) => ({ teamId: r.teamId, points: r.points })),
     qualifyRankPerGroup,
     isGroupComplete: groupStandings.isComplete,
+    officialResultRevision,
     existingDraw,
   });
 

@@ -91,9 +91,9 @@ function baseDb(): Db {
     // A beats B and C; B beats C — A=6, B=3, C=0. NOT a tie (used for "not
     // applicable" tests). Tie scenarios override this per-test below.
     tournament_matches: [
-      { id: 'm1', group_id: GROUP_ID, category_id: CATEGORY_ID, home_team_id: 'team-a', away_team_id: 'team-b', winner_team_id: 'team-a', regulation_home_score: 2, regulation_away_score: 0, decided_by: 'regulation', status: 'finished', result_workflow_status: 'published', deleted_at: null },
-      { id: 'm2', group_id: GROUP_ID, category_id: CATEGORY_ID, home_team_id: 'team-a', away_team_id: 'team-c', winner_team_id: 'team-a', regulation_home_score: 2, regulation_away_score: 0, decided_by: 'regulation', status: 'finished', result_workflow_status: 'published', deleted_at: null },
-      { id: 'm3', group_id: GROUP_ID, category_id: CATEGORY_ID, home_team_id: 'team-b', away_team_id: 'team-c', winner_team_id: 'team-b', regulation_home_score: 1, regulation_away_score: 0, decided_by: 'regulation', status: 'finished', result_workflow_status: 'published', deleted_at: null },
+      { id: 'm1', group_id: GROUP_ID, category_id: CATEGORY_ID, home_team_id: 'team-a', away_team_id: 'team-b', winner_team_id: 'team-a', regulation_home_score: 2, regulation_away_score: 0, decided_by: 'regulation', status: 'finished', result_workflow_status: 'published', deleted_at: null, version: 2 },
+      { id: 'm2', group_id: GROUP_ID, category_id: CATEGORY_ID, home_team_id: 'team-a', away_team_id: 'team-c', winner_team_id: 'team-a', regulation_home_score: 2, regulation_away_score: 0, decided_by: 'regulation', status: 'finished', result_workflow_status: 'published', deleted_at: null, version: 2 },
+      { id: 'm3', group_id: GROUP_ID, category_id: CATEGORY_ID, home_team_id: 'team-b', away_team_id: 'team-c', winner_team_id: 'team-b', regulation_home_score: 1, regulation_away_score: 0, decided_by: 'regulation', status: 'finished', result_workflow_status: 'published', deleted_at: null, version: 2 },
     ],
     tournament_match_cards: [],
     tournament_standing_overrides: [],
@@ -134,6 +134,7 @@ function tiedDb(): Db {
       regulation_home_score: 3,
       regulation_away_score: 0,
       decided_by: 'regulation',
+      version: 2,
       ...overrides,
     };
   }

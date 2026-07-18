@@ -47,6 +47,20 @@ export interface ResolveQualificationCutoffParams {
    * calculateGroupStandings already uses). A cutoff decision is never made
    * for an incomplete group. */
   isGroupComplete: boolean;
+  /** Deterministic fingerprint of every official match's (id, version) pair
+   * in this group — see buildOfficialResultRevision() below. REQUIRED,
+   * because it is what makes staleness detection safe against
+   * "resurrection": the derived points/candidate-pool alone is a LOSSY
+   * summary that can coincidentally repeat (e.g. a Score Correction changes
+   * results, then a second correction reverts them to the exact same
+   * points distribution) even though the underlying official results were
+   * genuinely revised twice in between. tournament_matches.version only
+   * ever increments (it is the existing optimistic-lock column every
+   * publish/correction RPC already bumps), so a fingerprint built from it
+   * can never repeat once any relevant match has been revised again — this
+   * is baked into candidateSnapshot below, not just compared separately, so
+   * every caller gets the safety automatically. */
+  officialResultRevision: string;
   /** The currently active (non-superseded) manual draw result for this
    * group's cutoff, if one has been recorded. Absent/null when no draw has
    * happened yet. */
@@ -91,15 +105,32 @@ export interface ResolveQualificationCutoffResult {
   candidateSnapshot: string;
 }
 
-function buildCandidateSnapshot(drawCandidates: string[], availableSlots: number): string {
+/** Deterministic fingerprint of a group's official match state — every
+ * official (published) match's (id, version) pair, sorted by id. MUST be
+ * computed identically by every caller (see calculateGroupStandings.ts /
+ * lib/tournament/services/standings.ts / qualification-cutoff-draws.ts) and
+ * by Migration 020's SQL, or staleness comparisons across the app-layer/RPC
+ * boundary would be meaningless. Sorting the "id:version" strings directly
+ * is equivalent to sorting by id alone, since every id is a fixed-length
+ * UUID and therefore always differs before either string reaches its own
+ * colon. */
+export function buildOfficialResultRevision(matches: { matchId: string; version: number }[]): string {
+  return [...matches]
+    .map((m) => `${m.matchId}:${m.version}`)
+    .sort()
+    .join(',');
+}
+
+function buildCandidateSnapshot(drawCandidates: string[], availableSlots: number, officialResultRevision: string): string {
   const sorted = [...drawCandidates].sort();
-  return `v1|slots=${availableSlots}|candidates=${sorted.join(',')}`;
+  return `v2|slots=${availableSlots}|candidates=${sorted.join(',')}|rev=${officialResultRevision}`;
 }
 
 function emptyResult(params: {
   qualificationState: QualificationCutoffState;
   explanation: string;
   cutoffPosition: number;
+  officialResultRevision: string;
   automaticQualifiers?: string[];
   automaticEliminated?: string[];
 }): ResolveQualificationCutoffResult {
@@ -114,7 +145,7 @@ function emptyResult(params: {
     explanation: params.explanation,
     cutoffPosition: params.cutoffPosition,
     cutoffPoints: null,
-    candidateSnapshot: buildCandidateSnapshot([], 0),
+    candidateSnapshot: buildCandidateSnapshot([], 0, params.officialResultRevision),
   };
 }
 
@@ -125,13 +156,14 @@ function emptyResult(params: {
  * cluster itself — see qualificationState 'pending_draw' vs 'draw_recorded'.
  */
 export function resolveQualificationCutoff(params: ResolveQualificationCutoffParams): ResolveQualificationCutoffResult {
-  const { teams, qualifyRankPerGroup, isGroupComplete, existingDraw } = params;
+  const { teams, qualifyRankPerGroup, isGroupComplete, existingDraw, officialResultRevision } = params;
 
   if (!isGroupComplete) {
     return emptyResult({
       qualificationState: 'incomplete',
       explanation: 'ผลการแข่งขันในกลุ่มยังไม่ครบ ยังไม่สามารถตัดสินสิทธิ์เข้ารอบได้',
       cutoffPosition: qualifyRankPerGroup,
+      officialResultRevision,
     });
   }
 
@@ -147,6 +179,7 @@ export function resolveQualificationCutoff(params: ResolveQualificationCutoffPar
         qualificationState: 'resolved',
         explanation: 'จำนวนทีมในกลุ่มไม่เกินโควตาเข้ารอบ ทุกทีมเข้ารอบโดยไม่ต้องจับฉลาก',
         cutoffPosition: qualifyRankPerGroup,
+        officialResultRevision,
         automaticQualifiers: sorted.map((t) => t.teamId),
         automaticEliminated: [],
       }),
@@ -161,7 +194,15 @@ export function resolveQualificationCutoff(params: ResolveQualificationCutoffPar
 
   // No tie at the boundary at all (clusterSize === 1) OR the whole cluster
   // fits within the remaining slots (Tie Cluster อยู่เหนือเส้นทั้งหมด) —
-  // resolved cleanly by points, no draw needed.
+  // resolved cleanly by points, no draw needed. Any PREVIOUSLY active draw
+  // for this group is intentionally ignored here — a group that is
+  // 'resolved' by points has no candidate pool to compare a stale draw
+  // against at all (see "Qualification ปัจจุบันตัดสินได้ด้วยคะแนนและควรเป็น
+  // resolved" — the draw row, if any, is simply not consulted; it becomes
+  // relevant again only if a LATER correction reintroduces a straddling
+  // tie, at which point officialResultRevision guarantees it can never be
+  // silently treated as still valid, even if the reintroduced candidate set
+  // happens to be byte-identical to the original one).
   if (cluster.length <= availableSlots) {
     return {
       automaticQualifiers: [...aboveCluster, ...cluster],
@@ -177,13 +218,18 @@ export function resolveQualificationCutoff(params: ResolveQualificationCutoffPar
           : 'ทีมที่คะแนนเท่ากันตรงเส้นโควตาทั้งหมดอยู่ในโควตาเข้ารอบ เข้ารอบทั้งหมดโดยไม่ต้องจับฉลาก',
       cutoffPosition: qualifyRankPerGroup,
       cutoffPoints,
-      candidateSnapshot: buildCandidateSnapshot([], 0),
+      candidateSnapshot: buildCandidateSnapshot([], 0, officialResultRevision),
     };
   }
 
   // Straddling tie cluster — a manual draw is required for availableSlots
-  // among cluster.length candidates.
-  const candidateSnapshot = buildCandidateSnapshot(cluster, availableSlots);
+  // among cluster.length candidates. officialResultRevision is baked into
+  // the snapshot so that even a candidate SET + availableSlots that reverts
+  // to being byte-identical to an earlier draw's snapshot is still
+  // correctly detected as stale, as long as at least one official match in
+  // the group was revised (its version bumped) at any point in between —
+  // see buildOfficialResultRevision's doc comment.
+  const candidateSnapshot = buildCandidateSnapshot(cluster, availableSlots, officialResultRevision);
 
   if (!existingDraw) {
     return {

@@ -37,6 +37,17 @@ export interface CalculateGroupStandingsParams {
    * has recorded it. Absent/null when no cutoff tie exists or no draw has
    * been recorded yet — see resolveQualificationCutoff.ts. */
   existingCutoffDraw?: ExistingQualificationDrawInput | null;
+  /** Deterministic fingerprint of every official match's (id, version) pair
+   * in this group — see resolveQualificationCutoff.ts
+   * buildOfficialResultRevision(). Computed by the caller (not derived from
+   * `matches` here) because `OfficialMatchResult` deliberately has no
+   * `version` field — this keeps that shared type's shape unchanged for
+   * every other Standings consumer. REQUIRED: this is what makes
+   * `existingCutoffDraw` staleness detection safe against "resurrection"
+   * (see resolveQualificationCutoff.ts's own doc comment) — a caller that
+   * never intends to use Qualification Cutoff Tie Draw at all may pass an
+   * empty string here safely, since it only affects that one feature. */
+  officialResultRevision: string;
 }
 
 function computeRawStats(teams: TeamInput[], matches: OfficialMatchResult[], groupId: string, cardRows: RawCardRow[]): TeamRawStats[] {
@@ -128,6 +139,7 @@ export function calculateGroupStandings(params: CalculateGroupStandingsParams): 
     teams: rawStats.map((t) => ({ teamId: t.teamId, points: t.points })),
     qualifyRankPerGroup: params.qualifyRankPerGroup,
     isGroupComplete: isComplete,
+    officialResultRevision: params.officialResultRevision,
     existingDraw: params.existingCutoffDraw,
   });
   const qualifiedTeamIds = new Set([...cutoffResolution.automaticQualifiers, ...cutoffResolution.selectedByDraw]);

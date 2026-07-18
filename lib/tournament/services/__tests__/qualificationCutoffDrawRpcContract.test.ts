@@ -12,7 +12,7 @@ const CATEGORY_ID = 'cat-1';
 const GROUP_ID = 'group-a';
 
 function officialMatch(overrides: Row): Row {
-  return { category_id: CATEGORY_ID, status: 'finished', result_workflow_status: 'published', deleted_at: null, ...overrides };
+  return { category_id: CATEGORY_ID, status: 'finished', result_workflow_status: 'published', deleted_at: null, version: 2, ...overrides };
 }
 
 function fourTeamTiedDb(): Db {
@@ -38,7 +38,10 @@ function fourTeamTiedDb(): Db {
   };
 }
 
-const CANDIDATE_SNAPSHOT = 'v1|slots=1|candidates=B,C,D';
+// m1..m6 are all version 2 in fourTeamTiedDb() — mirrors
+// mockQualificationCutoffDrawRpc.ts's officialResultRevision()+candidateSnapshot()
+// format exactly (sorted "id:version" pairs joined by comma).
+const CANDIDATE_SNAPSHOT = 'v2|slots=1|candidates=B,C,D|rev=m1:2,m2:2,m3:2,m4:2,m5:2,m6:2';
 
 function baseArgs(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
