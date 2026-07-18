@@ -295,7 +295,13 @@ export default function FullMatchReportPage({ params }: { params: Promise<{ matc
         <h1 className="text-2xl font-bold text-slate-900">รายงานผลการแข่งขันฉบับสมบูรณ์ — {context.match_code}</h1>
         <div className="rounded-xl border-2 border-emerald-300 bg-emerald-50 p-5">
           <h2 className="font-bold text-emerald-900">ผลการแข่งขันเผยแพร่แล้ว</h2>
-          <p className="mt-2 text-sm text-emerald-900">หากต้องการแก้ไข ต้องเข้าสู่กระบวนการขอแก้ไขผลการแข่งขัน</p>
+          <p className="mt-2 text-sm text-emerald-900">หากต้องการแก้ไข ต้องเข้าสู่กระบวนการขอแก้ไขผลการแข่งขัน (เฉพาะ Super Admin)</p>
+          <a
+            href={`/admin/tournament/matches/${matchId}/correction?tournament_slug=${tournamentSlug}`}
+            className="mt-3 inline-block rounded-lg border border-emerald-700 bg-white px-4 py-2 text-sm font-semibold text-emerald-800"
+          >
+            ไปที่หน้าขอแก้ไขผลการแข่งขัน
+          </a>
         </div>
       </div>
     );
