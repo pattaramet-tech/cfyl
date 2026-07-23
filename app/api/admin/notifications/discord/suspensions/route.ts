@@ -23,10 +23,15 @@ interface SuspendedMatch {
   status?: string | null;
 }
 
+interface NotificationPlayer {
+  record: any;
+  match: SuspendedMatch | null;
+}
+
 interface NotificationGroup {
   ageCode: string;
   match: SuspendedMatch | null;
-  players: any[];
+  players: NotificationPlayer[];
 }
 
 const THAI_WEEKDAYS = [
@@ -189,7 +194,7 @@ export async function POST(request: NextRequest) {
   const allowed = new Set<SuspensionStatusKey>(
     statusFilter === 'all'
       ? SENDABLE
-      : ([statusFilter as SuspensionStatusKey].filter((key) => SENDABLE.includes(key)))
+      : [statusFilter as SuspensionStatusKey].filter((key) => SENDABLE.includes(key))
   );
 
   const groups = new Map<string, NotificationGroup>();
@@ -221,12 +226,12 @@ export async function POST(request: NextRequest) {
           : `${ageGroup.code}::no-next-match`;
         const existing = groups.get(groupKey);
         if (existing) {
-          existing.players.push(record);
+          existing.players.push({ record, match });
         } else {
           groups.set(groupKey, {
             ageCode: ageGroup.code,
             match,
-            players: [record],
+            players: [{ record, match }],
           });
         }
       }
@@ -240,8 +245,8 @@ export async function POST(request: NextRequest) {
     messages = [];
     for (const group of groups.values()) {
       const title = `${buildTitle(group.match, season.year)}\n\nรุ่น: ${group.ageCode}`;
-      const blocks = group.players.map((record, index) =>
-        buildPlayerBlock(index + 1, record, group.match)
+      const blocks = group.players.map((player, index) =>
+        buildPlayerBlock(index + 1, player.record, player.match)
       );
       messages.push(...packMessages(title, blocks, 8));
     }
