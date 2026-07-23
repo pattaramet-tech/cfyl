@@ -3,6 +3,11 @@ import { verifyAdminAuth } from '@/lib/admin-middleware';
 import { getDiscordSettings, isValidDiscordWebhook, sendDiscordMessage, packMessages } from '@/lib/discord';
 import { logAdminAction } from '@/lib/audit-log';
 import { getSuspensionStatus, getBangkokToday, type SuspensionStatusKey } from '@/lib/suspension-status';
+import {
+  formatSuspensionCause,
+  groupSuspensionNotifications,
+  type SuspensionNotificationInput,
+} from '@/lib/discord-suspension-format';
 import { createClient } from '@supabase/supabase-js';
 
 const supabaseAdmin = createClient(
@@ -14,40 +19,6 @@ const supabaseAdmin = createClient(
 export const dynamic = 'force-dynamic';
 
 const SENDABLE: SuspensionStatusKey[] = ['pending', 'active', 'no_next_match'];
-
-function fmtDate(d?: string | null): string {
-  if (!d) return '';
-  const date = new Date(d);
-  if (isNaN(date.getTime())) return String(d);
-  return date.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
-}
-
-function buildBlock(index: number, ageCode: string, record: any, statusLabel: string): string {
-  const p = record.player;
-  const shirt = p?.shirt_no ? ` #${p.shirt_no}` : '';
-  const d = record.suspension_details;
-  const lines: string[] = [];
-  lines.push(`รุ่น: ${ageCode}`);
-  lines.push(`${index}. ${p?.full_name || 'ไม่ทราบชื่อ'}${shirt}`);
-  lines.push(`   ทีม: ${record.team?.name || '-'}`);
-  lines.push(`   สถานะ: ${statusLabel}`);
-  if (d?.trigger_event) lines.push(`   เหตุการณ์: ${d.trigger_event}`);
-  lines.push(`   คะแนนวินัย: ${record.total_points} คะแนน`);
-  lines.push(`   โทษแบน: ${record.ban_matches} นัด`);
-
-  const matches = d?.suspended_matches || [];
-  if (matches.length > 0) {
-    for (const m of matches) {
-      const time = m.match_time ? ` เวลา ${String(m.match_time).substring(0, 5)}` : '';
-      const venue = m.is_home ? 'เหย้า' : 'เยือน';
-      lines.push(`   นัดที่โดนแบน: MatchDay ${m.matchday} | ${m.match_code}`);
-      lines.push(`   วันที่: ${fmtDate(m.match_date)}${time} | พบ ${m.opponent_name} (${venue})`);
-    }
-  } else {
-    lines.push(`   นัดที่โดนแบน: ไม่พบโปรแกรมนัดถัดไป`);
-  }
-  return lines.join('\n');
-}
 
 export async function POST(request: NextRequest) {
   const auth = await verifyAdminAuth(request);
@@ -73,7 +44,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'ยังไม่ได้ตั้งค่า Discord Webhook URL ที่ถูกต้อง' }, { status: 400 });
   }
 
-  // Season (title)
+  // Season (title fallback)
   const { data: season } = await supabaseAdmin
     .from('seasons')
     .select('id, year, name')
@@ -97,33 +68,59 @@ export async function POST(request: NextRequest) {
     statusFilter === 'all' ? SENDABLE : ([statusFilter as SuspensionStatusKey].filter((k) => SENDABLE.includes(k)))
   );
 
-  // Collect player blocks across age groups
-  const blocks: string[] = [];
-  let counter = 0;
+  // Collect one raw entry per (player, banned-match) pair across age groups. A player
+  // with two banned matches (12+ point threshold) contributes one entry per match — each
+  // entry always carries its OWN match, never a match borrowed from another player/entry.
+  const rawEntries: SuspensionNotificationInput[] = [];
+  let recordCount = 0;
   for (const ag of ageGroups || []) {
     const { data: suspensions } = await supabaseAdmin
       .from('suspensions')
-      .select('player_id, total_points, ban_matches, suspension_details, player:player_id(full_name, shirt_no), team:team_id(name)')
+      .select(
+        'player_id, total_points, ban_matches, suspension_type, accumulated_threshold, suspension_reason, suspension_details, player:player_id(full_name, shirt_no), team:team_id(name)'
+      )
       .eq('season_id', seasonId)
       .eq('age_group_id', ag.id)
       .order('total_points', { ascending: false });
 
-    for (const record of suspensions || []) {
-      const status = getSuspensionStatus(record as any, today);
+    for (const rawRecord of suspensions || []) {
+      const record: any = rawRecord;
+      const status = getSuspensionStatus(record, today);
       if (!allowed.has(status.key)) continue;
-      counter += 1;
-      blocks.push(buildBlock(counter, ag.code, record, status.label));
+      recordCount += 1;
+
+      const p = record.player;
+      const entryBase = {
+        ageCode: ag.code,
+        fullName: p?.full_name,
+        shirtNo: p?.shirt_no,
+        teamName: record.team?.name,
+        cause: formatSuspensionCause(record),
+      };
+
+      const matches = record.suspension_details?.suspended_matches || [];
+      if (matches.length === 0) {
+        rawEntries.push({ ...entryBase, match: null });
+      } else {
+        for (const m of matches) {
+          rawEntries.push({ ...entryBase, match: m });
+        }
+      }
     }
   }
 
-  const title = `🚫 แจ้งโทษแบน CFYL ${season.year}`;
-
-  // Send
+  // Build messages. groupSuspensionNotifications() groups entries by exact fixture
+  // (matchday + date) so each title names a single matchday/date, and keeps entries with
+  // no next match in their own separate "CFYL {year}"-titled group — never merged into a
+  // matchday-titled message. packMessages() itself is untouched.
   let messages: string[];
-  if (blocks.length === 0) {
+  if (rawEntries.length === 0) {
     messages = [`✅ ไม่มีนักกีฬาติดโทษแบนในรายการที่เลือก (CFYL ${season.year})`];
   } else {
-    messages = packMessages(title, blocks, 8);
+    messages = [];
+    for (const group of groupSuspensionNotifications(rawEntries, season.year)) {
+      messages.push(...packMessages(group.title, group.blocks, 8));
+    }
   }
 
   let sent = 0;
@@ -149,7 +146,7 @@ export async function POST(request: NextRequest) {
       seasonId,
       ageGroupId,
       statusFilter,
-      sentCount: blocks.length,
+      sentCount: recordCount,
       messageParts: messages.length,
       messagesSent: sent,
       failedCount: failed,
@@ -160,15 +157,15 @@ export async function POST(request: NextRequest) {
 
   if (!success) {
     return NextResponse.json(
-      { error: `ส่งบาง message ไม่สำเร็จ (${failed}/${messages.length}): ${firstError || ''}`, players: blocks.length, messagesSent: sent, messageParts: messages.length },
+      { error: `ส่งบาง message ไม่สำเร็จ (${failed}/${messages.length}): ${firstError || ''}`, players: recordCount, messagesSent: sent, messageParts: messages.length },
       { status: 502 }
     );
   }
 
   return NextResponse.json({
     success: true,
-    players: blocks.length,
+    players: recordCount,
     messageParts: messages.length,
-    empty: blocks.length === 0,
+    empty: recordCount === 0,
   });
 }
