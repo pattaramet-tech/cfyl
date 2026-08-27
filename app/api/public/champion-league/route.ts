@@ -1,11 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabase } from '@/lib/supabase';
-import { buildRegularLeagueStandings } from '@/lib/league-standings';
 import {
   calculateChampionLeagueStandings,
   getChampionLeaguePlacementPairings,
   getChampionLeagueProgress,
-  type ChampionLeagueQualifier,
+  parseChampionLeagueQualifierSnapshot,
 } from '@/lib/champion-league';
 import type { Match } from '@/types/db';
 
@@ -24,7 +23,8 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const [matchesResult, teamsResult] = await Promise.all([
+    const scope = { season_id: seasonId, age_group_id: ageGroupId, division_id: divisionId };
+    const [matchesResult, snapshotResult] = await Promise.all([
       supabase
         .from('matches')
         .select(
@@ -41,46 +41,54 @@ export async function GET(request: NextRequest) {
         .order('match_date', { ascending: true })
         .order('match_time', { ascending: true }),
       supabase
-        .from('teams')
-        .select('id, name, short_name, logo_url, active')
+        .from('league_champion_league_snapshots')
+        .select('id, qualifiers, regular_match_count, activated_at')
         .eq('season_id', seasonId)
         .eq('age_group_id', ageGroupId)
         .eq('division_id', divisionId)
-        .eq('active', true),
+        .maybeSingle(),
     ]);
 
     if (matchesResult.error) throw matchesResult.error;
-    if (teamsResult.error) throw teamsResult.error;
+    if (snapshotResult.error) throw snapshotResult.error;
 
-    const matches = (matchesResult.data || []) as unknown as Match[];
-    const teams = teamsResult.data || [];
-    const regularStandings = buildRegularLeagueStandings(matches, teams, {
-      seasonId,
-      ageGroupId,
-      divisionId,
-    });
-
-    const qualifiers: ChampionLeagueQualifier[] = regularStandings.slice(0, 4).map((row, index) => ({
-      team_id: row.team_id,
-      league_rank: index + 1,
-      team_name: row.team_name,
-      team_short_name: row.team_short_name,
-      team_logo_url: row.team_logo_url,
-    }));
-
-    const standings = calculateChampionLeagueStandings(qualifiers, matches);
-    const progress = getChampionLeagueProgress(qualifiers, matches);
-    const pairings = getChampionLeaguePlacementPairings(standings, progress);
     const rawMatches = (matchesResult.data || []) as Array<Match & Record<string, unknown>>;
+    const qualifiers = snapshotResult.data
+      ? parseChampionLeagueQualifierSnapshot(snapshotResult.data.qualifiers)
+      : null;
 
-    const active = rawMatches.some(
-      (match) =>
-        match.league_phase != null &&
-        ['champion_league', 'final', 'third_place'].includes(match.league_phase)
-    );
+    if (!snapshotResult.data || !qualifiers) {
+      return NextResponse.json({
+        scope,
+        active: false,
+        qualifiers: [],
+        standings: [],
+        progress: getChampionLeagueProgress([], rawMatches),
+        pairings: null,
+        matches: {
+          champion_league: rawMatches.filter((match) => match.league_phase === 'champion_league'),
+          final: rawMatches.filter((match) => match.league_phase === 'final'),
+          third_place: rawMatches.filter((match) => match.league_phase === 'third_place'),
+        },
+        activation: null,
+        rules: {
+          win_points: 3,
+          draw_points: 1,
+          loss_points: 0,
+          tied_points_tiebreak: 'frozen_regular_league_rank',
+          required_matches_per_team: 3,
+          required_unique_matches: 6,
+        },
+      });
+    }
+
+    const standings = calculateChampionLeagueStandings(qualifiers, rawMatches);
+    const progress = getChampionLeagueProgress(qualifiers, rawMatches);
+    const pairings = getChampionLeaguePlacementPairings(standings, progress);
 
     return NextResponse.json({
-      active,
+      scope,
+      active: true,
       qualifiers,
       standings,
       progress,
@@ -90,11 +98,16 @@ export async function GET(request: NextRequest) {
         final: rawMatches.filter((match) => match.league_phase === 'final'),
         third_place: rawMatches.filter((match) => match.league_phase === 'third_place'),
       },
+      activation: {
+        id: snapshotResult.data.id,
+        activated_at: snapshotResult.data.activated_at,
+        regular_match_count: snapshotResult.data.regular_match_count,
+      },
       rules: {
         win_points: 3,
         draw_points: 1,
         loss_points: 0,
-        tied_points_tiebreak: 'regular_league_rank',
+        tied_points_tiebreak: 'frozen_regular_league_rank',
         required_matches_per_team: 3,
         required_unique_matches: 6,
       },

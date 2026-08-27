@@ -95,6 +95,23 @@ CREATE TABLE matches (
   UNIQUE(season_id, match_code)
 );
 
+-- 6A. League Champion League activation snapshot
+CREATE TABLE league_champion_league_snapshots (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  season_id UUID NOT NULL REFERENCES seasons(id) ON DELETE CASCADE,
+  age_group_id UUID NOT NULL REFERENCES age_groups(id) ON DELETE CASCADE,
+  division_id UUID NOT NULL REFERENCES divisions(id) ON DELETE CASCADE,
+  qualifiers JSONB NOT NULL CHECK (
+    jsonb_typeof(qualifiers) = 'array'
+    AND jsonb_array_length(qualifiers) = 4
+  ),
+  regular_match_count INT NOT NULL CHECK (regular_match_count > 0),
+  activated_by UUID,
+  activated_at TIMESTAMP DEFAULT now(),
+  created_at TIMESTAMP DEFAULT now(),
+  UNIQUE(season_id, age_group_id, division_id)
+);
+
 -- 7. Goals table (Top Scorers data)
 -- NOTE: No unique constraint - supports multiple goal entries per player per match
 -- Each row represents one goal event (goals column = count, usually 1)
@@ -142,6 +159,8 @@ CREATE TABLE suspensions (
 CREATE INDEX idx_matches_season_age_div ON matches(season_id, age_group_id, division_id);
 CREATE INDEX idx_matches_date ON matches(match_date);
 CREATE INDEX idx_matches_matchday ON matches(season_id, matchday);
+CREATE INDEX idx_matches_league_phase_scope ON matches(season_id, age_group_id, division_id, league_phase, status);
+CREATE INDEX idx_league_champion_league_snapshot_scope ON league_champion_league_snapshots(season_id, age_group_id, division_id);
 CREATE INDEX idx_players_season_team ON players(season_id, team_id);
 CREATE INDEX idx_players_code ON players(player_code, season_id);
 CREATE INDEX idx_goals_match ON goals(match_id);
@@ -158,6 +177,7 @@ ALTER TABLE divisions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE teams ENABLE ROW LEVEL SECURITY;
 ALTER TABLE players ENABLE ROW LEVEL SECURITY;
 ALTER TABLE matches ENABLE ROW LEVEL SECURITY;
+ALTER TABLE league_champion_league_snapshots ENABLE ROW LEVEL SECURITY;
 ALTER TABLE goals ENABLE ROW LEVEL SECURITY;
 ALTER TABLE cards ENABLE ROW LEVEL SECURITY;
 ALTER TABLE suspensions ENABLE ROW LEVEL SECURITY;
@@ -169,6 +189,7 @@ CREATE POLICY "divisions are readable by all" ON divisions FOR SELECT USING (tru
 CREATE POLICY "teams are readable by all" ON teams FOR SELECT USING (true);
 CREATE POLICY "players are readable by all" ON players FOR SELECT USING (true);
 CREATE POLICY "matches are readable by all" ON matches FOR SELECT USING (true);
+CREATE POLICY "league champion snapshots are readable by all" ON league_champion_league_snapshots FOR SELECT USING (true);
 CREATE POLICY "goals are readable by all" ON goals FOR SELECT USING (true);
 CREATE POLICY "cards are readable by all" ON cards FOR SELECT USING (true);
 CREATE POLICY "suspensions are readable by all" ON suspensions FOR SELECT USING (true);

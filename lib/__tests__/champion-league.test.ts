@@ -3,7 +3,9 @@ import {
   calculateChampionLeagueStandings,
   getChampionLeaguePlacementPairings,
   getChampionLeagueProgress,
+  getRegularLeagueActivationReadiness,
   isRegularLeagueMatch,
+  parseChampionLeagueQualifierSnapshot,
   type ChampionLeagueQualifier,
 } from '@/lib/champion-league';
 import { buildRegularLeagueStandings } from '@/lib/league-standings';
@@ -128,5 +130,101 @@ describe('Champion League', () => {
     const progress = getChampionLeagueProgress(qualifiers, matches);
     expect(progress.complete).toBe(false);
     expect(progress.duplicate_pairings).toBe(1);
+  });
+
+  it('freezes only a valid four-team qualifier snapshot with unique ranks', () => {
+    expect(
+      parseChampionLeagueQualifierSnapshot(qualifiers)?.map(({ team_id, league_rank, team_name }) => ({
+        team_id,
+        league_rank,
+        team_name,
+      }))
+    ).toEqual(qualifiers.map(({ team_id, league_rank, team_name }) => ({ team_id, league_rank, team_name })));
+    expect(
+      parseChampionLeagueQualifierSnapshot([
+        qualifiers[0],
+        { ...qualifiers[1], league_rank: 1 },
+        qualifiers[2],
+        qualifiers[3],
+      ])
+    ).toBeNull();
+    expect(
+      parseChampionLeagueQualifierSnapshot([
+        qualifiers[0],
+        { ...qualifiers[1], team_id: 'A' },
+        qualifiers[2],
+        qualifiers[3],
+      ])
+    ).toBeNull();
+  });
+
+  it('requires every regular fixture to be finished and every active team to appear before activation', () => {
+    const completed = [
+      match('R1', 'A', 'B', 1, 0, 'regular'),
+      match('R2', 'C', 'D', 2, 2, 'regular'),
+    ];
+    expect(getRegularLeagueActivationReadiness(completed, ['A', 'B', 'C', 'D']).ready).toBe(true);
+
+    const unfinished: Match = {
+      ...match('R3', 'A', 'C', 0, 0, 'regular'),
+      status: 'scheduled',
+      home_score: null,
+      away_score: null,
+    };
+    const readiness = getRegularLeagueActivationReadiness(
+      [...completed, unfinished],
+      ['A', 'B', 'C', 'D']
+    );
+    expect(readiness.ready).toBe(false);
+    expect(readiness.unfinished_match_count).toBe(1);
+    expect(getRegularLeagueActivationReadiness(completed, ['A', 'B', 'C', 'D', 'E']).ready).toBe(false);
+  });
+
+  it('blocks completion and ignores an ambiguous pairing when a duplicate fixture exists even if duplicate is unplayed', () => {
+    const six = [
+      match('1', 'A', 'B', 3, 0),
+      match('2', 'A', 'C', 1, 0),
+      match('3', 'A', 'D', 1, 0),
+      match('4', 'B', 'C', 1, 0),
+      match('5', 'B', 'D', 1, 0),
+      match('6', 'C', 'D', 1, 0),
+    ];
+    const scheduledDuplicate: Match = {
+      ...match('7', 'B', 'A', 0, 0),
+      status: 'scheduled',
+      home_score: null,
+      away_score: null,
+    };
+    const fixtures = [...six, scheduledDuplicate];
+    const progress = getChampionLeagueProgress(qualifiers, fixtures);
+    expect(progress.complete).toBe(false);
+    expect(progress.fixture_matches).toBe(7);
+    expect(progress.duplicate_pairings).toBe(1);
+    expect(progress.finished_unique_matches).toBe(5);
+
+    const rows = calculateChampionLeagueStandings(qualifiers, fixtures);
+    expect(rows.find((row) => row.team_id === 'A')?.played).toBe(2);
+    expect(rows.find((row) => row.team_id === 'B')?.played).toBe(2);
+  });
+
+  it('blocks completion when an invalid scheduled Champion League fixture exists', () => {
+    const six = [
+      match('1', 'A', 'B', 1, 0),
+      match('2', 'A', 'C', 1, 0),
+      match('3', 'A', 'D', 1, 0),
+      match('4', 'B', 'C', 1, 0),
+      match('5', 'B', 'D', 1, 0),
+      match('6', 'C', 'D', 1, 0),
+    ];
+    const invalidScheduled: Match = {
+      ...match('7', 'A', 'X', 0, 0),
+      status: 'postponed',
+      home_score: null,
+      away_score: null,
+    };
+    const progress = getChampionLeagueProgress(qualifiers, [...six, invalidScheduled]);
+    expect(progress.complete).toBe(false);
+    expect(progress.invalid_pairings).toBe(1);
+    expect(progress.fixture_matches).toBe(7);
   });
 });
