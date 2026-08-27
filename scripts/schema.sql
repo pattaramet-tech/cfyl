@@ -84,14 +84,35 @@ CREATE TABLE matches (
   home_score INT,
   away_score INT,
   status TEXT NOT NULL DEFAULT 'scheduled' CHECK (status IN ('scheduled', 'finished', 'postponed', 'cancelled')),
-  stage TEXT, -- nullable: null = league; group/round_of_16/quarter_final/semi_final/final/third_place
+  league_phase TEXT CHECK (league_phase IS NULL OR league_phase IN ('regular', 'champion_league', 'final', 'third_place')), -- League only: null/regular = regular league
+  stage TEXT, -- legacy Tournament V1 field; Tournament V2 uses tournament_* tables
   tournament_group_id UUID REFERENCES tournament_groups(id) ON DELETE SET NULL, -- tournament group-stage matches
   venue TEXT,
   winner_team_id UUID REFERENCES teams(id) ON DELETE SET NULL, -- knockout penalty/draw decider
   note TEXT,
   created_at TIMESTAMP DEFAULT now(),
   updated_at TIMESTAMP DEFAULT now(),
-  UNIQUE(season_id, match_code)
+  UNIQUE(season_id, match_code),
+  CONSTRAINT matches_post_league_division_check CHECK (
+    league_phase IS NULL OR league_phase = 'regular' OR division_id IS NOT NULL
+  )
+);
+
+-- 6A. League Champion League activation snapshot
+CREATE TABLE league_champion_league_snapshots (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  season_id UUID NOT NULL REFERENCES seasons(id) ON DELETE CASCADE,
+  age_group_id UUID NOT NULL REFERENCES age_groups(id) ON DELETE CASCADE,
+  division_id UUID NOT NULL REFERENCES divisions(id) ON DELETE CASCADE,
+  qualifiers JSONB NOT NULL CHECK (
+    jsonb_typeof(qualifiers) = 'array'
+    AND jsonb_array_length(qualifiers) = 4
+  ),
+  regular_match_count INT NOT NULL CHECK (regular_match_count > 0),
+  activated_by UUID,
+  activated_at TIMESTAMP DEFAULT now(),
+  created_at TIMESTAMP DEFAULT now(),
+  UNIQUE(season_id, age_group_id, division_id)
 );
 
 -- 7. Goals table (Top Scorers data)
@@ -141,6 +162,21 @@ CREATE TABLE suspensions (
 CREATE INDEX idx_matches_season_age_div ON matches(season_id, age_group_id, division_id);
 CREATE INDEX idx_matches_date ON matches(match_date);
 CREATE INDEX idx_matches_matchday ON matches(season_id, matchday);
+CREATE INDEX idx_matches_league_phase_scope ON matches(season_id, age_group_id, division_id, league_phase, status);
+CREATE UNIQUE INDEX uq_matches_champion_league_pair_scope ON matches(
+  season_id,
+  age_group_id,
+  division_id,
+  LEAST(home_team_id, away_team_id),
+  GREATEST(home_team_id, away_team_id)
+) WHERE league_phase = 'champion_league';
+CREATE UNIQUE INDEX uq_matches_league_placement_phase_scope ON matches(
+  season_id,
+  age_group_id,
+  division_id,
+  league_phase
+) WHERE league_phase IN ('final', 'third_place');
+CREATE INDEX idx_league_champion_league_snapshot_scope ON league_champion_league_snapshots(season_id, age_group_id, division_id);
 CREATE INDEX idx_players_season_team ON players(season_id, team_id);
 CREATE INDEX idx_players_code ON players(player_code, season_id);
 CREATE INDEX idx_goals_match ON goals(match_id);
@@ -157,6 +193,7 @@ ALTER TABLE divisions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE teams ENABLE ROW LEVEL SECURITY;
 ALTER TABLE players ENABLE ROW LEVEL SECURITY;
 ALTER TABLE matches ENABLE ROW LEVEL SECURITY;
+ALTER TABLE league_champion_league_snapshots ENABLE ROW LEVEL SECURITY;
 ALTER TABLE goals ENABLE ROW LEVEL SECURITY;
 ALTER TABLE cards ENABLE ROW LEVEL SECURITY;
 ALTER TABLE suspensions ENABLE ROW LEVEL SECURITY;
@@ -168,6 +205,7 @@ CREATE POLICY "divisions are readable by all" ON divisions FOR SELECT USING (tru
 CREATE POLICY "teams are readable by all" ON teams FOR SELECT USING (true);
 CREATE POLICY "players are readable by all" ON players FOR SELECT USING (true);
 CREATE POLICY "matches are readable by all" ON matches FOR SELECT USING (true);
+CREATE POLICY "league champion snapshots are readable by all" ON league_champion_league_snapshots FOR SELECT USING (true);
 CREATE POLICY "goals are readable by all" ON goals FOR SELECT USING (true);
 CREATE POLICY "cards are readable by all" ON cards FOR SELECT USING (true);
 CREATE POLICY "suspensions are readable by all" ON suspensions FOR SELECT USING (true);

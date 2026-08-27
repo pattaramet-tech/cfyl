@@ -1,9 +1,14 @@
 import { supabase } from '@/lib/supabase';
 import { NextRequest, NextResponse } from 'next/server';
-import { calculateStandings, calculateTeamForm } from '@/lib/calculations';
-import type { Match, Standing } from '@/types/db';
+import { buildRegularLeagueStandings, type LeagueStandingTeam } from '@/lib/league-standings';
+import { isRegularLeagueMatch } from '@/lib/champion-league';
+import type { Match } from '@/types/db';
 
 export const dynamic = 'force-dynamic';
+
+interface TeamRow extends LeagueStandingTeam {
+  active?: boolean | null;
+}
 
 export async function GET(request: NextRequest) {
   try {
@@ -20,7 +25,6 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    // Get all matches for this season/age group/division
     const { data: matches, error: matchError } = await supabase
       .from('matches')
       .select('*')
@@ -30,18 +34,13 @@ export async function GET(request: NextRequest) {
 
     if (matchError) throw matchError;
 
-    const safeMatches = matches || [];
+    const safeMatches = (matches || []) as Match[];
+    const regularMatches = safeMatches.filter(isRegularLeagueMatch);
 
-    // Derive team ids from matches
     const teamIdsFromMatches = Array.from(
-      new Set(
-        (safeMatches as Match[])
-          .flatMap((m) => [m.home_team_id, m.away_team_id])
-          .filter(Boolean)
-      )
+      new Set(regularMatches.flatMap((m) => [m.home_team_id, m.away_team_id]).filter(Boolean))
     );
 
-    // Get teams by division_id (primary) - filter active teams only
     const { data: teamsByDiv, error: teamDivError } = await supabase
       .from('teams')
       .select('id, name, short_name, logo_url, active')
@@ -52,8 +51,7 @@ export async function GET(request: NextRequest) {
 
     if (teamDivError) throw teamDivError;
 
-    // Get teams by match ids (handles division_id = null case) - filter active teams only
-    let teamsByMatchIds: any[] = [];
+    let teamsByMatchIds: TeamRow[] = [];
     if (teamIdsFromMatches.length > 0) {
       const { data: matchTeams, error: matchTeamError } = await supabase
         .from('teams')
@@ -62,56 +60,23 @@ export async function GET(request: NextRequest) {
         .eq('active', true);
 
       if (matchTeamError) throw matchTeamError;
-
       teamsByMatchIds = matchTeams || [];
     }
 
-    // Merge teams by id (avoid duplicates) and ensure all are active
-    const teamMap = new Map<string, any>();
-    (teamsByDiv || []).forEach((t) => {
-      if (t.active !== false) teamMap.set(t.id, t);
+    const teamMap = new Map<string, TeamRow>();
+    (teamsByDiv || []).forEach((team) => {
+      if (team.active !== false) teamMap.set(team.id, team);
     });
-    teamsByMatchIds.forEach((t) => {
-      if (t.active !== false) teamMap.set(t.id, t);
+    teamsByMatchIds.forEach((team) => {
+      if (team.active !== false) teamMap.set(team.id, team);
     });
 
     const teams = Array.from(teamMap.values());
     const inactiveTeamsFiltered = (teamsByDiv || []).length + teamsByMatchIds.length - teams.length;
-
-    // Filter: finished matches with scores
-    const scoredMatches = (safeMatches as Match[]).filter(
-      (m) => m.status === 'finished' && m.home_score !== null && m.away_score !== null
-    );
-
-    // Calculate standings for each team
-    const standings: any[] = teams.map((team) => {
-      const stats = calculateStandings(scoredMatches, team.id);
-      const form = calculateTeamForm(scoredMatches, team.id, 5);
-      return {
-        season_id: seasonId,
-        age_group_id: ageGroupId,
-        division_id: divisionId,
-        team_id: team.id,
-        team_name: team.name,
-        team_short_name: team.short_name,
-        team_logo_url: team.logo_url,
-        played: stats.played,
-        wins: stats.wins,
-        draws: stats.draws,
-        losses: stats.losses,
-        goals_for: stats.goalsFor,
-        goals_against: stats.goalsAgainst,
-        goal_diff: stats.goalDiff,
-        points: stats.points,
-        form,
-      };
-    });
-
-    // Sort by points (desc), goal_diff (desc), goals_for (desc)
-    standings.sort((a, b) => {
-      if (b.points !== a.points) return b.points - a.points;
-      if (b.goal_diff !== a.goal_diff) return b.goal_diff - a.goal_diff;
-      return b.goals_for - a.goals_for;
+    const standings = buildRegularLeagueStandings(safeMatches, teams, {
+      seasonId,
+      ageGroupId,
+      divisionId,
     });
 
     if (debug) {
@@ -126,7 +91,8 @@ export async function GET(request: NextRequest) {
           inactiveTeamsFiltered,
           finalTeamsCount: teams.length,
           allMatchesCount: safeMatches.length,
-          scoredMatchesCount: scoredMatches.length,
+          regularMatchesCount: regularMatches.length,
+          postLeagueMatchesExcluded: safeMatches.length - regularMatches.length,
         },
       });
     }

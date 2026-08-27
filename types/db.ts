@@ -60,6 +60,8 @@ export interface Player {
   updated_at: string;
 }
 
+export type LeaguePhase = 'regular' | 'champion_league' | 'final' | 'third_place';
+
 export interface Match {
   id: string;
   match_code: string;
@@ -76,6 +78,7 @@ export interface Match {
   away_score: number | null;
   status: 'scheduled' | 'finished' | 'postponed' | 'cancelled';
   result_type?: 'normal' | 'home_win_by_bye' | 'away_win_by_bye';
+  league_phase?: LeaguePhase | null;
   stage?: string | null;
   tournament_group_id?: string | null;
   venue?: string | null;

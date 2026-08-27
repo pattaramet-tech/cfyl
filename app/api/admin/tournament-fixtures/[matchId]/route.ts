@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { verifyAdminAuth } from '@/lib/admin-middleware';
 import { logAdminAction } from '@/lib/audit-log';
-import { FIXTURE_STAGES } from '@/lib/tournament-fixtures';
+import { FIXTURE_STAGES, isLegacyTournamentV1Fixture } from '@/lib/tournament-fixtures';
 import { createClient } from '@supabase/supabase-js';
 
 const supabaseAdmin = createClient(
@@ -18,13 +18,28 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
   if (!auth.authenticated || !auth.profile) {
     return NextResponse.json({ error: auth.error || 'Unauthorized' }, { status: 401 });
   }
+  if (!auth.profile.can_edit_matches) {
+    return NextResponse.json({ error: 'You do not have permission to edit matches' }, { status: 403 });
+  }
 
   const { data: existing } = await supabaseAdmin
     .from('matches')
-    .select('id, season_id, age_group_id, match_code, stage, tournament_group_id, home_team_id, away_team_id')
+    .select('id, season_id, age_group_id, division_id, match_code, stage, league_phase, status, tournament_group_id, home_team_id, away_team_id')
     .eq('id', matchId)
     .single();
   if (!existing) return NextResponse.json({ error: 'ไม่พบแมตช์' }, { status: 404 });
+  if (!isLegacyTournamentV1Fixture(existing)) {
+    return NextResponse.json(
+      { error: 'Route นี้แก้ไขได้เฉพาะ Tournament V1 fixture เท่านั้น' },
+      { status: 409 }
+    );
+  }
+  if (existing.status === 'finished') {
+    return NextResponse.json(
+      { error: 'แมตช์ที่แข่งจบแล้วเป็น read-only ใน Tournament fixture editor' },
+      { status: 409 }
+    );
+  }
 
   const body = await request.json();
   const updates: Record<string, unknown> = { updated_at: new Date().toISOString() };
@@ -41,7 +56,7 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
   }
   if (body.stage !== undefined) {
     const stage = String(body.stage).trim() || 'group';
-    if (!FIXTURE_STAGES.includes(stage as any)) {
+    if (!FIXTURE_STAGES.includes(stage as (typeof FIXTURE_STAGES)[number])) {
       return NextResponse.json({ error: `stage ไม่ถูกต้อง (${FIXTURE_STAGES.join('/')})` }, { status: 400 });
     }
     updates.stage = stage;
@@ -53,6 +68,30 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
   if (homeId === awayId) {
     return NextResponse.json({ error: 'home_team กับ away_team ต้องไม่ใช่ทีมเดียวกัน' }, { status: 400 });
   }
+
+  const { data: scopedTeams, error: scopedTeamsError } = await supabaseAdmin
+    .from('teams')
+    .select('id, season_id, age_group_id, division_id')
+    .in('id', [homeId, awayId]);
+  if (scopedTeamsError) {
+    return NextResponse.json({ error: 'ตรวจสอบขอบเขตทีมไม่สำเร็จ' }, { status: 500 });
+  }
+  const scopedTeamMap = new Map((scopedTeams || []).map((team) => [team.id, team]));
+  for (const teamId of [homeId, awayId]) {
+    const team = scopedTeamMap.get(teamId);
+    if (
+      !team ||
+      team.season_id !== existing.season_id ||
+      team.age_group_id !== existing.age_group_id ||
+      team.division_id != null
+    ) {
+      return NextResponse.json(
+        { error: 'Tournament V1 fixture ใช้ได้เฉพาะทีม Tournament ใน season/age group เดียวกัน' },
+        { status: 400 }
+      );
+    }
+  }
+
   if (body.home_team_id !== undefined) updates.home_team_id = homeId;
   if (body.away_team_id !== undefined) updates.away_team_id = awayId;
 
@@ -104,10 +143,28 @@ export async function DELETE(request: NextRequest, { params }: { params: Promise
   if (!auth.authenticated || !auth.profile) {
     return NextResponse.json({ error: auth.error || 'Unauthorized' }, { status: 401 });
   }
+  if (!auth.profile.can_edit_matches) {
+    return NextResponse.json({ error: 'You do not have permission to edit matches' }, { status: 403 });
+  }
 
   const { data: match } = await supabaseAdmin
-    .from('matches').select('id, match_code').eq('id', matchId).single();
+    .from('matches')
+    .select('id, match_code, division_id, stage, league_phase, status')
+    .eq('id', matchId)
+    .single();
   if (!match) return NextResponse.json({ error: 'ไม่พบแมตช์' }, { status: 404 });
+  if (!isLegacyTournamentV1Fixture(match)) {
+    return NextResponse.json(
+      { error: 'Route นี้ลบได้เฉพาะ Tournament V1 fixture เท่านั้น' },
+      { status: 409 }
+    );
+  }
+  if (match.status === 'finished') {
+    return NextResponse.json(
+      { error: 'แมตช์ที่แข่งจบแล้วเป็น read-only ใน Tournament fixture editor' },
+      { status: 409 }
+    );
+  }
 
   // Block delete if results recorded (goals/cards)
   const [{ count: goals }, { count: cards }] = await Promise.all([

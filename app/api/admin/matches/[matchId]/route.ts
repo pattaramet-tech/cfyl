@@ -2,6 +2,17 @@ import { NextRequest, NextResponse } from 'next/server';
 import { verifyAdminAuth, badRequestResponse, internalErrorResponse } from '@/lib/admin-middleware';
 import { logAdminAction } from '@/lib/audit-log';
 import { refreshSuspensionServingMatches } from '@/lib/suspension-calc';
+import {
+  calculateChampionLeagueStandings,
+  getChampionLeaguePlacementPairings,
+  getChampionLeagueProgress,
+  isGeneratedLeaguePostMatchCode,
+  isSameTeamPair,
+  parseChampionLeagueQualifierSnapshot,
+  validateChampionLeaguePlacementFixtures,
+  type ChampionLeagueQualifier,
+} from '@/lib/champion-league';
+import type { Match } from '@/types/db';
 import { createClient } from '@supabase/supabase-js';
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -42,7 +53,7 @@ export async function PUT(
 
     // Parse request body
     const body = await request.json();
-    const { home_score, away_score, status, winner_team_id, result_type, match_date, match_time } = body;
+    const { home_score, away_score, status, winner_team_id, result_type, match_date, match_time, league_phase } = body;
 
     // Validate inputs
     const isByeResult = result_type && result_type !== 'normal';
@@ -66,6 +77,11 @@ export async function PUT(
 
     if (status && !['scheduled', 'finished', 'postponed', 'cancelled'].includes(status)) {
       return badRequestResponse('Invalid status');
+    }
+
+    const allowedLeaguePhases = ['regular', 'champion_league', 'final', 'third_place'];
+    if (league_phase != null && !allowedLeaguePhases.includes(league_phase)) {
+      return badRequestResponse('Invalid league_phase');
     }
 
     const rawResultType = result_type;
@@ -100,6 +116,134 @@ export async function PUT(
       );
     }
 
+    const isGeneratedPostLeagueFixture = isGeneratedLeaguePostMatchCode(currentMatch.match_code);
+    if (isGeneratedPostLeagueFixture) {
+      if (
+        typeof league_phase !== 'undefined' &&
+        (league_phase || null) !== (currentMatch.league_phase || null)
+      ) {
+        return badRequestResponse('Generated Champion League fixture phase is locked');
+      }
+
+      const requestedDate = typeof match_date === 'undefined' ? currentMatch.match_date : (match_date || null);
+      const currentTime = typeof currentMatch.match_time === 'string' && currentMatch.match_time.length === 5
+        ? `${currentMatch.match_time}:00`
+        : (currentMatch.match_time || null);
+      const requestedTimeRaw = typeof match_time === 'undefined' ? currentMatch.match_time : match_time;
+      const requestedTime = typeof requestedTimeRaw === 'string' && requestedTimeRaw.length === 5
+        ? `${requestedTimeRaw}:00`
+        : (requestedTimeRaw || null);
+
+      if (requestedDate !== (currentMatch.match_date || null) || requestedTime !== currentTime) {
+        return NextResponse.json(
+          { error: 'Generated Champion League fixture schedule must be edited through the fixture scheduler' },
+          { status: 409 }
+        );
+      }
+    }
+
+    const effectiveLeaguePhase =
+      typeof league_phase === 'undefined' ? currentMatch.league_phase : (league_phase || null);
+    const isPostLeaguePhase = ['champion_league', 'final', 'third_place'].includes(effectiveLeaguePhase);
+    const currentIsPostLeaguePhase = ['champion_league', 'final', 'third_place'].includes(currentMatch.league_phase);
+    const touchesPostLeagueState = isPostLeaguePhase || currentIsPostLeaguePhase;
+    let postLeagueQualifiers: ChampionLeagueQualifier[] | null = null;
+    let postLeagueScopeMatches: Match[] | null = null;
+
+    if (touchesPostLeagueState) {
+      if (!currentMatch.season_id || !currentMatch.age_group_id || !currentMatch.division_id) {
+        return badRequestResponse('Post-league match must have season, age group and division');
+      }
+
+      const { data: snapshot, error: snapshotError } = await supabaseAdmin
+        .from('league_champion_league_snapshots')
+        .select('qualifiers')
+        .eq('season_id', currentMatch.season_id)
+        .eq('age_group_id', currentMatch.age_group_id)
+        .eq('division_id', currentMatch.division_id)
+        .maybeSingle();
+
+      if (snapshotError) {
+        console.error('[MATCH_API] Champion League snapshot lookup error:', snapshotError);
+        return internalErrorResponse('Failed to validate Champion League activation');
+      }
+
+      postLeagueQualifiers = snapshot ? parseChampionLeagueQualifierSnapshot(snapshot.qualifiers) : null;
+      if (!postLeagueQualifiers) {
+        return badRequestResponse('Champion League must be activated and Top 4 frozen before assigning or editing this phase');
+      }
+
+      const qualifierIds = new Set(postLeagueQualifiers.map((row) => row.team_id));
+      if (
+        isPostLeaguePhase &&
+        (!qualifierIds.has(currentMatch.home_team_id) || !qualifierIds.has(currentMatch.away_team_id))
+      ) {
+        return badRequestResponse('Post-league match teams must be in the frozen Champion League Top 4');
+      }
+
+      const { data: scopeMatches, error: scopeMatchesError } = await supabaseAdmin
+        .from('matches')
+        .select('id, home_team_id, away_team_id, home_score, away_score, status, league_phase')
+        .eq('season_id', currentMatch.season_id)
+        .eq('age_group_id', currentMatch.age_group_id)
+        .eq('division_id', currentMatch.division_id);
+
+      if (scopeMatchesError) {
+        console.error('[MATCH_API] Champion League scope lookup error:', scopeMatchesError);
+        return internalErrorResponse('Failed to validate Champion League fixtures');
+      }
+
+      postLeagueScopeMatches = (scopeMatches || []) as Match[];
+
+      if (effectiveLeaguePhase === 'champion_league') {
+        const duplicatePairing = postLeagueScopeMatches.some(
+          (match) =>
+            match.id !== matchId &&
+            match.league_phase === 'champion_league' &&
+            isSameTeamPair(
+              match.home_team_id,
+              match.away_team_id,
+              currentMatch.home_team_id,
+              currentMatch.away_team_id
+            )
+        );
+        if (duplicatePairing) {
+          return badRequestResponse('Champion League already has this team pairing');
+        }
+      }
+
+      if (effectiveLeaguePhase === 'final' || effectiveLeaguePhase === 'third_place') {
+        if (currentMatch.league_phase === 'champion_league') {
+          return badRequestResponse('Placement match must be a separate fixture, not a reclassified Champion League round-robin match');
+        }
+        const progress = getChampionLeagueProgress(postLeagueQualifiers, postLeagueScopeMatches);
+        const championStandings = calculateChampionLeagueStandings(postLeagueQualifiers, postLeagueScopeMatches);
+        const placementPairings = getChampionLeaguePlacementPairings(championStandings, progress);
+        if (!placementPairings) {
+          return badRequestResponse('Champion League must finish all six valid pairings before placement matches');
+        }
+
+        const expectedPairing =
+          effectiveLeaguePhase === 'final'
+            ? placementPairings.final
+            : placementPairings.third_place;
+        if (
+          !isSameTeamPair(
+            currentMatch.home_team_id,
+            currentMatch.away_team_id,
+            expectedPairing.home_team_id,
+            expectedPairing.away_team_id
+          )
+        ) {
+          return badRequestResponse(
+            effectiveLeaguePhase === 'final'
+              ? 'Final teams must be Champion League ranks 1 and 2'
+              : 'Third-place teams must be Champion League ranks 3 and 4'
+          );
+        }
+      }
+    }
+
     // winner_team_id (knockout draw / penalty decider) — must be one of the two teams or null
     let winnerUpdate: Record<string, unknown> = {};
     if (winner_team_id !== undefined) {
@@ -130,7 +274,7 @@ export async function PUT(
     }
 
     // Build update payload
-    const updatePayload: any = {
+    const updatePayload: Record<string, unknown> = {
       home_score: finalHomeScore,
       away_score: finalAwayScore,
       status: finalStatus,
@@ -138,6 +282,10 @@ export async function PUT(
       ...winnerUpdate,
       updated_at: new Date().toISOString(),
     };
+
+    if (typeof league_phase !== 'undefined') {
+      updatePayload.league_phase = league_phase || null;
+    }
 
     // Include date/time if provided
     if (typeof match_date !== 'undefined') {
@@ -151,6 +299,32 @@ export async function PUT(
       updatePayload.match_time = normalizedTime || null;
     }
 
+    if (touchesPostLeagueState && postLeagueQualifiers && postLeagueScopeMatches) {
+      const projectedMatch = {
+        ...currentMatch,
+        home_score: finalHomeScore ?? null,
+        away_score: finalAwayScore ?? null,
+        status: finalStatus,
+        league_phase: effectiveLeaguePhase || null,
+      } as Match;
+      const projectedScopeMatches = postLeagueScopeMatches.map((match) =>
+        match.id === matchId ? projectedMatch : match
+      );
+      const placementIntegrity = validateChampionLeaguePlacementFixtures(
+        postLeagueQualifiers,
+        projectedScopeMatches
+      );
+      if (!placementIntegrity.valid) {
+        return NextResponse.json(
+          {
+            error: 'Update would make existing Final/Third Place fixtures inconsistent',
+            detail: placementIntegrity.reason,
+          },
+          { status: 409 }
+        );
+      }
+    }
+
     const { data: updatedMatch, error: updateError } = await supabaseAdmin
       .from('matches')
       .update(updatePayload)
@@ -160,6 +334,12 @@ export async function PUT(
 
     if (updateError) {
       console.error('Update match error:', updateError);
+      if (updateError.code === '23505' && effectiveLeaguePhase === 'champion_league') {
+        return NextResponse.json(
+          { error: 'Champion League already has this team pairing' },
+          { status: 409 }
+        );
+      }
       return internalErrorResponse('Failed to update match');
     }
 
@@ -173,8 +353,14 @@ export async function PUT(
         home_score: currentMatch.home_score,
         away_score: currentMatch.away_score,
         status: currentMatch.status,
+        league_phase: currentMatch.league_phase || null,
       },
-      newData: { home_score, away_score, status: status || currentMatch.status },
+      newData: {
+        home_score,
+        away_score,
+        status: status || currentMatch.status,
+        league_phase: typeof league_phase === 'undefined' ? currentMatch.league_phase || null : league_phase || null,
+      },
     });
 
     // Refresh suspension serving matches when status or schedule changes.

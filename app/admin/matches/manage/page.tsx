@@ -1,8 +1,13 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { GoalsList } from '@/components/GoalsList';
-import type { Match } from '@/types/db';
+import {
+  ChampionLeagueFixtureManager,
+  getChampionLeagueFixtureScopeKey,
+} from '@/components/ChampionLeagueFixtureManager';
+import { isGeneratedLeaguePostMatchCode } from '@/lib/champion-league';
+import type { LeaguePhase, Match } from '@/types/db';
 
 interface MatchWithTeams extends Match {
   home_team?: { id: string; name: string; short_name?: string };
@@ -182,6 +187,7 @@ export default function MatchManagePage() {
   const [homeScore, setHomeScore] = useState<string>('0');
   const [awayScore, setAwayScore] = useState<string>('0');
   const [matchStatus, setMatchStatus] = useState<string>('scheduled');
+  const [leaguePhase, setLeaguePhase] = useState<LeaguePhase>('regular');
   const [resultType, setResultType] = useState<'normal' | 'home_win_by_bye' | 'away_win_by_bye'>('normal');
   const [matchDate, setMatchDate] = useState<string>('');
   const [matchTime, setMatchTime] = useState<string>('');
@@ -355,45 +361,70 @@ export default function MatchManagePage() {
     loadDivisions();
   }, [seasonId, ageGroupId]);
 
-  // Load matches
-  useEffect(() => {
+  const matchScopeKey = getChampionLeagueFixtureScopeKey(seasonId, ageGroupId, divisionId);
+  const currentMatchScopeKeyRef = useRef(matchScopeKey);
+  const matchScopeRequestSeq = useRef(0);
+
+  useLayoutEffect(() => {
+    currentMatchScopeKeyRef.current = matchScopeKey;
+    matchScopeRequestSeq.current += 1;
+  }, [matchScopeKey]);
+
+  const loadMatchesForScope = useCallback(async () => {
+    const requestedScopeKey = getChampionLeagueFixtureScopeKey(seasonId, ageGroupId, divisionId);
+    if (requestedScopeKey !== currentMatchScopeKeyRef.current) return;
+    const requestSeq = ++matchScopeRequestSeq.current;
     if (!seasonId || !ageGroupId || !divisionId) {
       setMatches([]);
       setSelectedMatchId('');
       return;
     }
 
-    const loadMatches = async () => {
-      setLoading(true);
-      try {
-        const token = localStorage.getItem('admin_token');
-        const res = await fetch(
-          `/api/public/matches?seasonId=${seasonId}&ageGroupId=${ageGroupId}&divisionId=${divisionId}`,
-          {
-            headers: token ? { 'Authorization': `Bearer ${token}` } : {},
-          }
-        );
-        if (!res.ok) throw new Error('Failed to load matches');
-        const data = await res.json();
-        setMatches(data);
-
-        // Preserve selectedMatchId if it exists, otherwise auto-select first match
-        if (selectedMatchId && !data.some((m: MatchWithTeams) => m.id === selectedMatchId)) {
-          setSelectedMatchId('');
-        } else if (!selectedMatchId && data.length > 0) {
-          setSelectedMatchId(data[0].id);
+    setLoading(true);
+    try {
+      const token = localStorage.getItem('admin_token');
+      const res = await fetch(
+        `/api/public/matches?seasonId=${seasonId}&ageGroupId=${ageGroupId}&divisionId=${divisionId}`,
+        {
+          headers: token ? { 'Authorization': `Bearer ${token}` } : {},
         }
-      } catch (err) {
-        console.error('[MATCH_MANAGE] Load matches error:', err);
-        setError('ไม่สามารถโหลดข้อมูลแมตช์ได้');
-      } finally {
+      );
+      if (
+        requestSeq !== matchScopeRequestSeq.current ||
+        requestedScopeKey !== currentMatchScopeKeyRef.current
+      ) return;
+      if (!res.ok) throw new Error('Failed to load matches');
+      const data = await res.json();
+      if (
+        requestSeq !== matchScopeRequestSeq.current ||
+        requestedScopeKey !== currentMatchScopeKeyRef.current
+      ) return;
+      setMatches(data);
+      setSelectedMatchId((current) => {
+        if (current && data.some((m: MatchWithTeams) => m.id === current)) return current;
+        return data.length > 0 ? data[0].id : '';
+      });
+    } catch (err) {
+      if (
+        requestSeq !== matchScopeRequestSeq.current ||
+        requestedScopeKey !== currentMatchScopeKeyRef.current
+      ) return;
+      console.error('[MATCH_MANAGE] Load matches error:', err);
+      setError('ไม่สามารถโหลดข้อมูลแมตช์ได้');
+    } finally {
+      if (
+        requestSeq === matchScopeRequestSeq.current &&
+        requestedScopeKey === currentMatchScopeKeyRef.current
+      ) {
         setLoading(false);
       }
-    };
-
-    loadMatches();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }
   }, [seasonId, ageGroupId, divisionId]);
+
+  // Load matches
+  useEffect(() => {
+    void loadMatchesForScope();
+  }, [loadMatchesForScope]);
 
   const loadMatchDataCallback = useCallback(
     async (match: MatchWithTeams) => {
@@ -445,6 +476,7 @@ export default function MatchManagePage() {
         setHomeScore((match.home_score ?? 0).toString());
         setAwayScore((match.away_score ?? 0).toString());
         setMatchStatus(match.status || 'scheduled');
+        setLeaguePhase(match.league_phase || 'regular');
         setResultType((match.result_type as any) || 'normal');
         setMatchDate(match.match_date || '');
         setMatchTime(match.match_time ? match.match_time.substring(0, 5) : '');
@@ -471,6 +503,7 @@ export default function MatchManagePage() {
       setHomeScore('0');
       setAwayScore('0');
       setMatchStatus('scheduled');
+      setLeaguePhase('regular');
       setMatchDate('');
       setMatchTime('');
       return;
@@ -487,6 +520,13 @@ export default function MatchManagePage() {
     setIsEditingFinishedMatch(false);
     setError(null);
     setSuccess(null);
+  };
+
+  const handleActivateChampionLeague = () => {
+    document.getElementById('champion-league-fixture-manager')?.scrollIntoView({
+      behavior: 'smooth',
+      block: 'start',
+    });
   };
 
   const handleSaveScore = async () => {
@@ -516,7 +556,7 @@ export default function MatchManagePage() {
         resultType,
       });
 
-      const payload: any = { ...basePayload };
+      const payload: any = { ...basePayload, league_phase: leaguePhase };
 
       // Override for postponed status
       if (matchStatus === 'postponed') {
@@ -583,6 +623,7 @@ export default function MatchManagePage() {
 
       // Update form state to match saved data
       setResultType((updatedMatch.result_type as any) || resultType);
+      setLeaguePhase(updatedMatch.league_phase || leaguePhase);
       setMatchStatus(updatedMatch.status || payload.status);
       setHomeScore(String(updatedMatch.home_score ?? payload.home_score));
       setAwayScore(String(updatedMatch.away_score ?? payload.away_score));
@@ -904,6 +945,9 @@ export default function MatchManagePage() {
   // Helper functions
   const isFinished = selectedMatch?.status === 'finished';
   const isReadOnlyFinished = isFinished && !isEditingFinishedMatch;
+  const generatedPhaseLocked = Boolean(
+    selectedMatch && isGeneratedLeaguePostMatchCode(selectedMatch.match_code)
+  );
 
   const handleOpenEditFinishedMatch = () => {
     setShowConfirmEditFinished(true);
@@ -947,6 +991,7 @@ export default function MatchManagePage() {
           setHomeScore((current.home_score ?? homeScore).toString());
           setAwayScore((current.away_score ?? awayScore).toString());
           setMatchStatus(current.status || 'scheduled');
+          setLeaguePhase(current.league_phase || 'regular');
           await loadMatchDataCallback(current);
         }
       }
@@ -995,7 +1040,7 @@ export default function MatchManagePage() {
         resultType,
       });
 
-      const payload: any = { ...basePayload };
+      const payload: any = { ...basePayload, league_phase: leaguePhase };
 
       // Include date/time for all updates
       if (matchDate) {
@@ -1156,6 +1201,13 @@ export default function MatchManagePage() {
         )}
       </div>
 
+      <ChampionLeagueFixtureManager
+        seasonId={seasonId}
+        ageGroupId={ageGroupId}
+        divisionId={divisionId}
+        onChanged={loadMatchesForScope}
+      />
+
       {/* Error/Success */}
       {error && (
         <div className="p-3 sm:p-4 bg-red-50 border border-red-200 rounded-lg animate-in fade-in">
@@ -1221,6 +1273,16 @@ export default function MatchManagePage() {
                 <span className="font-semibold">ดิวิชั่น:</span> {selectedMatch.division?.name || 'ไม่ระบุ'}
               </p>
               <p>
+                <span className="font-semibold">รอบ:</span>{' '}
+                {selectedMatch.league_phase === 'champion_league'
+                  ? 'แชมเปี้ยนส์ลีก'
+                  : selectedMatch.league_phase === 'final'
+                    ? 'รอบชิงชนะเลิศ'
+                    : selectedMatch.league_phase === 'third_place'
+                      ? 'ชิงอันดับที่ 3'
+                      : 'รอบลีก'}
+              </p>
+              <p>
                 <span className="font-semibold">ทีม:</span> {selectedMatch.home_team?.name || 'ทีมเหย้า'} vs{' '}
                 {selectedMatch.away_team?.name || 'ทีมเยือน'}
               </p>
@@ -1244,6 +1306,34 @@ export default function MatchManagePage() {
                   disabled={saving || loadingMatchData || isReadOnlyFinished}
                   className="w-full px-3 sm:px-4 py-3 sm:py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-600 disabled:bg-gray-100 text-base sm:text-sm"
                 />
+              </div>
+
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-2">รอบการแข่งขัน</label>
+                <select
+                  value={leaguePhase}
+                  onChange={(e) => setLeaguePhase(e.target.value as LeaguePhase)}
+                  disabled={isReadOnlyFinished || generatedPhaseLocked}
+                  className="w-full px-3 sm:px-4 py-3 sm:py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-600 disabled:bg-gray-100 text-sm sm:text-base"
+                >
+                  <option value="regular">รอบลีก</option>
+                  <option value="champion_league">แชมเปี้ยนส์ลีก</option>
+                  <option value="final">รอบชิงชนะเลิศ</option>
+                  <option value="third_place">ชิงอันดับที่ 3</option>
+                </select>
+                <p className="mt-1 text-xs text-gray-500">
+                  ประตู ใบ และโทษสะสมยังนับต่อเนื่องทุกระยะของลีก
+                </p>
+                <button
+                  type="button"
+                  onClick={handleActivateChampionLeague}
+                  className="mt-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs font-semibold text-blue-800 hover:bg-blue-100"
+                >
+                  เปิดแผงจัดการ Champion League ด้านบน
+                </button>
+                <p className="mt-1 text-[11px] text-gray-500">
+                  Generated fixtures จะล็อกคู่ทีมและ phase; ใช้ Fixture Generator สำหรับสร้างและแก้วัน/เวลา/สนาม
+                </p>
               </div>
 
               <div>

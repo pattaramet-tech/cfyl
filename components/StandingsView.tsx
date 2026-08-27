@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { StandingsTable } from '@/components/StandingsTable';
+import { ChampionLeaguePanel } from '@/components/ChampionLeaguePanel';
 import { PublicSeasonNav } from '@/components/PublicSeasonNav';
 import { usePublicNav } from '@/lib/use-public-nav';
 import { buildStandingsPath, divisionToCode } from '@/lib/public-slugs';
@@ -148,7 +149,10 @@ export function StandingsView({ seasonId, ageGroupId, divisionId, allDivisions =
                 <div key={div.id} className="cfyl-section">
                   <h2 className="cfyl-section-title mb-3">{div.name}</h2>
                   {rows.length > 0 ? (
-                    <StandingsTable standings={rows} showProvinceRep={isU17 && div.id === topDivisionId} />
+                    <>
+                      <StandingsTable standings={rows} showProvinceRep={isU17 && div.id === topDivisionId} />
+                      <ChampionLeaguePanel seasonId={seasonId} ageGroupId={ageGroupId} divisionId={div.id} />
+                    </>
                   ) : (
                     <p className="cfyl-empty">ไม่พบข้อมูลตารางคะแนน</p>
                   )}
@@ -164,8 +168,11 @@ export function StandingsView({ seasonId, ageGroupId, divisionId, allDivisions =
               <span className="cfyl-spinner w-5 h-5" />
               กำลังโหลดข้อมูล...
             </div>
-          ) : standings.length > 0 ? (
-            <StandingsTable standings={standings} showProvinceRep={isU17 && currentDivisionId === topDivisionId} />
+          ) : standings.length > 0 && currentDivisionId ? (
+            <>
+              <StandingsTable standings={standings} showProvinceRep={isU17 && currentDivisionId === topDivisionId} />
+              <ChampionLeaguePanel seasonId={seasonId} ageGroupId={ageGroupId} divisionId={currentDivisionId} />
+            </>
           ) : (
             <p className="cfyl-empty">ไม่พบข้อมูลตารางคะแนน</p>
           )}
