@@ -350,3 +350,78 @@ export function getChampionLeaguePlacementPairings(
     },
   };
 }
+
+export interface ChampionLeaguePlacementIntegrity {
+  valid: boolean;
+  reason: string | null;
+  expected_pairings: ChampionLeaguePlacementPairings | null;
+}
+
+export function validateChampionLeaguePlacementFixtures(
+  qualifiers: ChampionLeagueQualifier[],
+  matches: PhaseAwareMatch[]
+): ChampionLeaguePlacementIntegrity {
+  const finalFixtures = matches.filter((match) => match.league_phase === 'final');
+  const thirdPlaceFixtures = matches.filter((match) => match.league_phase === 'third_place');
+  const hasPlacementFixtures = finalFixtures.length > 0 || thirdPlaceFixtures.length > 0;
+
+  const progress = getChampionLeagueProgress(qualifiers, matches);
+  const standings = calculateChampionLeagueStandings(qualifiers, matches);
+  const expectedPairings = getChampionLeaguePlacementPairings(standings, progress);
+
+  if (!hasPlacementFixtures) {
+    return { valid: true, reason: null, expected_pairings: expectedPairings };
+  }
+
+  if (!expectedPairings) {
+    return {
+      valid: false,
+      reason: 'Existing placement fixtures require a complete valid Champion League round robin',
+      expected_pairings: null,
+    };
+  }
+
+  if (finalFixtures.length > 1 || thirdPlaceFixtures.length > 1) {
+    return {
+      valid: false,
+      reason: 'Only one Final and one Third Place fixture are allowed per Champion League scope',
+      expected_pairings: expectedPairings,
+    };
+  }
+
+  const finalFixture = finalFixtures[0];
+  if (
+    finalFixture &&
+    !isSameTeamPair(
+      finalFixture.home_team_id,
+      finalFixture.away_team_id,
+      expectedPairings.final.home_team_id,
+      expectedPairings.final.away_team_id
+    )
+  ) {
+    return {
+      valid: false,
+      reason: 'Existing Final fixture no longer matches Champion League ranks 1 and 2',
+      expected_pairings: expectedPairings,
+    };
+  }
+
+  const thirdPlaceFixture = thirdPlaceFixtures[0];
+  if (
+    thirdPlaceFixture &&
+    !isSameTeamPair(
+      thirdPlaceFixture.home_team_id,
+      thirdPlaceFixture.away_team_id,
+      expectedPairings.third_place.home_team_id,
+      expectedPairings.third_place.away_team_id
+    )
+  ) {
+    return {
+      valid: false,
+      reason: 'Existing Third Place fixture no longer matches Champion League ranks 3 and 4',
+      expected_pairings: expectedPairings,
+    };
+  }
+
+  return { valid: true, reason: null, expected_pairings: expectedPairings };
+}

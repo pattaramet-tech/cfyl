@@ -92,7 +92,10 @@ CREATE TABLE matches (
   note TEXT,
   created_at TIMESTAMP DEFAULT now(),
   updated_at TIMESTAMP DEFAULT now(),
-  UNIQUE(season_id, match_code)
+  UNIQUE(season_id, match_code),
+  CONSTRAINT matches_post_league_division_check CHECK (
+    league_phase IS NULL OR league_phase = 'regular' OR division_id IS NOT NULL
+  )
 );
 
 -- 6A. League Champion League activation snapshot
@@ -160,6 +163,13 @@ CREATE INDEX idx_matches_season_age_div ON matches(season_id, age_group_id, divi
 CREATE INDEX idx_matches_date ON matches(match_date);
 CREATE INDEX idx_matches_matchday ON matches(season_id, matchday);
 CREATE INDEX idx_matches_league_phase_scope ON matches(season_id, age_group_id, division_id, league_phase, status);
+CREATE UNIQUE INDEX uq_matches_champion_league_pair_scope ON matches(
+  season_id,
+  age_group_id,
+  division_id,
+  LEAST(home_team_id, away_team_id),
+  GREATEST(home_team_id, away_team_id)
+) WHERE league_phase = 'champion_league';
 CREATE INDEX idx_league_champion_league_snapshot_scope ON league_champion_league_snapshots(season_id, age_group_id, division_id);
 CREATE INDEX idx_players_season_team ON players(season_id, team_id);
 CREATE INDEX idx_players_code ON players(player_code, season_id);

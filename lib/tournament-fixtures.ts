@@ -1,6 +1,7 @@
 // Shared logic for tournament fixtures (manual + XLSX/CSV import).
 // Server-side only (used by /api/admin/tournament-fixtures/*).
 import type { SupabaseClient } from '@supabase/supabase-js';
+import type { Match } from '@/types/db';
 
 export const FIXTURE_STAGES = [
   'group',
@@ -11,6 +12,17 @@ export const FIXTURE_STAGES = [
   'third_place',
 ] as const;
 export type FixtureStage = (typeof FIXTURE_STAGES)[number];
+
+export function isLegacyTournamentV1Fixture(
+  match: Pick<Match, 'division_id' | 'stage' | 'league_phase'>
+): boolean {
+  return (
+    match.division_id == null &&
+    match.league_phase == null &&
+    typeof match.stage === 'string' &&
+    FIXTURE_STAGES.includes(match.stage as FixtureStage)
+  );
+}
 
 export const TEMPLATE_HEADERS = [
   'season_slug',
@@ -90,6 +102,16 @@ export interface RowResult {
 }
 
 interface TeamLite { id: string; name: string; short_name: string | null }
+interface ExistingCodeRow { match_code: string | null }
+interface ExistingFixtureRow {
+  home_team_id: string | null;
+  away_team_id: string | null;
+  stage: string | null;
+  tournament_group_id: string | null;
+  match_date: string | null;
+  match_time: string | null;
+  venue: string | null;
+}
 
 export interface FixtureContext {
   seasonId: string;
@@ -162,10 +184,12 @@ export async function buildFixtureContext(
     }
   }
 
-  const existingCodes = new Set<string>((codesRes.data || []).map((m: any) => norm(m.match_code)));
+  const existingCodes = new Set<string>(
+    ((codesRes.data || []) as ExistingCodeRow[]).map((matchRow) => norm(matchRow.match_code))
+  );
   const existingPairs = new Set<string>();
   const existingSlots = new Set<string>();
-  for (const m of (existingRes.data || []) as any[]) {
+  for (const m of (existingRes.data || []) as ExistingFixtureRow[]) {
     if (m.home_team_id && m.away_team_id) {
       existingPairs.add(pairKey(m.stage || 'group', m.tournament_group_id || null, m.home_team_id, m.away_team_id));
     }

@@ -18,6 +18,28 @@ ALTER TABLE matches
 CREATE INDEX IF NOT EXISTS idx_matches_league_phase_scope
   ON matches (season_id, age_group_id, division_id, league_phase, status);
 
+ALTER TABLE matches
+  DROP CONSTRAINT IF EXISTS matches_post_league_division_check;
+ALTER TABLE matches
+  ADD CONSTRAINT matches_post_league_division_check
+  CHECK (
+    league_phase IS NULL
+    OR league_phase = 'regular'
+    OR division_id IS NOT NULL
+  );
+
+-- Concurrency-safe invariant: one unordered Champion League pairing per League scope.
+-- LEAST/GREATEST canonicalize home/away so A-v-B and B-v-A collide at the DB layer.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_matches_champion_league_pair_scope
+  ON matches (
+    season_id,
+    age_group_id,
+    division_id,
+    LEAST(home_team_id, away_team_id),
+    GREATEST(home_team_id, away_team_id)
+  )
+  WHERE league_phase = 'champion_league';
+
 COMMENT ON COLUMN matches.league_phase IS
   'League competition phase. NULL/regular=regular league; champion_league=top-4 round robin; final=rank 1-2 final; third_place=rank 3-4 playoff. Tournament V2 does not use this column.';
 

@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
   calculateChampionLeagueStandings,
@@ -6,8 +7,10 @@ import {
   getRegularLeagueActivationReadiness,
   isRegularLeagueMatch,
   parseChampionLeagueQualifierSnapshot,
+  validateChampionLeaguePlacementFixtures,
   type ChampionLeagueQualifier,
 } from '@/lib/champion-league';
+import { isLegacyTournamentV1Fixture } from '@/lib/tournament-fixtures';
 import { buildRegularLeagueStandings } from '@/lib/league-standings';
 import type { Match } from '@/types/db';
 
@@ -226,5 +229,68 @@ describe('Champion League', () => {
     expect(progress.complete).toBe(false);
     expect(progress.invalid_pairings).toBe(1);
     expect(progress.fixture_matches).toBe(7);
+  });
+
+  it('rejects stale placement fixtures after a projected Champion League result change', () => {
+    const six = [
+      match('1', 'A', 'B', 1, 0),
+      match('2', 'A', 'C', 1, 0),
+      match('3', 'A', 'D', 1, 0),
+      match('4', 'B', 'C', 1, 0),
+      match('5', 'B', 'D', 1, 0),
+      match('6', 'C', 'D', 1, 0),
+    ];
+    const baseIntegrity = validateChampionLeaguePlacementFixtures(qualifiers, six);
+    expect(baseIntegrity.valid).toBe(true);
+    expect(baseIntegrity.expected_pairings).not.toBeNull();
+
+    const placement = baseIntegrity.expected_pairings!;
+    const finalFixture = match(
+      'F',
+      placement.final.home_team_id,
+      placement.final.away_team_id,
+      0,
+      0,
+      'final'
+    );
+    const thirdFixture = match(
+      'T',
+      placement.third_place.home_team_id,
+      placement.third_place.away_team_id,
+      0,
+      0,
+      'third_place'
+    );
+    expect(validateChampionLeaguePlacementFixtures(qualifiers, [...six, finalFixture, thirdFixture]).valid).toBe(true);
+
+    const projected = six.map((fixture) =>
+      fixture.id === '4' ? { ...fixture, home_score: 0, away_score: 9 } : fixture
+    );
+    const projectedIntegrity = validateChampionLeaguePlacementFixtures(
+      qualifiers,
+      [...projected, finalFixture, thirdFixture]
+    );
+    expect(projectedIntegrity.valid).toBe(false);
+    expect(projectedIntegrity.reason).toMatch(/Final|Third Place/);
+  });
+
+  it('treats only division-less, phase-less staged rows as legacy Tournament V1 fixtures', () => {
+    expect(
+      isLegacyTournamentV1Fixture({ division_id: null, league_phase: null, stage: 'group' })
+    ).toBe(true);
+    expect(
+      isLegacyTournamentV1Fixture({ division_id: 'DIV', league_phase: null, stage: 'group' })
+    ).toBe(false);
+    expect(
+      isLegacyTournamentV1Fixture({ division_id: null, league_phase: 'champion_league', stage: 'final' })
+    ).toBe(false);
+  });
+
+  it('migration enforces concurrency-safe unordered Champion League pairing uniqueness', () => {
+    const sql = readFileSync('scripts/migration-league-champion-league.sql', 'utf8');
+    expect(sql).toContain('CREATE UNIQUE INDEX IF NOT EXISTS uq_matches_champion_league_pair_scope');
+    expect(sql).toContain('LEAST(home_team_id, away_team_id)');
+    expect(sql).toContain('GREATEST(home_team_id, away_team_id)');
+    expect(sql).toContain("WHERE league_phase = 'champion_league'");
   });
 });

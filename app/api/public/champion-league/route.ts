@@ -5,6 +5,7 @@ import {
   getChampionLeaguePlacementPairings,
   getChampionLeagueProgress,
   parseChampionLeagueQualifierSnapshot,
+  validateChampionLeaguePlacementFixtures,
 } from '@/lib/champion-league';
 import type { Match } from '@/types/db';
 
@@ -85,6 +86,7 @@ export async function GET(request: NextRequest) {
     const standings = calculateChampionLeagueStandings(qualifiers, rawMatches);
     const progress = getChampionLeagueProgress(qualifiers, rawMatches);
     const pairings = getChampionLeaguePlacementPairings(standings, progress);
+    const placementIntegrity = validateChampionLeaguePlacementFixtures(qualifiers, rawMatches);
 
     return NextResponse.json({
       scope,
@@ -95,9 +97,14 @@ export async function GET(request: NextRequest) {
       pairings,
       matches: {
         champion_league: rawMatches.filter((match) => match.league_phase === 'champion_league'),
-        final: rawMatches.filter((match) => match.league_phase === 'final'),
-        third_place: rawMatches.filter((match) => match.league_phase === 'third_place'),
+        final: placementIntegrity.valid
+          ? rawMatches.filter((match) => match.league_phase === 'final')
+          : [],
+        third_place: placementIntegrity.valid
+          ? rawMatches.filter((match) => match.league_phase === 'third_place')
+          : [],
       },
+      placement_integrity: placementIntegrity,
       activation: {
         id: snapshotResult.data.id,
         activated_at: snapshotResult.data.activated_at,
