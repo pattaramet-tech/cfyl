@@ -68,8 +68,9 @@ export async function GET(request: NextRequest) {
         pairings: null,
         matches: {
           champion_league: rawMatches.filter((match) => match.league_phase === 'champion_league'),
-          final: rawMatches.filter((match) => match.league_phase === 'final'),
-          third_place: rawMatches.filter((match) => match.league_phase === 'third_place'),
+          // Fail closed: without a valid frozen snapshot we cannot prove placement teams/ranks.
+          final: [],
+          third_place: [],
         },
         activation: null,
         rules: {
