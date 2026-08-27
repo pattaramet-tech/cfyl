@@ -6,6 +6,7 @@ import {
   calculateChampionLeagueStandings,
   getChampionLeaguePlacementPairings,
   getChampionLeagueProgress,
+  isGeneratedLeaguePostMatchCode,
   isSameTeamPair,
   parseChampionLeagueQualifierSnapshot,
   validateChampionLeaguePlacementFixtures,
@@ -113,6 +114,14 @@ export async function PUT(
         { error: 'Match not found' },
         { status: 404 }
       );
+    }
+
+    if (
+      isGeneratedLeaguePostMatchCode(currentMatch.match_code) &&
+      typeof league_phase !== 'undefined' &&
+      (league_phase || null) !== (currentMatch.league_phase || null)
+    ) {
+      return badRequestResponse('Generated Champion League fixture phase is locked');
     }
 
     const effectiveLeaguePhase =

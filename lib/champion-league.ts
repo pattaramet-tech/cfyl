@@ -49,6 +49,27 @@ export interface RegularLeagueActivationReadiness {
   teams_without_regular_match: string[];
 }
 
+export interface ChampionLeagueRoundRobinPairing {
+  slot: number;
+  round_no: number;
+  matchday: string;
+  home_team_id: string;
+  away_team_id: string;
+  home_league_rank: number;
+  away_league_rank: number;
+}
+
+export interface ChampionLeagueFixtureStructureStatus {
+  expected_matches: number;
+  fixture_matches: number;
+  unique_pairings: number;
+  duplicate_pairings: number;
+  invalid_pairings: number;
+  missing_pairings: number;
+  matches_by_team: Record<string, number>;
+  complete: boolean;
+}
+
 type PhaseAwareMatch = Pick<
   Match,
   'id' | 'home_team_id' | 'away_team_id' | 'home_score' | 'away_score' | 'status' | 'league_phase'
@@ -105,6 +126,127 @@ function getTopFour(qualifiers: ChampionLeagueQualifier[]): ChampionLeagueQualif
   return [...qualifiers]
     .sort((a, b) => a.league_rank - b.league_rank)
     .slice(0, 4);
+}
+
+export function getChampionLeagueRoundRobinPairings(
+  qualifiers: ChampionLeagueQualifier[]
+): ChampionLeagueRoundRobinPairing[] {
+  const topFour = parseChampionLeagueQualifierSnapshot(qualifiers);
+  if (!topFour) return [];
+
+  const [rank1, rank2, rank3, rank4] = topFour;
+  const raw = [
+    [1, rank1, rank4],
+    [1, rank3, rank2],
+    [2, rank3, rank1],
+    [2, rank2, rank4],
+    [3, rank1, rank2],
+    [3, rank4, rank3],
+  ] as const;
+
+  return raw.map(([roundNo, home, away], index) => ({
+    slot: index + 1,
+    round_no: roundNo,
+    matchday: `CL${roundNo}`,
+    home_team_id: home.team_id,
+    away_team_id: away.team_id,
+    home_league_rank: home.league_rank,
+    away_league_rank: away.league_rank,
+  }));
+}
+
+export function getGeneratedLeaguePostMatchCode(
+  phase: 'champion_league' | 'final' | 'third_place',
+  divisionId: string,
+  slot?: number
+): string {
+  if (phase === 'champion_league') {
+    if (!slot || slot < 1 || slot > 6) throw new Error('Champion League generated slot must be 1-6');
+    return `CL-${divisionId}-R${slot}`;
+  }
+  return phase === 'final' ? `CL-${divisionId}-FINAL` : `CL-${divisionId}-THIRD`;
+}
+
+export function isGeneratedLeaguePostMatchCode(value: unknown): boolean {
+  if (typeof value !== 'string') return false;
+  return /^CL-.+-(?:R[1-6]|FINAL|THIRD)$/.test(value);
+}
+
+export function getChampionLeagueFixtureStructureStatus(
+  qualifiers: ChampionLeagueQualifier[],
+  matches: PhaseAwareMatch[]
+): ChampionLeagueFixtureStructureStatus {
+  const topFour = parseChampionLeagueQualifierSnapshot(qualifiers);
+  if (!topFour) {
+    return {
+      expected_matches: 6,
+      fixture_matches: matches.filter(isChampionLeagueMatch).length,
+      unique_pairings: 0,
+      duplicate_pairings: 0,
+      invalid_pairings: matches.filter(isChampionLeagueMatch).length,
+      missing_pairings: 6,
+      matches_by_team: {},
+      complete: false,
+    };
+  }
+
+  const qualifierIds = new Set(topFour.map((row) => row.team_id));
+  const expected = expectedPairings(topFour);
+  const championFixtures = matches.filter(isChampionLeagueMatch);
+  const pairCounts = new Map<string, number>();
+  const matchesByTeam: Record<string, number> = Object.fromEntries(
+    topFour.map((row) => [row.team_id, 0])
+  );
+  let invalidPairings = 0;
+
+  for (const fixture of championFixtures) {
+    if (
+      fixture.home_team_id === fixture.away_team_id ||
+      !qualifierIds.has(fixture.home_team_id) ||
+      !qualifierIds.has(fixture.away_team_id)
+    ) {
+      invalidPairings += 1;
+      continue;
+    }
+    const key = pairKey(fixture.home_team_id, fixture.away_team_id);
+    if (!expected.has(key)) {
+      invalidPairings += 1;
+      continue;
+    }
+    pairCounts.set(key, (pairCounts.get(key) || 0) + 1);
+  }
+
+  let duplicatePairings = 0;
+  let uniquePairings = 0;
+  for (const key of expected) {
+    const count = pairCounts.get(key) || 0;
+    if (count > 0) uniquePairings += 1;
+    if (count > 1) duplicatePairings += count - 1;
+    if (count === 1) {
+      const [a, b] = key.split('::');
+      matchesByTeam[a] = (matchesByTeam[a] || 0) + 1;
+      matchesByTeam[b] = (matchesByTeam[b] || 0) + 1;
+    }
+  }
+
+  const missingPairings = 6 - uniquePairings;
+  const complete =
+    championFixtures.length === 6 &&
+    uniquePairings === 6 &&
+    duplicatePairings === 0 &&
+    invalidPairings === 0 &&
+    topFour.every((row) => matchesByTeam[row.team_id] === 3);
+
+  return {
+    expected_matches: 6,
+    fixture_matches: championFixtures.length,
+    unique_pairings: uniquePairings,
+    duplicate_pairings: duplicatePairings,
+    invalid_pairings: invalidPairings,
+    missing_pairings: missingPairings,
+    matches_by_team: matchesByTeam,
+    complete,
+  };
 }
 
 export function parseChampionLeagueQualifierSnapshot(value: unknown): ChampionLeagueQualifier[] | null {

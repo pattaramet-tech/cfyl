@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { GoalsList } from '@/components/GoalsList';
+import { ChampionLeagueFixtureManager } from '@/components/ChampionLeagueFixtureManager';
+import { isGeneratedLeaguePostMatchCode } from '@/lib/champion-league';
 import type { LeaguePhase, Match } from '@/types/db';
 
 interface MatchWithTeams extends Match {
@@ -214,7 +216,6 @@ export default function MatchManagePage() {
   const [loading, setLoading] = useState(false);
   const [loadingMatchData, setLoadingMatchData] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [activatingChampionLeague, setActivatingChampionLeague] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
@@ -357,45 +358,41 @@ export default function MatchManagePage() {
     loadDivisions();
   }, [seasonId, ageGroupId]);
 
-  // Load matches
-  useEffect(() => {
+  const loadMatchesForScope = useCallback(async () => {
     if (!seasonId || !ageGroupId || !divisionId) {
       setMatches([]);
       setSelectedMatchId('');
       return;
     }
 
-    const loadMatches = async () => {
-      setLoading(true);
-      try {
-        const token = localStorage.getItem('admin_token');
-        const res = await fetch(
-          `/api/public/matches?seasonId=${seasonId}&ageGroupId=${ageGroupId}&divisionId=${divisionId}`,
-          {
-            headers: token ? { 'Authorization': `Bearer ${token}` } : {},
-          }
-        );
-        if (!res.ok) throw new Error('Failed to load matches');
-        const data = await res.json();
-        setMatches(data);
-
-        // Preserve selectedMatchId if it exists, otherwise auto-select first match
-        if (selectedMatchId && !data.some((m: MatchWithTeams) => m.id === selectedMatchId)) {
-          setSelectedMatchId('');
-        } else if (!selectedMatchId && data.length > 0) {
-          setSelectedMatchId(data[0].id);
+    setLoading(true);
+    try {
+      const token = localStorage.getItem('admin_token');
+      const res = await fetch(
+        `/api/public/matches?seasonId=${seasonId}&ageGroupId=${ageGroupId}&divisionId=${divisionId}`,
+        {
+          headers: token ? { 'Authorization': `Bearer ${token}` } : {},
         }
-      } catch (err) {
-        console.error('[MATCH_MANAGE] Load matches error:', err);
-        setError('ไม่สามารถโหลดข้อมูลแมตช์ได้');
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    loadMatches();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+      );
+      if (!res.ok) throw new Error('Failed to load matches');
+      const data = await res.json();
+      setMatches(data);
+      setSelectedMatchId((current) => {
+        if (current && data.some((m: MatchWithTeams) => m.id === current)) return current;
+        return data.length > 0 ? data[0].id : '';
+      });
+    } catch (err) {
+      console.error('[MATCH_MANAGE] Load matches error:', err);
+      setError('ไม่สามารถโหลดข้อมูลแมตช์ได้');
+    } finally {
+      setLoading(false);
+    }
   }, [seasonId, ageGroupId, divisionId]);
+
+  // Load matches
+  useEffect(() => {
+    void loadMatchesForScope();
+  }, [loadMatchesForScope]);
 
   const loadMatchDataCallback = useCallback(
     async (match: MatchWithTeams) => {
@@ -493,51 +490,11 @@ export default function MatchManagePage() {
     setSuccess(null);
   };
 
-  const handleActivateChampionLeague = async () => {
-    if (!selectedMatch?.season_id || !selectedMatch.age_group_id || !selectedMatch.division_id) {
-      setError('นัดนี้ไม่มีข้อมูล season / รุ่นอายุ / division ครบถ้วน');
-      return;
-    }
-
-    setActivatingChampionLeague(true);
-    setError(null);
-    setSuccess(null);
-    try {
-      const token = localStorage.getItem('admin_token');
-      const res = await fetch('/api/admin/champion-league/activate', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          season_id: selectedMatch.season_id,
-          age_group_id: selectedMatch.age_group_id,
-          division_id: selectedMatch.division_id,
-        }),
-      });
-      const payload = await res.json();
-      if (!res.ok) {
-        const readiness = payload.readiness;
-        const detail = readiness
-          ? ` (ค้าง ${readiness.unfinished_match_count || 0} นัด, ทีมไม่มีนัด ${readiness.teams_without_regular_match?.length || 0})`
-          : '';
-        throw new Error((payload.error || 'ไม่สามารถเปิด Champion League ได้') + detail);
-      }
-
-      const topFour = Array.isArray(payload.qualifiers)
-        ? payload.qualifiers.map((row: { league_rank: number; team_name: string }) => `${row.league_rank}. ${row.team_name}`).join(' · ')
-        : '';
-      setSuccess(
-        payload.already_active
-          ? `✓ Champion League ถูกล็อกไว้แล้ว${topFour ? `: ${topFour}` : ''}`
-          : `✓ ล็อก Top 4 และเปิด Champion League แล้ว${topFour ? `: ${topFour}` : ''}`
-      );
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'ไม่สามารถเปิด Champion League ได้');
-    } finally {
-      setActivatingChampionLeague(false);
-    }
+  const handleActivateChampionLeague = () => {
+    document.getElementById('champion-league-fixture-manager')?.scrollIntoView({
+      behavior: 'smooth',
+      block: 'start',
+    });
   };
 
   const handleSaveScore = async () => {
@@ -956,6 +913,9 @@ export default function MatchManagePage() {
   // Helper functions
   const isFinished = selectedMatch?.status === 'finished';
   const isReadOnlyFinished = isFinished && !isEditingFinishedMatch;
+  const generatedPhaseLocked = Boolean(
+    selectedMatch && isGeneratedLeaguePostMatchCode(selectedMatch.match_code)
+  );
 
   const handleOpenEditFinishedMatch = () => {
     setShowConfirmEditFinished(true);
@@ -1209,6 +1169,13 @@ export default function MatchManagePage() {
         )}
       </div>
 
+      <ChampionLeagueFixtureManager
+        seasonId={seasonId}
+        ageGroupId={ageGroupId}
+        divisionId={divisionId}
+        onChanged={loadMatchesForScope}
+      />
+
       {/* Error/Success */}
       {error && (
         <div className="p-3 sm:p-4 bg-red-50 border border-red-200 rounded-lg animate-in fade-in">
@@ -1314,7 +1281,7 @@ export default function MatchManagePage() {
                 <select
                   value={leaguePhase}
                   onChange={(e) => setLeaguePhase(e.target.value as LeaguePhase)}
-                  disabled={isReadOnlyFinished}
+                  disabled={isReadOnlyFinished || generatedPhaseLocked}
                   className="w-full px-3 sm:px-4 py-3 sm:py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-600 disabled:bg-gray-100 text-sm sm:text-base"
                 >
                   <option value="regular">รอบลีก</option>
@@ -1328,13 +1295,12 @@ export default function MatchManagePage() {
                 <button
                   type="button"
                   onClick={handleActivateChampionLeague}
-                  disabled={activatingChampionLeague}
-                  className="mt-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs font-semibold text-blue-800 hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-50"
+                  className="mt-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs font-semibold text-blue-800 hover:bg-blue-100"
                 >
-                  {activatingChampionLeague ? 'กำลังตรวจรอบลีก...' : 'ล็อก Top 4 / เปิด Champion League'}
+                  เปิดแผงจัดการ Champion League ด้านบน
                 </button>
                 <p className="mt-1 text-[11px] text-gray-500">
-                  ระบบจะเปิดได้เมื่อทุกนัดรอบลีกใน Division นี้จบและมีผลครบ จากนั้นอันดับ Top 4 จะถูกล็อกเป็น snapshot
+                  Generated fixtures จะล็อกคู่ทีมและ phase; ใช้ Fixture Generator สำหรับสร้างและแก้วัน/เวลา/สนาม
                 </p>
               </div>
 

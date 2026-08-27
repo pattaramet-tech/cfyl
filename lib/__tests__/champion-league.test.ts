@@ -2,9 +2,13 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
   calculateChampionLeagueStandings,
+  getChampionLeagueFixtureStructureStatus,
   getChampionLeaguePlacementPairings,
   getChampionLeagueProgress,
+  getChampionLeagueRoundRobinPairings,
+  getGeneratedLeaguePostMatchCode,
   getRegularLeagueActivationReadiness,
+  isGeneratedLeaguePostMatchCode,
   isRegularLeagueMatch,
   parseChampionLeagueQualifierSnapshot,
   validateChampionLeaguePlacementFixtures,
@@ -284,6 +288,60 @@ describe('Champion League', () => {
     expect(
       isLegacyTournamentV1Fixture({ division_id: null, league_phase: 'champion_league', stage: 'final' })
     ).toBe(false);
+  });
+
+  it('generates a deterministic six-pair round robin from frozen ranks with three matches per team', () => {
+    const pairings = getChampionLeagueRoundRobinPairings(qualifiers);
+    expect(pairings).toHaveLength(6);
+    expect(pairings.map((row) => [row.round_no, row.home_team_id, row.away_team_id])).toEqual([
+      [1, 'A', 'D'],
+      [1, 'C', 'B'],
+      [2, 'C', 'A'],
+      [2, 'B', 'D'],
+      [3, 'A', 'B'],
+      [3, 'D', 'C'],
+    ]);
+    const counts = new Map<string, number>();
+    const unordered = new Set<string>();
+    for (const row of pairings) {
+      counts.set(row.home_team_id, (counts.get(row.home_team_id) || 0) + 1);
+      counts.set(row.away_team_id, (counts.get(row.away_team_id) || 0) + 1);
+      unordered.add([row.home_team_id, row.away_team_id].sort().join('::'));
+    }
+    expect(unordered.size).toBe(6);
+    expect(Object.fromEntries(counts)).toEqual({ A: 3, D: 3, C: 3, B: 3 });
+  });
+
+  it('reports fixture structure complete independently of whether results are finished', () => {
+    const scheduled = getChampionLeagueRoundRobinPairings(qualifiers).map((row) => ({
+      ...match(String(row.slot), row.home_team_id, row.away_team_id, 0, 0),
+      status: 'scheduled' as const,
+      home_score: null,
+      away_score: null,
+    }));
+    const structure = getChampionLeagueFixtureStructureStatus(qualifiers, scheduled);
+    expect(structure.complete).toBe(true);
+    expect(structure.fixture_matches).toBe(6);
+    expect(structure.unique_pairings).toBe(6);
+    expect(structure.missing_pairings).toBe(0);
+    expect(Object.values(structure.matches_by_team)).toEqual([3, 3, 3, 3]);
+    expect(getChampionLeagueProgress(qualifiers, scheduled).complete).toBe(false);
+  });
+
+  it('generated post-league match codes are deterministic and recognizable', () => {
+    expect(getGeneratedLeaguePostMatchCode('champion_league', 'DIV', 1)).toBe('CL-DIV-R1');
+    expect(getGeneratedLeaguePostMatchCode('final', 'DIV')).toBe('CL-DIV-FINAL');
+    expect(getGeneratedLeaguePostMatchCode('third_place', 'DIV')).toBe('CL-DIV-THIRD');
+    expect(isGeneratedLeaguePostMatchCode('CL-DIV-R6')).toBe(true);
+    expect(isGeneratedLeaguePostMatchCode('CL-DIV-FINAL')).toBe(true);
+    expect(isGeneratedLeaguePostMatchCode('REG-1')).toBe(false);
+  });
+
+  it('CFYL-002 migration enforces one Final and one Third Place per League scope', () => {
+    const sql = readFileSync('scripts/migration-league-champion-fixtures.sql', 'utf8');
+    expect(sql).toContain('CREATE UNIQUE INDEX IF NOT EXISTS uq_matches_league_placement_phase_scope');
+    expect(sql).toContain('season_id, age_group_id, division_id, league_phase');
+    expect(sql).toContain("WHERE league_phase IN ('final', 'third_place')");
   });
 
   it('migration enforces concurrency-safe unordered Champion League pairing uniqueness', () => {

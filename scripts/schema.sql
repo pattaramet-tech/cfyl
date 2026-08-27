@@ -170,6 +170,12 @@ CREATE UNIQUE INDEX uq_matches_champion_league_pair_scope ON matches(
   LEAST(home_team_id, away_team_id),
   GREATEST(home_team_id, away_team_id)
 ) WHERE league_phase = 'champion_league';
+CREATE UNIQUE INDEX uq_matches_league_placement_phase_scope ON matches(
+  season_id,
+  age_group_id,
+  division_id,
+  league_phase
+) WHERE league_phase IN ('final', 'third_place');
 CREATE INDEX idx_league_champion_league_snapshot_scope ON league_champion_league_snapshots(season_id, age_group_id, division_id);
 CREATE INDEX idx_players_season_team ON players(season_id, team_id);
 CREATE INDEX idx_players_code ON players(player_code, season_id);
