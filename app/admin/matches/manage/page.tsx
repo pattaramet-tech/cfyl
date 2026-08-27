@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { GoalsList } from '@/components/GoalsList';
-import type { Match } from '@/types/db';
+import type { LeaguePhase, Match } from '@/types/db';
 
 interface MatchWithTeams extends Match {
   home_team?: { id: string; name: string; short_name?: string };
@@ -182,6 +182,7 @@ export default function MatchManagePage() {
   const [homeScore, setHomeScore] = useState<string>('0');
   const [awayScore, setAwayScore] = useState<string>('0');
   const [matchStatus, setMatchStatus] = useState<string>('scheduled');
+  const [leaguePhase, setLeaguePhase] = useState<LeaguePhase>('regular');
   const [resultType, setResultType] = useState<'normal' | 'home_win_by_bye' | 'away_win_by_bye'>('normal');
   const [matchDate, setMatchDate] = useState<string>('');
   const [matchTime, setMatchTime] = useState<string>('');
@@ -445,6 +446,7 @@ export default function MatchManagePage() {
         setHomeScore((match.home_score ?? 0).toString());
         setAwayScore((match.away_score ?? 0).toString());
         setMatchStatus(match.status || 'scheduled');
+        setLeaguePhase(match.league_phase || 'regular');
         setResultType((match.result_type as any) || 'normal');
         setMatchDate(match.match_date || '');
         setMatchTime(match.match_time ? match.match_time.substring(0, 5) : '');
@@ -471,6 +473,7 @@ export default function MatchManagePage() {
       setHomeScore('0');
       setAwayScore('0');
       setMatchStatus('scheduled');
+      setLeaguePhase('regular');
       setMatchDate('');
       setMatchTime('');
       return;
@@ -516,7 +519,7 @@ export default function MatchManagePage() {
         resultType,
       });
 
-      const payload: any = { ...basePayload };
+      const payload: any = { ...basePayload, league_phase: leaguePhase };
 
       // Override for postponed status
       if (matchStatus === 'postponed') {
@@ -583,6 +586,7 @@ export default function MatchManagePage() {
 
       // Update form state to match saved data
       setResultType((updatedMatch.result_type as any) || resultType);
+      setLeaguePhase(updatedMatch.league_phase || leaguePhase);
       setMatchStatus(updatedMatch.status || payload.status);
       setHomeScore(String(updatedMatch.home_score ?? payload.home_score));
       setAwayScore(String(updatedMatch.away_score ?? payload.away_score));
@@ -947,6 +951,7 @@ export default function MatchManagePage() {
           setHomeScore((current.home_score ?? homeScore).toString());
           setAwayScore((current.away_score ?? awayScore).toString());
           setMatchStatus(current.status || 'scheduled');
+          setLeaguePhase(current.league_phase || 'regular');
           await loadMatchDataCallback(current);
         }
       }
@@ -995,7 +1000,7 @@ export default function MatchManagePage() {
         resultType,
       });
 
-      const payload: any = { ...basePayload };
+      const payload: any = { ...basePayload, league_phase: leaguePhase };
 
       // Include date/time for all updates
       if (matchDate) {
@@ -1221,6 +1226,16 @@ export default function MatchManagePage() {
                 <span className="font-semibold">ดิวิชั่น:</span> {selectedMatch.division?.name || 'ไม่ระบุ'}
               </p>
               <p>
+                <span className="font-semibold">รอบ:</span>{' '}
+                {selectedMatch.league_phase === 'champion_league'
+                  ? 'แชมเปี้ยนส์ลีก'
+                  : selectedMatch.league_phase === 'final'
+                    ? 'รอบชิงชนะเลิศ'
+                    : selectedMatch.league_phase === 'third_place'
+                      ? 'ชิงอันดับที่ 3'
+                      : 'รอบลีก'}
+              </p>
+              <p>
                 <span className="font-semibold">ทีม:</span> {selectedMatch.home_team?.name || 'ทีมเหย้า'} vs{' '}
                 {selectedMatch.away_team?.name || 'ทีมเยือน'}
               </p>
@@ -1244,6 +1259,24 @@ export default function MatchManagePage() {
                   disabled={saving || loadingMatchData || isReadOnlyFinished}
                   className="w-full px-3 sm:px-4 py-3 sm:py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-600 disabled:bg-gray-100 text-base sm:text-sm"
                 />
+              </div>
+
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-2">รอบการแข่งขัน</label>
+                <select
+                  value={leaguePhase}
+                  onChange={(e) => setLeaguePhase(e.target.value as LeaguePhase)}
+                  disabled={isReadOnlyFinished}
+                  className="w-full px-3 sm:px-4 py-3 sm:py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-600 disabled:bg-gray-100 text-sm sm:text-base"
+                >
+                  <option value="regular">รอบลีก</option>
+                  <option value="champion_league">แชมเปี้ยนส์ลีก</option>
+                  <option value="final">รอบชิงชนะเลิศ</option>
+                  <option value="third_place">ชิงอันดับที่ 3</option>
+                </select>
+                <p className="mt-1 text-xs text-gray-500">
+                  ประตู ใบ และโทษสะสมยังนับต่อเนื่องทุกระยะของลีก
+                </p>
               </div>
 
               <div>

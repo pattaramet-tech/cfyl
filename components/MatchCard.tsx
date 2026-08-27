@@ -2,6 +2,7 @@ import Link from 'next/link';
 import type { Match } from '@/types/db';
 import { TeamLogo } from './TeamLogo';
 import { getByeLabelForTeam } from '@/lib/match-utils';
+import { getLeaguePhaseLabel } from '@/lib/champion-league';
 
 interface MatchCardProps {
   match: Match & {
@@ -11,6 +12,15 @@ interface MatchCardProps {
   };
   variant?: 'highlight' | 'future' | 'finished' | 'inactive';
   badgeText?: string;
+}
+
+function ByeBadge({ label }: { label: 'ชนะบาย' | 'แพ้บาย' | null }) {
+  if (!label) return null;
+  return (
+    <span className="inline-flex rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700">
+      {label}
+    </span>
+  );
 }
 
 function formatDate(dateStr?: string | null): string {
@@ -28,6 +38,10 @@ export function MatchCard({ match, variant, badgeText }: MatchCardProps) {
   const homeTeam = match.home_team?.name || match.home_team?.short_name || 'ทีมเหย้า';
   const awayTeam = match.away_team?.name || match.away_team?.short_name || 'ทีมเยือน';
   const date = formatDate(match.match_date);
+  const phaseLabel =
+    match.league_phase && match.league_phase !== 'regular'
+      ? getLeaguePhaseLabel(match.league_phase)
+      : null;
 
   const cardClass = effectiveVariant === 'highlight'
     ? 'border-l-4 border-blue-600 bg-blue-50/30'
@@ -53,15 +67,6 @@ export function MatchCard({ match, variant, badgeText }: MatchCardProps) {
     return '⏰ ยังไม่แข่ง';
   };
 
-  function ByeBadge({ label }: { label: 'ชนะบาย' | 'แพ้บาย' | null }) {
-    if (!label) return null;
-    return (
-      <span className="inline-flex rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700">
-        {label}
-      </span>
-    );
-  }
-
   const homeByeLabel = getByeLabelForTeam(match, 'home');
   const awayByeLabel = getByeLabelForTeam(match, 'away');
 
@@ -73,6 +78,11 @@ export function MatchCard({ match, variant, badgeText }: MatchCardProps) {
           <span className="font-semibold text-blue-900 whitespace-nowrap">{match.matchday}</span>
           {match.division?.name && (
             <span className="truncate text-slate-400">· {match.division.name}</span>
+          )}
+          {phaseLabel && (
+            <span className="whitespace-nowrap rounded-full bg-blue-100 px-2 py-0.5 font-semibold text-blue-700">
+              {phaseLabel}
+            </span>
           )}
         </div>
         <div className="flex items-center gap-2 text-slate-500 whitespace-nowrap">

@@ -10,6 +10,7 @@ export async function GET(request: NextRequest) {
     const ageGroupId = searchParams.get('ageGroupId');
     const divisionId = searchParams.get('divisionId');
     const matchday = searchParams.get('matchday');
+    const leaguePhase = searchParams.get('leaguePhase');
 
     let query = supabase
       .from('matches')
@@ -28,6 +29,7 @@ export async function GET(request: NextRequest) {
     if (ageGroupId) query = query.eq('age_group_id', ageGroupId);
     if (divisionId) query = query.eq('division_id', divisionId);
     if (matchday) query = query.eq('matchday', matchday);
+    if (leaguePhase) query = query.eq('league_phase', leaguePhase);
 
     const { data, error } = await query;
 

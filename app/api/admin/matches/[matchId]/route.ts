@@ -42,7 +42,7 @@ export async function PUT(
 
     // Parse request body
     const body = await request.json();
-    const { home_score, away_score, status, winner_team_id, result_type, match_date, match_time } = body;
+    const { home_score, away_score, status, winner_team_id, result_type, match_date, match_time, league_phase } = body;
 
     // Validate inputs
     const isByeResult = result_type && result_type !== 'normal';
@@ -66,6 +66,11 @@ export async function PUT(
 
     if (status && !['scheduled', 'finished', 'postponed', 'cancelled'].includes(status)) {
       return badRequestResponse('Invalid status');
+    }
+
+    const allowedLeaguePhases = ['regular', 'champion_league', 'final', 'third_place'];
+    if (league_phase != null && !allowedLeaguePhases.includes(league_phase)) {
+      return badRequestResponse('Invalid league_phase');
     }
 
     const rawResultType = result_type;
@@ -139,6 +144,10 @@ export async function PUT(
       updated_at: new Date().toISOString(),
     };
 
+    if (typeof league_phase !== 'undefined') {
+      updatePayload.league_phase = league_phase || null;
+    }
+
     // Include date/time if provided
     if (typeof match_date !== 'undefined') {
       updatePayload.match_date = match_date || null;
@@ -173,8 +182,14 @@ export async function PUT(
         home_score: currentMatch.home_score,
         away_score: currentMatch.away_score,
         status: currentMatch.status,
+        league_phase: currentMatch.league_phase || null,
       },
-      newData: { home_score, away_score, status: status || currentMatch.status },
+      newData: {
+        home_score,
+        away_score,
+        status: status || currentMatch.status,
+        league_phase: typeof league_phase === 'undefined' ? currentMatch.league_phase || null : league_phase || null,
+      },
     });
 
     // Refresh suspension serving matches when status or schedule changes.
