@@ -426,6 +426,37 @@ function ChampionLeagueFixtureManagerScope({
     }
   };
 
+  const swapHomeAway = async (match: FixtureMatch) => {
+    const epoch = lifecycleEpochRef.current;
+    if (!isLifecycleCurrent(epoch)) return;
+    setBusy(true);
+    setError(null);
+    setSuccess(null);
+    try {
+      const token = localStorage.getItem('admin_token');
+      const res = await fetch('/api/admin/champion-league/fixtures', {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ match_id: match.id, swap_home_away: true }),
+      });
+      if (!isLifecycleCurrent(epoch)) return;
+      const payload = await res.json().catch(() => ({}));
+      if (!isLifecycleCurrent(epoch)) return;
+      if (!res.ok) throw new Error(payload.error || 'สลับทีมเหย้า–เยือนไม่สำเร็จ');
+      setSuccess(`สลับทีมเหย้า–เยือน ${match.match_code} แล้ว`);
+      await notifyChanged(epoch);
+      if (!isLifecycleCurrent(epoch)) return;
+    } catch (err) {
+      if (!isLifecycleCurrent(epoch)) return;
+      setError(err instanceof Error ? err.message : 'สลับทีมเหย้า–เยือนไม่สำเร็จ');
+    } finally {
+      if (isLifecycleCurrent(epoch)) setBusy(false);
+    }
+  };
+
   if (!scopeReady) return null;
 
   const scheduleFields = (
@@ -468,13 +499,33 @@ function ChampionLeagueFixtureManagerScope({
     </div>
   );
 
+  const teamName = (teamId: string) => qualifierMap.get(teamId)?.team_name || teamId;
+  const finalDisplayPair = data?.placement.pairings
+    ? {
+        home_team_id:
+          data.placement.final_match?.home_team_id || data.placement.pairings.final.home_team_id,
+        away_team_id:
+          data.placement.final_match?.away_team_id || data.placement.pairings.final.away_team_id,
+      }
+    : null;
+  const thirdPlaceDisplayPair = data?.placement.pairings
+    ? {
+        home_team_id:
+          data.placement.third_place_match?.home_team_id ||
+          data.placement.pairings.third_place.home_team_id,
+        away_team_id:
+          data.placement.third_place_match?.away_team_id ||
+          data.placement.pairings.third_place.away_team_id,
+      }
+    : null;
+
   return (
     <div id="champion-league-fixture-manager" className="rounded-lg bg-white p-4 shadow sm:p-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h2 className="text-lg font-semibold text-gray-800">🏆 Champion League Fixture Generator</h2>
           <p className="mt-1 text-xs text-gray-500">
-            ระบบกำหนดคู่ทีมจาก Top 4 ที่ล็อกไว้ แอดมินกำหนดเฉพาะ Match No / วัน / เวลา / สนาม
+            ระบบกำหนดคู่ทีมจาก Top 4 ที่ล็อกไว้ แอดมินกำหนด Match No / วัน / เวลา / สนาม และสลับตำแหน่งเหย้า–เยือนได้ก่อนแข่งจบ
           </p>
         </div>
         <button
@@ -537,11 +588,15 @@ function ChampionLeagueFixtureManagerScope({
               {data.round_robin.preview.map((pairing) => {
                 const existing = pairing.existing_match;
                 const draft = roundSchedules[pairing.slot] || emptySchedule();
+                const displayHomeId = existing?.home_team_id || pairing.home_team_id;
+                const displayAwayId = existing?.away_team_id || pairing.away_team_id;
+                const displayHomeName = qualifierMap.get(displayHomeId)?.team_name || displayHomeId;
+                const displayAwayName = qualifierMap.get(displayAwayId)?.team_name || displayAwayId;
                 return (
                   <div key={pairing.slot} className="rounded border border-gray-200 p-3">
                     <div className="mb-2 flex flex-wrap items-center justify-between gap-2 text-sm">
                       <span className="font-semibold text-gray-800">
-                        รอบ {pairing.round_no} · คู่ {pairing.slot}: {pairing.home_team?.team_name || pairing.home_team_id} vs {pairing.away_team?.team_name || pairing.away_team_id}
+                        รอบ {pairing.round_no} · คู่ {pairing.slot}: {displayHomeName} vs {displayAwayName}
                       </span>
                       <span className="font-mono text-[11px] text-gray-400">{pairing.match_code}</span>
                     </div>
@@ -551,7 +606,15 @@ function ChampionLeagueFixtureManagerScope({
                       busy || existing?.status === 'finished'
                     )}
                     {existing && (
-                      <div className="mt-2 flex justify-end">
+                      <div className="mt-2 flex flex-wrap justify-end gap-2">
+                        <button
+                          type="button"
+                          onClick={() => void swapHomeAway(existing)}
+                          disabled={busy || existing.status === 'finished'}
+                          className="rounded border border-blue-300 bg-blue-50 px-3 py-1.5 text-xs font-semibold text-blue-700 disabled:opacity-40"
+                        >
+                          ⇄ สลับเหย้า–เยือน
+                        </button>
                         <button
                           type="button"
                           onClick={() => void saveExistingSchedule(existing, draft)}
@@ -592,11 +655,19 @@ function ChampionLeagueFixtureManagerScope({
               <div className="mt-3 space-y-3">
                 <div className="rounded border border-yellow-200 bg-yellow-50 p-3">
                   <p className="mb-2 text-sm font-semibold text-yellow-900">
-                    Final: {qualifierMap.get(data.placement.pairings.final.home_team_id)?.team_name || data.placement.pairings.final.home_team_id} vs {qualifierMap.get(data.placement.pairings.final.away_team_id)?.team_name || data.placement.pairings.final.away_team_id}
+                    Final: {finalDisplayPair ? teamName(finalDisplayPair.home_team_id) : ''} vs {finalDisplayPair ? teamName(finalDisplayPair.away_team_id) : ''}
                   </p>
                   {scheduleFields(finalSchedule, (field, value) => setFinalSchedule((prev) => ({ ...prev, [field]: value })), busy || data.placement.final_match?.status === 'finished')}
                   {data.placement.final_match && (
-                    <div className="mt-2 flex justify-end">
+                    <div className="mt-2 flex flex-wrap justify-end gap-2">
+                      <button
+                        type="button"
+                        onClick={() => void swapHomeAway(data.placement.final_match!)}
+                        disabled={busy || data.placement.final_match.status === 'finished'}
+                        className="rounded border border-blue-300 bg-white px-3 py-1.5 text-xs font-semibold text-blue-700 disabled:opacity-40"
+                      >
+                        ⇄ สลับเหย้า–เยือน
+                      </button>
                       <button
                         type="button"
                         onClick={() => void saveExistingSchedule(data.placement.final_match!, finalSchedule)}
@@ -611,11 +682,19 @@ function ChampionLeagueFixtureManagerScope({
 
                 <div className="rounded border border-orange-200 bg-orange-50 p-3">
                   <p className="mb-2 text-sm font-semibold text-orange-900">
-                    ชิงอันดับที่ 3: {qualifierMap.get(data.placement.pairings.third_place.home_team_id)?.team_name || data.placement.pairings.third_place.home_team_id} vs {qualifierMap.get(data.placement.pairings.third_place.away_team_id)?.team_name || data.placement.pairings.third_place.away_team_id}
+                    ชิงอันดับที่ 3: {thirdPlaceDisplayPair ? teamName(thirdPlaceDisplayPair.home_team_id) : ''} vs {thirdPlaceDisplayPair ? teamName(thirdPlaceDisplayPair.away_team_id) : ''}
                   </p>
                   {scheduleFields(thirdSchedule, (field, value) => setThirdSchedule((prev) => ({ ...prev, [field]: value })), busy || data.placement.third_place_match?.status === 'finished')}
                   {data.placement.third_place_match && (
-                    <div className="mt-2 flex justify-end">
+                    <div className="mt-2 flex flex-wrap justify-end gap-2">
+                      <button
+                        type="button"
+                        onClick={() => void swapHomeAway(data.placement.third_place_match!)}
+                        disabled={busy || data.placement.third_place_match.status === 'finished'}
+                        className="rounded border border-blue-300 bg-white px-3 py-1.5 text-xs font-semibold text-blue-700 disabled:opacity-40"
+                      >
+                        ⇄ สลับเหย้า–เยือน
+                      </button>
                       <button
                         type="button"
                         onClick={() => void saveExistingSchedule(data.placement.third_place_match!, thirdSchedule)}

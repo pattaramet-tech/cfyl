@@ -127,6 +127,7 @@ vi.mock('@supabase/supabase-js', () => ({
   }),
 }));
 
+import { logAdminAction } from '@/lib/audit-log';
 import { GET, PATCH, POST } from '../route';
 import { PUT as PUT_MATCH } from '../../../matches/[matchId]/route';
 
@@ -229,6 +230,7 @@ describe('admin Champion League fixture generation', () => {
     initializeDb();
     state.raceInsertOnce = false;
     state.finishBeforeUpdateOnce = false;
+    vi.mocked(logAdminAction).mockClear();
     state.auth = {
       authenticated: true,
       profile: { id: 'admin-1', email: 'admin@example.com', can_edit_matches: true },
@@ -275,7 +277,10 @@ describe('admin Champion League fixture generation', () => {
     const pairKeys = rows.map((row) => [row.home_team_id, row.away_team_id].sort().join('::'));
     expect(new Set(pairKeys).size).toBe(6);
     const teamCounts = rows.flatMap((row) => [row.home_team_id, row.away_team_id]).reduce<Record<string, number>>(
-      (acc, id) => ({ ...acc, [id]: (acc[id] || 0) + 1 }),
+      (acc, id) => {
+        const teamId = String(id);
+        return { ...acc, [teamId]: (acc[teamId] || 0) + 1 };
+      },
       {}
     );
     expect(teamCounts).toEqual({ A: 3, D: 3, C: 3, B: 3 });
@@ -351,6 +356,50 @@ describe('admin Champion League fixture generation', () => {
     expect(secondBody.idempotent).toBe(true);
     expect(state.db.matches.filter((row) => row.league_phase === 'final')).toHaveLength(1);
     expect(state.db.matches.filter((row) => row.league_phase === 'third_place')).toHaveLength(1);
+  });
+
+  it('PATCH swaps a generated placement fixture without breaking its rank-derived pair or schedule', async () => {
+    initializeDb(finishedRoundRobin());
+    const placementResponse = await POST(
+      requestBody({
+        action: 'generate_placements',
+        ...scope,
+        schedules: {
+          final: { match_no: 201, match_date: '2026-10-01', match_time: '14:00', venue: 'Dome 1' },
+          third_place: { match_no: 200, match_date: '2026-10-01', match_time: '12:00', venue: 'Dome 1' },
+        },
+      })
+    );
+    expect(placementResponse.status).toBe(201);
+
+    const final = state.db.matches.find((row) => row.league_phase === 'final')!;
+    const originalHome = final.home_team_id;
+    const originalAway = final.away_team_id;
+    const originalSchedule = {
+      match_no: final.match_no,
+      match_date: final.match_date,
+      match_time: final.match_time,
+      venue: final.venue,
+    };
+
+    const response = await PATCH(
+      requestBody({
+        match_id: final.id,
+        swap_home_away: true,
+      })
+    );
+
+    expect(response.status).toBe(200);
+    expect(final.home_team_id).toBe(originalAway);
+    expect(final.away_team_id).toBe(originalHome);
+    expect(new Set([final.home_team_id, final.away_team_id])).toEqual(new Set(['A', 'B']));
+    expect(final.league_phase).toBe('final');
+    expect({
+      match_no: final.match_no,
+      match_date: final.match_date,
+      match_time: final.match_time,
+      venue: final.venue,
+    }).toEqual(originalSchedule);
   });
 
   it('treats a DB unique placement race as idempotent success after the competing request commits both rows', async () => {
@@ -475,6 +524,112 @@ describe('admin Champion League fixture generation', () => {
     expect(generated.match_date).toBe('2026-11-01');
     expect(generated.match_time).toBe('18:30:00');
     expect(generated.venue).toBe('Dome 2');
+  });
+
+  it('PATCH swaps home and away for a generated non-finished fixture without changing pair identity or schedule', async () => {
+    await POST(requestBody({ action: 'generate_round_robin', ...scope, schedules: schedules() }));
+    const generated = state.db.matches.find((row) => row.match_code === 'CL-division-1-R1')!;
+    const original = {
+      home_team_id: generated.home_team_id,
+      away_team_id: generated.away_team_id,
+      league_phase: generated.league_phase,
+      match_no: generated.match_no,
+      match_date: generated.match_date,
+      match_time: generated.match_time,
+      venue: generated.venue,
+    };
+
+    const response = await PATCH(
+      requestBody({
+        match_id: generated.id,
+        swap_home_away: true,
+      })
+    );
+
+    expect(response.status).toBe(200);
+    expect(generated.home_team_id).toBe(original.away_team_id);
+    expect(generated.away_team_id).toBe(original.home_team_id);
+    expect(generated.league_phase).toBe(original.league_phase);
+    expect(generated.match_no).toBe(original.match_no);
+    expect(generated.match_date).toBe(original.match_date);
+    expect(generated.match_time).toBe(original.match_time);
+    expect(generated.venue).toBe(original.venue);
+    expect(logAdminAction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'champion_league.fixture.home_away_swap',
+        oldData: expect.objectContaining({
+          home_team_id: original.home_team_id,
+          away_team_id: original.away_team_id,
+        }),
+        newData: expect.objectContaining({
+          home_team_id: original.away_team_id,
+          away_team_id: original.home_team_id,
+        }),
+      })
+    );
+  });
+
+  it('PATCH can update schedule and swap home-away atomically in the same generated fixture write', async () => {
+    await POST(requestBody({ action: 'generate_round_robin', ...scope, schedules: schedules() }));
+    const generated = state.db.matches.find((row) => row.match_code === 'CL-division-1-R1')!;
+    const originalHome = generated.home_team_id;
+    const originalAway = generated.away_team_id;
+
+    const response = await PATCH(
+      requestBody({
+        match_id: generated.id,
+        swap_home_away: true,
+        schedule: { match_no: 777, match_date: '2026-11-02', match_time: '19:15', venue: 'Dome 3' },
+      })
+    );
+
+    expect(response.status).toBe(200);
+    expect(generated.home_team_id).toBe(originalAway);
+    expect(generated.away_team_id).toBe(originalHome);
+    expect(generated.league_phase).toBe('champion_league');
+    expect(generated.match_no).toBe(777);
+    expect(generated.match_date).toBe('2026-11-02');
+    expect(generated.match_time).toBe('19:15:00');
+    expect(generated.venue).toBe('Dome 3');
+    expect(logAdminAction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'champion_league.fixture.home_away_swap',
+        oldData: expect.objectContaining({
+          home_team_id: originalHome,
+          away_team_id: originalAway,
+        }),
+        newData: expect.objectContaining({
+          home_team_id: originalAway,
+          away_team_id: originalHome,
+          match_no: 777,
+          match_date: '2026-11-02',
+          match_time: '19:15:00',
+          venue: 'Dome 3',
+        }),
+      })
+    );
+  });
+
+  it('PATCH atomically refuses a home-away swap if the fixture finishes before the write', async () => {
+    await POST(requestBody({ action: 'generate_round_robin', ...scope, schedules: schedules() }));
+    const generated = state.db.matches.find((row) => row.match_code === 'CL-division-1-R1')!;
+    const originalHome = generated.home_team_id;
+    const originalAway = generated.away_team_id;
+    state.finishBeforeUpdateOnce = true;
+
+    const response = await PATCH(
+      requestBody({
+        match_id: generated.id,
+        swap_home_away: true,
+      })
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(409);
+    expect(body.error).toMatch(/read-only/);
+    expect(generated.status).toBe('finished');
+    expect(generated.home_team_id).toBe(originalHome);
+    expect(generated.away_team_id).toBe(originalAway);
   });
 
   it('PATCH atomically refuses a schedule update if the fixture finishes before the write', async () => {
