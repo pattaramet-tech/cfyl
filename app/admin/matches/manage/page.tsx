@@ -1,8 +1,11 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { GoalsList } from '@/components/GoalsList';
-import { ChampionLeagueFixtureManager } from '@/components/ChampionLeagueFixtureManager';
+import {
+  ChampionLeagueFixtureManager,
+  getChampionLeagueFixtureScopeKey,
+} from '@/components/ChampionLeagueFixtureManager';
 import { isGeneratedLeaguePostMatchCode } from '@/lib/champion-league';
 import type { LeaguePhase, Match } from '@/types/db';
 
@@ -358,7 +361,19 @@ export default function MatchManagePage() {
     loadDivisions();
   }, [seasonId, ageGroupId]);
 
+  const matchScopeKey = getChampionLeagueFixtureScopeKey(seasonId, ageGroupId, divisionId);
+  const currentMatchScopeKeyRef = useRef(matchScopeKey);
+  const matchScopeRequestSeq = useRef(0);
+
+  useLayoutEffect(() => {
+    currentMatchScopeKeyRef.current = matchScopeKey;
+    matchScopeRequestSeq.current += 1;
+  }, [matchScopeKey]);
+
   const loadMatchesForScope = useCallback(async () => {
+    const requestedScopeKey = getChampionLeagueFixtureScopeKey(seasonId, ageGroupId, divisionId);
+    if (requestedScopeKey !== currentMatchScopeKeyRef.current) return;
+    const requestSeq = ++matchScopeRequestSeq.current;
     if (!seasonId || !ageGroupId || !divisionId) {
       setMatches([]);
       setSelectedMatchId('');
@@ -374,18 +389,35 @@ export default function MatchManagePage() {
           headers: token ? { 'Authorization': `Bearer ${token}` } : {},
         }
       );
+      if (
+        requestSeq !== matchScopeRequestSeq.current ||
+        requestedScopeKey !== currentMatchScopeKeyRef.current
+      ) return;
       if (!res.ok) throw new Error('Failed to load matches');
       const data = await res.json();
+      if (
+        requestSeq !== matchScopeRequestSeq.current ||
+        requestedScopeKey !== currentMatchScopeKeyRef.current
+      ) return;
       setMatches(data);
       setSelectedMatchId((current) => {
         if (current && data.some((m: MatchWithTeams) => m.id === current)) return current;
         return data.length > 0 ? data[0].id : '';
       });
     } catch (err) {
+      if (
+        requestSeq !== matchScopeRequestSeq.current ||
+        requestedScopeKey !== currentMatchScopeKeyRef.current
+      ) return;
       console.error('[MATCH_MANAGE] Load matches error:', err);
       setError('ไม่สามารถโหลดข้อมูลแมตช์ได้');
     } finally {
-      setLoading(false);
+      if (
+        requestSeq === matchScopeRequestSeq.current &&
+        requestedScopeKey === currentMatchScopeKeyRef.current
+      ) {
+        setLoading(false);
+      }
     }
   }, [seasonId, ageGroupId, divisionId]);
 

@@ -159,8 +159,23 @@ function ChampionLeagueFixtureManagerScope({
   const [finalSchedule, setFinalSchedule] = useState<ScheduleDraft>(emptySchedule());
   const [thirdSchedule, setThirdSchedule] = useState<ScheduleDraft>(emptySchedule());
   const requestSeq = useRef(0);
+  const mountedRef = useRef(true);
+  const lifecycleEpochRef = useRef(0);
 
   const scopeReady = Boolean(seasonId && ageGroupId && divisionId);
+  const isLifecycleCurrent = useCallback(
+    (epoch: number) => mountedRef.current && lifecycleEpochRef.current === epoch,
+    []
+  );
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      lifecycleEpochRef.current += 1;
+      requestSeq.current += 1;
+    };
+  }, []);
 
   const syncDrafts = useCallback((next: FixtureState) => {
     const round: Record<number, ScheduleDraft> = {};
@@ -173,6 +188,8 @@ function ChampionLeagueFixtureManagerScope({
   }, []);
 
   const load = useCallback(async () => {
+    const epoch = lifecycleEpochRef.current;
+    if (!isLifecycleCurrent(epoch)) return;
     const seq = ++requestSeq.current;
     if (!scopeReady) {
       setScopedData(null);
@@ -186,11 +203,13 @@ function ChampionLeagueFixtureManagerScope({
       const res = await fetch(url, {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
+      if (!isLifecycleCurrent(epoch) || seq !== requestSeq.current) return;
       const payload = await res.json().catch(() => ({}));
+      if (!isLifecycleCurrent(epoch) || seq !== requestSeq.current) return;
       if (!res.ok && res.status !== 409) {
         throw new Error(payload.error || 'ไม่สามารถโหลดสถานะตาราง Champion League ได้');
       }
-      if (seq !== requestSeq.current) return;
+      if (!isLifecycleCurrent(epoch) || seq !== requestSeq.current) return;
       const typed = payload as FixtureState;
       if (!isChampionLeagueFixturePayloadForScope(typed, scopeKey)) {
         throw new Error('Champion League fixture response scope mismatch');
@@ -198,15 +217,15 @@ function ChampionLeagueFixtureManagerScope({
       setScopedData({ scopeKey, data: typed });
       syncDrafts(typed);
     } catch (err) {
-      if (seq !== requestSeq.current) return;
+      if (!isLifecycleCurrent(epoch) || seq !== requestSeq.current) return;
       setScopedData(null);
       setError(err instanceof Error ? err.message : 'ไม่สามารถโหลดสถานะ Champion League ได้');
     } finally {
-      if (seq === requestSeq.current) {
+      if (isLifecycleCurrent(epoch) && seq === requestSeq.current) {
         setLoading(false);
       }
     }
-  }, [ageGroupId, divisionId, scopeKey, scopeReady, seasonId, syncDrafts]);
+  }, [ageGroupId, divisionId, isLifecycleCurrent, scopeKey, scopeReady, seasonId, syncDrafts]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -230,13 +249,19 @@ function ChampionLeagueFixtureManagerScope({
     }));
   };
 
-  const notifyChanged = async () => {
+  const notifyChanged = async (epoch: number) => {
+    if (!isLifecycleCurrent(epoch)) return;
     await load();
-    if (onChanged) await onChanged();
+    if (!isLifecycleCurrent(epoch)) return;
+    if (onChanged) {
+      await onChanged();
+      if (!isLifecycleCurrent(epoch)) return;
+    }
   };
 
   const activate = async () => {
-    if (!scopeReady) return;
+    const epoch = lifecycleEpochRef.current;
+    if (!scopeReady || !isLifecycleCurrent(epoch)) return;
     setBusy(true);
     setError(null);
     setSuccess(null);
@@ -254,7 +279,9 @@ function ChampionLeagueFixtureManagerScope({
           division_id: divisionId,
         }),
       });
+      if (!isLifecycleCurrent(epoch)) return;
       const payload = await res.json().catch(() => ({}));
+      if (!isLifecycleCurrent(epoch)) return;
       if (!res.ok) {
         const readiness = payload.readiness;
         const detail = readiness
@@ -262,17 +289,21 @@ function ChampionLeagueFixtureManagerScope({
           : '';
         throw new Error((payload.error || 'ไม่สามารถเปิด Champion League ได้') + detail);
       }
+      if (!isLifecycleCurrent(epoch)) return;
       setSuccess(payload.already_active ? 'Champion League ถูกเปิดไว้แล้ว' : 'ล็อก Top 4 และเปิด Champion League แล้ว');
-      await notifyChanged();
+      await notifyChanged(epoch);
+      if (!isLifecycleCurrent(epoch)) return;
     } catch (err) {
+      if (!isLifecycleCurrent(epoch)) return;
       setError(err instanceof Error ? err.message : 'ไม่สามารถเปิด Champion League ได้');
     } finally {
-      setBusy(false);
+      if (isLifecycleCurrent(epoch)) setBusy(false);
     }
   };
 
   const generateRoundRobin = async () => {
-    if (!data?.active) return;
+    const epoch = lifecycleEpochRef.current;
+    if (!data?.active || !isLifecycleCurrent(epoch)) return;
     const schedules = data.round_robin.preview.map((pairing) => ({
       slot: pairing.slot,
       ...payloadSchedule(roundSchedules[pairing.slot] || emptySchedule()),
@@ -301,19 +332,24 @@ function ChampionLeagueFixtureManagerScope({
           schedules,
         }),
       });
+      if (!isLifecycleCurrent(epoch)) return;
       const payload = await res.json().catch(() => ({}));
+      if (!isLifecycleCurrent(epoch)) return;
       if (!res.ok) throw new Error(payload.error || 'สร้าง 6 คู่ Champion League ไม่สำเร็จ');
       setSuccess(payload.idempotent ? 'ตาราง Champion League 6 คู่มีอยู่ครบแล้ว' : 'สร้างตาราง Champion League 6 คู่เรียบร้อย');
-      await notifyChanged();
+      await notifyChanged(epoch);
+      if (!isLifecycleCurrent(epoch)) return;
     } catch (err) {
+      if (!isLifecycleCurrent(epoch)) return;
       setError(err instanceof Error ? err.message : 'สร้างตาราง Champion League ไม่สำเร็จ');
     } finally {
-      setBusy(false);
+      if (isLifecycleCurrent(epoch)) setBusy(false);
     }
   };
 
   const generatePlacements = async () => {
-    if (!data?.placement.pairings) return;
+    const epoch = lifecycleEpochRef.current;
+    if (!data?.placement.pairings || !isLifecycleCurrent(epoch)) return;
     if (!finalSchedule.match_date || !thirdSchedule.match_date) {
       setError('กรุณากำหนดวันที่สำหรับ Final และชิงอันดับที่ 3');
       return;
@@ -340,18 +376,24 @@ function ChampionLeagueFixtureManagerScope({
           },
         }),
       });
+      if (!isLifecycleCurrent(epoch)) return;
       const payload = await res.json().catch(() => ({}));
+      if (!isLifecycleCurrent(epoch)) return;
       if (!res.ok) throw new Error(payload.error || 'สร้าง Final / ชิงอันดับที่ 3 ไม่สำเร็จ');
       setSuccess(payload.idempotent ? 'Final / ชิงอันดับที่ 3 มีอยู่แล้ว' : 'สร้าง Final และชิงอันดับที่ 3 เรียบร้อย');
-      await notifyChanged();
+      await notifyChanged(epoch);
+      if (!isLifecycleCurrent(epoch)) return;
     } catch (err) {
+      if (!isLifecycleCurrent(epoch)) return;
       setError(err instanceof Error ? err.message : 'สร้าง Final / ชิงอันดับที่ 3 ไม่สำเร็จ');
     } finally {
-      setBusy(false);
+      if (isLifecycleCurrent(epoch)) setBusy(false);
     }
   };
 
   const saveExistingSchedule = async (match: FixtureMatch, draft: ScheduleDraft) => {
+    const epoch = lifecycleEpochRef.current;
+    if (!isLifecycleCurrent(epoch)) return;
     if (!draft.match_date) {
       setError('วันที่แข่งขันจำเป็นต้องระบุ');
       return;
@@ -369,14 +411,18 @@ function ChampionLeagueFixtureManagerScope({
         },
         body: JSON.stringify({ match_id: match.id, schedule: payloadSchedule(draft) }),
       });
+      if (!isLifecycleCurrent(epoch)) return;
       const payload = await res.json().catch(() => ({}));
+      if (!isLifecycleCurrent(epoch)) return;
       if (!res.ok) throw new Error(payload.error || 'บันทึกตารางเวลาไม่สำเร็จ');
       setSuccess(`บันทึกตารางเวลา ${match.match_code} แล้ว`);
-      await notifyChanged();
+      await notifyChanged(epoch);
+      if (!isLifecycleCurrent(epoch)) return;
     } catch (err) {
+      if (!isLifecycleCurrent(epoch)) return;
       setError(err instanceof Error ? err.message : 'บันทึกตารางเวลาไม่สำเร็จ');
     } finally {
-      setBusy(false);
+      if (isLifecycleCurrent(epoch)) setBusy(false);
     }
   };
 
