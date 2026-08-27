@@ -106,18 +106,51 @@ function payloadSchedule(draft: ScheduleDraft, slot?: number) {
   };
 }
 
-export function ChampionLeagueFixtureManager({
-  seasonId,
-  ageGroupId,
-  divisionId,
-  onChanged,
-}: {
+interface ChampionLeagueFixtureManagerProps {
   seasonId: string;
   ageGroupId: string;
   divisionId: string;
   onChanged?: () => void | Promise<void>;
-}) {
-  const [data, setData] = useState<FixtureState | null>(null);
+}
+
+export function getChampionLeagueFixtureScopeKey(
+  seasonId: string,
+  ageGroupId: string,
+  divisionId: string
+): string {
+  return `${seasonId}::${ageGroupId}::${divisionId}`;
+}
+
+export function isChampionLeagueFixturePayloadForScope(
+  payload: Pick<FixtureState, 'scope'> | null | undefined,
+  scopeKey: string
+): boolean {
+  if (!payload?.scope) return false;
+  return getChampionLeagueFixtureScopeKey(
+    payload.scope.season_id || '',
+    payload.scope.age_group_id || '',
+    payload.scope.division_id || ''
+  ) === scopeKey;
+}
+
+export function ChampionLeagueFixtureManager(props: ChampionLeagueFixtureManagerProps) {
+  const scopeKey = getChampionLeagueFixtureScopeKey(
+    props.seasonId,
+    props.ageGroupId,
+    props.divisionId
+  );
+  return <ChampionLeagueFixtureManagerScope key={scopeKey} {...props} scopeKey={scopeKey} />;
+}
+
+function ChampionLeagueFixtureManagerScope({
+  seasonId,
+  ageGroupId,
+  divisionId,
+  onChanged,
+  scopeKey,
+}: ChampionLeagueFixtureManagerProps & { scopeKey: string }) {
+  const [scopedData, setScopedData] = useState<{ scopeKey: string; data: FixtureState } | null>(null);
+  const data = scopedData?.scopeKey === scopeKey ? scopedData.data : null;
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -126,15 +159,8 @@ export function ChampionLeagueFixtureManager({
   const [finalSchedule, setFinalSchedule] = useState<ScheduleDraft>(emptySchedule());
   const [thirdSchedule, setThirdSchedule] = useState<ScheduleDraft>(emptySchedule());
   const requestSeq = useRef(0);
-  const scopeKey = `${seasonId}::${ageGroupId}::${divisionId}`;
-  const currentScopeKey = useRef(scopeKey);
 
   const scopeReady = Boolean(seasonId && ageGroupId && divisionId);
-
-  useEffect(() => {
-    currentScopeKey.current = scopeKey;
-    requestSeq.current += 1;
-  }, [scopeKey]);
 
   const syncDrafts = useCallback((next: FixtureState) => {
     const round: Record<number, ScheduleDraft> = {};
@@ -148,9 +174,8 @@ export function ChampionLeagueFixtureManager({
 
   const load = useCallback(async () => {
     const seq = ++requestSeq.current;
-    const requestedScopeKey = `${seasonId}::${ageGroupId}::${divisionId}`;
     if (!scopeReady) {
-      setData(null);
+      setScopedData(null);
       return;
     }
     setLoading(true);
@@ -165,24 +190,23 @@ export function ChampionLeagueFixtureManager({
       if (!res.ok && res.status !== 409) {
         throw new Error(payload.error || 'ไม่สามารถโหลดสถานะตาราง Champion League ได้');
       }
-      if (seq !== requestSeq.current || requestedScopeKey !== currentScopeKey.current) return;
+      if (seq !== requestSeq.current) return;
       const typed = payload as FixtureState;
-      const responseScopeKey = `${typed.scope?.season_id || ''}::${typed.scope?.age_group_id || ''}::${typed.scope?.division_id || ''}`;
-      if (responseScopeKey !== requestedScopeKey) {
+      if (!isChampionLeagueFixturePayloadForScope(typed, scopeKey)) {
         throw new Error('Champion League fixture response scope mismatch');
       }
-      setData(typed);
+      setScopedData({ scopeKey, data: typed });
       syncDrafts(typed);
     } catch (err) {
-      if (seq !== requestSeq.current || requestedScopeKey !== currentScopeKey.current) return;
-      setData(null);
+      if (seq !== requestSeq.current) return;
+      setScopedData(null);
       setError(err instanceof Error ? err.message : 'ไม่สามารถโหลดสถานะ Champion League ได้');
     } finally {
-      if (seq === requestSeq.current && requestedScopeKey === currentScopeKey.current) {
+      if (seq === requestSeq.current) {
         setLoading(false);
       }
     }
-  }, [ageGroupId, divisionId, scopeReady, seasonId, syncDrafts]);
+  }, [ageGroupId, divisionId, scopeKey, scopeReady, seasonId, syncDrafts]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {

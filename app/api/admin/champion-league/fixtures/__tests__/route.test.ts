@@ -13,6 +13,7 @@ interface AuthState {
 const state = vi.hoisted(() => ({
   db: {} as Db,
   raceInsertOnce: false,
+  finishBeforeUpdateOnce: false,
   auth: {
     authenticated: true,
     profile: {
@@ -38,14 +39,16 @@ vi.mock('@/lib/suspension-calc', () => ({
 vi.mock('@supabase/supabase-js', () => ({
   createClient: () => ({
     from(table: string) {
-      const filters: Array<[string, unknown]> = [];
+      const filters: Array<{ op: 'eq' | 'neq'; column: string; value: unknown }> = [];
       let operation: 'select' | 'insert' | 'update' = 'select';
       let insertRows: Row[] = [];
       let updateValues: Row = {};
 
       const selectedRows = () =>
         (state.db[table] || []).filter((row) =>
-          filters.every(([column, value]) => row[column] === value)
+          filters.every(({ op, column, value }) =>
+            op === 'eq' ? row[column] === value : row[column] !== value
+          )
         );
 
       const execute = () => {
@@ -66,6 +69,12 @@ vi.mock('@supabase/supabase-js', () => ({
         }
 
         if (operation === 'update') {
+          if (state.finishBeforeUpdateOnce && table === 'matches') {
+            state.finishBeforeUpdateOnce = false;
+            const idFilter = filters.find((filter) => filter.op === 'eq' && filter.column === 'id');
+            const target = (state.db[table] || []).find((row) => row.id === idFilter?.value);
+            if (target) target.status = 'finished';
+          }
           const matches = selectedRows();
           for (const row of matches) Object.assign(row, updateValues);
           return { data: matches, error: null };
@@ -81,7 +90,11 @@ vi.mock('@supabase/supabase-js', () => ({
           return api;
         },
         eq(column: string, value: unknown) {
-          filters.push([column, value]);
+          filters.push({ op: 'eq', column, value });
+          return api;
+        },
+        neq(column: string, value: unknown) {
+          filters.push({ op: 'neq', column, value });
           return api;
         },
         order() {
@@ -215,6 +228,7 @@ describe('admin Champion League fixture generation', () => {
   beforeEach(() => {
     initializeDb();
     state.raceInsertOnce = false;
+    state.finishBeforeUpdateOnce = false;
     state.auth = {
       authenticated: true,
       profile: { id: 'admin-1', email: 'admin@example.com', can_edit_matches: true },
@@ -395,6 +409,55 @@ describe('admin Champion League fixture generation', () => {
     expect([target.home_score, target.away_score]).toEqual([1, 0]);
   });
 
+  it('general match PUT rejects schedule changes for generated fixtures', async () => {
+    await POST(requestBody({ action: 'generate_round_robin', ...scope, schedules: schedules() }));
+    const generated = state.db.matches.find((row) => row.match_code === 'CL-division-1-R1')!;
+    const originalDate = generated.match_date;
+
+    const response = await PUT_MATCH(
+      requestBody({
+        home_score: 0,
+        away_score: 0,
+        status: 'scheduled',
+        result_type: 'normal',
+        league_phase: 'champion_league',
+        match_date: '2026-12-01',
+        match_time: '10:00',
+      }),
+      { params: Promise.resolve({ matchId: String(generated.id) }) }
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(409);
+    expect(body.error).toMatch(/fixture scheduler/);
+    expect(generated.match_date).toBe(originalDate);
+  });
+
+  it('general match PUT cannot bypass schedule read-only on a finished generated fixture', async () => {
+    await POST(requestBody({ action: 'generate_round_robin', ...scope, schedules: schedules() }));
+    const generated = state.db.matches.find((row) => row.match_code === 'CL-division-1-R1')!;
+    generated.status = 'finished';
+    generated.home_score = 1;
+    generated.away_score = 0;
+    const originalTime = generated.match_time;
+
+    const response = await PUT_MATCH(
+      requestBody({
+        home_score: 1,
+        away_score: 0,
+        status: 'finished',
+        result_type: 'normal',
+        league_phase: 'champion_league',
+        match_date: generated.match_date,
+        match_time: '19:30',
+      }),
+      { params: Promise.resolve({ matchId: String(generated.id) }) }
+    );
+
+    expect(response.status).toBe(409);
+    expect(generated.match_time).toBe(originalTime);
+  });
+
   it('PATCH updates schedule metadata only for a generated non-finished fixture', async () => {
     await POST(requestBody({ action: 'generate_round_robin', ...scope, schedules: schedules() }));
     const generated = state.db.matches.find((row) => row.match_code === 'CL-division-1-R1')!;
@@ -412,5 +475,25 @@ describe('admin Champion League fixture generation', () => {
     expect(generated.match_date).toBe('2026-11-01');
     expect(generated.match_time).toBe('18:30:00');
     expect(generated.venue).toBe('Dome 2');
+  });
+
+  it('PATCH atomically refuses a schedule update if the fixture finishes before the write', async () => {
+    await POST(requestBody({ action: 'generate_round_robin', ...scope, schedules: schedules() }));
+    const generated = state.db.matches.find((row) => row.match_code === 'CL-division-1-R1')!;
+    const originalDate = generated.match_date;
+    state.finishBeforeUpdateOnce = true;
+
+    const response = await PATCH(
+      requestBody({
+        match_id: generated.id,
+        schedule: { match_no: 999, match_date: '2026-11-01', match_time: '18:30', venue: 'Dome 2' },
+      })
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(409);
+    expect(body.error).toMatch(/read-only/);
+    expect(generated.status).toBe('finished');
+    expect(generated.match_date).toBe(originalDate);
   });
 });

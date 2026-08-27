@@ -116,12 +116,30 @@ export async function PUT(
       );
     }
 
-    if (
-      isGeneratedLeaguePostMatchCode(currentMatch.match_code) &&
-      typeof league_phase !== 'undefined' &&
-      (league_phase || null) !== (currentMatch.league_phase || null)
-    ) {
-      return badRequestResponse('Generated Champion League fixture phase is locked');
+    const isGeneratedPostLeagueFixture = isGeneratedLeaguePostMatchCode(currentMatch.match_code);
+    if (isGeneratedPostLeagueFixture) {
+      if (
+        typeof league_phase !== 'undefined' &&
+        (league_phase || null) !== (currentMatch.league_phase || null)
+      ) {
+        return badRequestResponse('Generated Champion League fixture phase is locked');
+      }
+
+      const requestedDate = typeof match_date === 'undefined' ? currentMatch.match_date : (match_date || null);
+      const currentTime = typeof currentMatch.match_time === 'string' && currentMatch.match_time.length === 5
+        ? `${currentMatch.match_time}:00`
+        : (currentMatch.match_time || null);
+      const requestedTimeRaw = typeof match_time === 'undefined' ? currentMatch.match_time : match_time;
+      const requestedTime = typeof requestedTimeRaw === 'string' && requestedTimeRaw.length === 5
+        ? `${requestedTimeRaw}:00`
+        : (requestedTimeRaw || null);
+
+      if (requestedDate !== (currentMatch.match_date || null) || requestedTime !== currentTime) {
+        return NextResponse.json(
+          { error: 'Generated Champion League fixture schedule must be edited through the fixture scheduler' },
+          { status: 409 }
+        );
+      }
     }
 
     const effectiveLeaguePhase =

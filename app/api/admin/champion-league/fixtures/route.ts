@@ -644,12 +644,19 @@ export async function PATCH(request: NextRequest) {
       updated_at: new Date().toISOString(),
     })
     .eq('id', matchId)
+    .neq('status', 'finished')
     .select(SCOPE_MATCH_SELECT)
-    .single();
+    .maybeSingle();
 
-  if (updateError || !updated) {
+  if (updateError) {
     console.error('[CHAMPION_FIXTURES_PATCH] update error:', updateError);
     return NextResponse.json({ error: 'Failed to update generated fixture schedule' }, { status: 500 });
+  }
+  if (!updated) {
+    return NextResponse.json(
+      { error: 'Finished generated fixtures are read-only for scheduling' },
+      { status: 409 }
+    );
   }
 
   await logAdminAction({
