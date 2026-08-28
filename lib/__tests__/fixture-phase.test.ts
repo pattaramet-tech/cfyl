@@ -3,6 +3,7 @@ import {
   filterMatchesByFixturePhase,
   getAvailableFixturePhaseOptions,
   normalizeFixturePhaseFilter,
+  resolveAvailableFixturePhase,
   withFixturePhase,
 } from '@/lib/fixture-phase';
 
@@ -28,6 +29,16 @@ describe('fixture phase filter', () => {
       'champion_league',
       'final',
     ]);
+  });
+
+  it('falls back to all when the selected phase is unavailable in the current scope', () => {
+    expect(resolveAvailableFixturePhase(matches, 'champion_league')).toBe('champion_league');
+    expect(
+      resolveAvailableFixturePhase(
+        [{ league_phase: null }, { league_phase: 'regular' as const }],
+        'champion_league'
+      )
+    ).toBe('all');
   });
 
   it('normalizes invalid URL phase values and builds phase-aware fixture URLs', () => {

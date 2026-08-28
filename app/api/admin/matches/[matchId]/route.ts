@@ -53,7 +53,19 @@ export async function PUT(
 
     // Parse request body
     const body = await request.json();
-    const { home_score, away_score, status, winner_team_id, result_type, match_date, match_time, league_phase } = body;
+    const {
+      home_score,
+      away_score,
+      status,
+      winner_team_id,
+      result_type,
+      match_date,
+      match_time,
+      league_phase,
+      expected_home_team_id,
+      expected_away_team_id,
+      expected_updated_at,
+    } = body;
 
     // Validate inputs
     const isByeResult = result_type && result_type !== 'normal';
@@ -118,6 +130,27 @@ export async function PUT(
 
     const isGeneratedPostLeagueFixture = isGeneratedLeaguePostMatchCode(currentMatch.match_code);
     if (isGeneratedPostLeagueFixture) {
+      if (
+        typeof expected_home_team_id !== 'string' ||
+        typeof expected_away_team_id !== 'string' ||
+        typeof expected_updated_at !== 'string'
+      ) {
+        return NextResponse.json(
+          { error: 'Generated fixture orientation/version must be supplied; reload the match and retry' },
+          { status: 409 }
+        );
+      }
+      if (
+        expected_home_team_id !== currentMatch.home_team_id ||
+        expected_away_team_id !== currentMatch.away_team_id ||
+        expected_updated_at !== currentMatch.updated_at
+      ) {
+        return NextResponse.json(
+          { error: 'Generated fixture changed since it was loaded; reload the match and retry' },
+          { status: 409 }
+        );
+      }
+
       if (
         typeof league_phase !== 'undefined' &&
         (league_phase || null) !== (currentMatch.league_phase || null)
@@ -325,12 +358,19 @@ export async function PUT(
       }
     }
 
-    const { data: updatedMatch, error: updateError } = await supabaseAdmin
+    const updateQuery = supabaseAdmin
       .from('matches')
       .update(updatePayload)
-      .eq('id', matchId)
-      .select()
-      .single();
+      .eq('id', matchId);
+
+    const { data: updatedMatch, error: updateError } = isGeneratedPostLeagueFixture
+      ? await updateQuery
+          .eq('home_team_id', expected_home_team_id)
+          .eq('away_team_id', expected_away_team_id)
+          .eq('updated_at', expected_updated_at)
+          .select()
+          .maybeSingle()
+      : await updateQuery.select().single();
 
     if (updateError) {
       console.error('Update match error:', updateError);
@@ -341,6 +381,12 @@ export async function PUT(
         );
       }
       return internalErrorResponse('Failed to update match');
+    }
+    if (!updatedMatch) {
+      return NextResponse.json(
+        { error: 'Generated fixture home/away orientation changed while saving; reload and retry' },
+        { status: 409 }
+      );
     }
 
     await logAdminAction({

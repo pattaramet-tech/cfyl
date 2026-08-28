@@ -9,6 +9,7 @@ import {
   filterMatchesByFixturePhase,
   getAvailableFixturePhaseOptions,
   normalizeFixturePhaseFilter,
+  resolveAvailableFixturePhase,
   withFixturePhase,
   type FixturePhaseFilter,
 } from '@/lib/fixture-phase';
@@ -83,12 +84,16 @@ export function FixturesView({ seasonId, ageGroupId, matchdayCode }: FixturesVie
   }, [seasonId, ageGroupId]);
 
   const phaseOptions = useMemo(() => getAvailableFixturePhaseOptions(matches), [matches]);
+  const effectivePhase = useMemo(
+    () => resolveAvailableFixturePhase(matches, selectedPhase),
+    [matches, selectedPhase]
+  );
   const showPhaseFilter = phaseOptions.some(
     (option) => option.value !== 'all' && option.value !== 'regular'
   );
   const phaseMatches = useMemo(
-    () => filterMatchesByFixturePhase(matches, selectedPhase),
-    [matches, selectedPhase]
+    () => filterMatchesByFixturePhase(matches, effectivePhase),
+    [matches, effectivePhase]
   );
 
   // Unique matchday numbers (sorted) within the selected competition phase.
@@ -129,11 +134,11 @@ export function FixturesView({ seasonId, ageGroupId, matchdayCode }: FixturesVie
       desiredAge,
       selectedMd != null ? { kind: 'md', code: `md${selectedMd}` } : undefined
     );
-    router.push(withFixturePhase(path, selectedPhase));
+    router.push(withFixturePhase(path, effectivePhase));
   };
   const onFixtureAgeChange = (ageGroup: AgeGroup) => {
     if (!seg) return;
-    router.push(withFixturePhase(buildFixturesPath(seg, ageGroup.code), selectedPhase));
+    router.push(withFixturePhase(buildFixturesPath(seg, ageGroup.code), effectivePhase));
   };
   const goPhase = (phase: FixturePhaseFilter) => {
     if (!canNav) return;
@@ -142,11 +147,11 @@ export function FixturesView({ seasonId, ageGroupId, matchdayCode }: FixturesVie
   };
   const goAll = () => {
     if (!canNav) return;
-    router.push(withFixturePhase(buildFixturesPath(seg!, code!), selectedPhase));
+    router.push(withFixturePhase(buildFixturesPath(seg!, code!), effectivePhase));
   };
   const goMd = (n: number) => {
     if (!canNav) return;
-    router.push(withFixturePhase(buildFixturesPath(seg!, code!, `md${n}`), selectedPhase));
+    router.push(withFixturePhase(buildFixturesPath(seg!, code!, `md${n}`), effectivePhase));
   };
 
   const baseCopyPath = canNav
@@ -154,7 +159,7 @@ export function FixturesView({ seasonId, ageGroupId, matchdayCode }: FixturesVie
       ? buildFixturesPath(seg!, code!, `md${selectedMd}`)
       : buildFixturesPath(seg!, code!)
     : null;
-  const copyPath = baseCopyPath ? withFixturePhase(baseCopyPath, selectedPhase) : null;
+  const copyPath = baseCopyPath ? withFixturePhase(baseCopyPath, effectivePhase) : null;
 
   return (
     <div className="space-y-6">
@@ -175,7 +180,7 @@ export function FixturesView({ seasonId, ageGroupId, matchdayCode }: FixturesVie
                 key={option.value}
                 type="button"
                 onClick={() => goPhase(option.value)}
-                className={`cfyl-chip ${selectedPhase === option.value ? 'cfyl-chip-active' : ''}`}
+                className={`cfyl-chip ${effectivePhase === option.value ? 'cfyl-chip-active' : ''}`}
               >
                 {option.label}
               </button>
@@ -195,7 +200,7 @@ export function FixturesView({ seasonId, ageGroupId, matchdayCode }: FixturesVie
                 onClick={() => goMd(n)}
                 className={`cfyl-chip ${selectedMd === n ? 'cfyl-chip-active' : ''}`}
               >
-                {selectedPhase === 'champion_league' ? `CL${n}` : `MD${n}`}
+                {effectivePhase === 'champion_league' ? `CL${n}` : `MD${n}`}
               </button>
             ))}
           </div>

@@ -107,6 +107,9 @@ export default function EditMatchPage() {
           home_score: homeScore,
           away_score: awayScore,
           status,
+          expected_home_team_id: match?.home_team_id,
+          expected_away_team_id: match?.away_team_id,
+          expected_updated_at: match?.updated_at,
         }),
       });
 

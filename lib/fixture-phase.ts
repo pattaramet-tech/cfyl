@@ -37,6 +37,14 @@ export function getAvailableFixturePhaseOptions<T extends Pick<Match, 'league_ph
   );
 }
 
+export function resolveAvailableFixturePhase<T extends Pick<Match, 'league_phase'>>(
+  matches: T[],
+  phase: FixturePhaseFilter
+): FixturePhaseFilter {
+  if (phase === 'all') return 'all';
+  return matches.some((match) => getMatchLeaguePhase(match) === phase) ? phase : 'all';
+}
+
 export function withFixturePhase(path: string, phase: FixturePhaseFilter): string {
   return phase === 'all' ? path : `${path}?phase=${encodeURIComponent(phase)}`;
 }

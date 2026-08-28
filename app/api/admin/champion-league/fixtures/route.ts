@@ -670,6 +670,9 @@ export async function PATCH(request: NextRequest) {
     .from('matches')
     .update(updateValues)
     .eq('id', matchId)
+    .eq('home_team_id', match.home_team_id)
+    .eq('away_team_id', match.away_team_id)
+    .eq('updated_at', match.updated_at)
     .neq('status', 'finished')
     .select(SCOPE_MATCH_SELECT)
     .maybeSingle();
@@ -679,10 +682,15 @@ export async function PATCH(request: NextRequest) {
     return NextResponse.json({ error: 'Failed to update generated fixture' }, { status: 500 });
   }
   if (!updated) {
-    return NextResponse.json(
-      { error: 'Finished generated fixtures are read-only' },
-      { status: 409 }
-    );
+    const { data: latest } = await supabaseAdmin
+      .from('matches')
+      .select('status, home_team_id, away_team_id')
+      .eq('id', matchId)
+      .maybeSingle();
+    const error = latest?.status === 'finished'
+      ? 'Finished generated fixtures are read-only'
+      : 'Generated fixture changed while editing; reload and retry';
+    return NextResponse.json({ error }, { status: 409 });
   }
 
   await logAdminAction({
