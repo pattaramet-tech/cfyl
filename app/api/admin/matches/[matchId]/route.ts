@@ -410,41 +410,74 @@ export async function PUT(
     });
 
     // Refresh suspension serving matches when status or schedule changes.
-    // A status change (finished/postponed/cancelled/scheduled) or date/time shift
-    // can invalidate existing serving_match_ids for players from either team.
-    // Failure is non-fatal: match update already succeeded.
+    // A newly-earlier fixture may not be referenced by any suspension yet, so every
+    // active system event for each affected team must be reconsidered. The match write
+    // is already committed; refresh failures therefore return explicit repair evidence.
+    let servingRefresh:
+      | {
+          attempted: true;
+          status: 'ok' | 'partial_failure' | 'failed';
+          repair_required: boolean;
+          total_refreshed: number;
+          total_skipped: number;
+          total_failed: number;
+          team_results: Array<{
+            team_id: string;
+            refreshed: number;
+            skipped: number;
+            failed: number;
+            error?: string;
+          }>;
+        }
+      | undefined;
     let servingRefreshWarning: string | undefined;
-    const statusChanged = status && status !== currentMatch.status;
+    const statusChanged = Boolean(status && status !== currentMatch.status);
     const dateChanged =
       typeof match_date !== 'undefined' || typeof match_time !== 'undefined';
 
     if ((statusChanged || dateChanged) && currentMatch.season_id && currentMatch.age_group_id) {
-      try {
-        // Refresh events for home team
-        const homeResult = await refreshSuspensionServingMatches({
-          seasonId: currentMatch.season_id,
-          ageGroupId: currentMatch.age_group_id,
-          teamId: currentMatch.home_team_id,
-          changedMatchId: matchId,
-        });
-        // Refresh events for away team
-        const awayResult = await refreshSuspensionServingMatches({
-          seasonId: currentMatch.season_id,
-          ageGroupId: currentMatch.age_group_id,
-          teamId: currentMatch.away_team_id,
-          changedMatchId: matchId,
-        });
-        const totalRefreshed = homeResult.refreshed + awayResult.refreshed;
-        const totalFailed = homeResult.failed + awayResult.failed;
-        if (totalFailed > 0) {
-          servingRefreshWarning = `Serving refresh had ${totalFailed} failure(s)`;
-          console.warn('[MATCH_PUT] Serving refresh partial failure:', { homeResult, awayResult });
-        } else {
-          console.log(`[MATCH_PUT] Serving refresh done: ${totalRefreshed} event(s) refreshed`);
-        }
-      } catch (refreshErr) {
-        servingRefreshWarning = `Serving refresh failed: ${refreshErr instanceof Error ? refreshErr.message : String(refreshErr)}`;
-        console.error('[MATCH_PUT] Serving refresh error:', refreshErr);
+      const affectedTeamIds = [
+        ...new Set([currentMatch.home_team_id, currentMatch.away_team_id].filter(Boolean)),
+      ] as string[];
+
+      const teamResults = await Promise.all(
+        affectedTeamIds.map(async (teamId) => {
+          try {
+            const result = await refreshSuspensionServingMatches({
+              seasonId: currentMatch.season_id,
+              ageGroupId: currentMatch.age_group_id,
+              teamId,
+            });
+            return { team_id: teamId, ...result };
+          } catch (refreshErr) {
+            const message = refreshErr instanceof Error ? refreshErr.message : String(refreshErr);
+            console.error('[MATCH_PUT] Serving refresh error:', { teamId, error: refreshErr });
+            return { team_id: teamId, refreshed: 0, skipped: 0, failed: 1, error: message };
+          }
+        })
+      );
+
+      const totalRefreshed = teamResults.reduce((sum, item) => sum + item.refreshed, 0);
+      const totalSkipped = teamResults.reduce((sum, item) => sum + item.skipped, 0);
+      const totalFailed = teamResults.reduce((sum, item) => sum + item.failed, 0);
+      const allCallsFailed = teamResults.length > 0 && teamResults.every((item) => item.error);
+      const refreshStatus = totalFailed === 0 ? 'ok' : allCallsFailed ? 'failed' : 'partial_failure';
+
+      servingRefresh = {
+        attempted: true,
+        status: refreshStatus,
+        repair_required: totalFailed > 0,
+        total_refreshed: totalRefreshed,
+        total_skipped: totalSkipped,
+        total_failed: totalFailed,
+        team_results: teamResults,
+      };
+
+      if (totalFailed > 0) {
+        servingRefreshWarning = `Match saved, but suspension serving refresh needs repair (${totalFailed} failure(s))`;
+        console.warn('[MATCH_PUT] Serving refresh incomplete:', servingRefresh);
+      } else {
+        console.log(`[MATCH_PUT] Serving refresh done: ${totalRefreshed} event(s) refreshed`);
       }
     }
 
@@ -453,6 +486,7 @@ export async function PUT(
         success: true,
         message: 'Match updated successfully',
         match: updatedMatch,
+        ...(servingRefresh ? { serving_refresh: servingRefresh } : {}),
         ...(servingRefreshWarning ? { serving_refresh_warning: servingRefreshWarning } : {}),
         debug: {
           received_result_type: rawResultType ?? null,

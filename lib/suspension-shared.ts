@@ -471,6 +471,23 @@ export interface SuspensionServingCandidate {
   matchday?: string | number | null;
 }
 
+export function isSuspensionServingMatchAfterTrigger(
+  match: Pick<SuspensionServingCandidate, 'matchday' | 'match_date' | 'match_time'>,
+  triggerMatch: Pick<SuspensionServingCandidate, 'matchday' | 'match_date' | 'match_time'>
+): boolean {
+  const triggerDate = triggerMatch.match_date || null;
+  const matchDate = match.match_date || null;
+  if (triggerDate && matchDate) {
+    if (matchDate > triggerDate) return true;
+    if (matchDate < triggerDate) return false;
+    const triggerTime = triggerMatch.match_time || '23:59:59';
+    const matchTime = match.match_time || '23:59:59';
+    return matchTime > triggerTime;
+  }
+
+  return parseMatchdayNumber(match.matchday) > parseMatchdayNumber(triggerMatch.matchday);
+}
+
 /**
  * Select the next chronological suspension-serving slots from matches that are
  * already scoped to one team + season + age group. League phase is deliberately
@@ -485,9 +502,6 @@ export function selectNextSuspensionServingMatches<T extends SuspensionServingCa
 ): T[] {
   if (count <= 0) return [];
 
-  const triggerMatchdayNum = parseMatchdayNumber(triggerMatch.matchday);
-  const triggerDate = triggerMatch.match_date || null;
-  const triggerTime = triggerMatch.match_time || '23:59:59';
   const excludeSet = new Set(excludeMatchIds);
 
   return matches
@@ -496,15 +510,7 @@ export function selectNextSuspensionServingMatches<T extends SuspensionServingCa
         return false;
       }
 
-      const matchDate = match.match_date || null;
-      const matchTime = match.match_time || '23:59:59';
-      if (triggerDate && matchDate) {
-        if (matchDate > triggerDate) return true;
-        if (matchDate === triggerDate) return matchTime > triggerTime;
-        return false;
-      }
-
-      return parseMatchdayNumber(match.matchday) > triggerMatchdayNum;
+      return isSuspensionServingMatchAfterTrigger(match, triggerMatch);
     })
     .sort((a, b) => {
       const aDate = a.match_date || '';

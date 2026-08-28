@@ -1,5 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { verifyAdminAuth } from '@/lib/admin-middleware';
+import {
+  isSuspensionServingMatchAfterTrigger,
+  selectNextSuspensionServingMatches,
+} from '@/lib/suspension-shared';
 import { createClient } from '@supabase/supabase-js';
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -21,6 +25,26 @@ interface SuspensionIssue {
   issue_code: string;
   severity: IssueSeverity;
   details: string;
+}
+
+interface MonitoringMatch {
+  id: string;
+  status: string;
+  season_id: string;
+  age_group_id: string;
+  home_team_id: string;
+  away_team_id: string;
+  match_date: string | null;
+  match_time: string | null;
+  matchday: string | number | null;
+  match_code: string;
+}
+
+interface MonitoringCard {
+  id: string;
+  player_id: string;
+  match_id: string;
+  card_type: string;
 }
 
 const SYSTEM_TYPES = ['accumulated_points', 'second_yellow', 'direct_red', 'yellow_red'] as const;
@@ -60,19 +84,21 @@ export async function GET(request: NextRequest) {
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
     const all = records || [];
-    const systemEvents = all.filter((r) => SYSTEM_TYPES.includes(r.suspension_type as any));
+    const systemEvents = all.filter((r) =>
+      SYSTEM_TYPES.some((type) => type === r.suspension_type)
+    );
     const legacyRecords = all.filter(
       (r) => r.suspension_type == null || r.suspension_type === 'legacy'
     );
     const manualRecords = all.filter((r) => r.suspension_type === 'manual');
     const activeBans = systemEvents.filter(
-      (r) => r.ban_matches > 0 && (r.serving_match_ids || []).length > 0
+      (r) => r.ban_matches > 0 && r.served_completed_at == null
     );
     const servedBans = systemEvents.filter(
       (r) => r.ban_matches > 0 && r.served_completed_at != null
     );
 
-    // Collect all match IDs needed for validation
+    // Collect all match IDs needed for reference validation.
     const allServingIds = [
       ...new Set(systemEvents.flatMap((r) => r.serving_match_ids || [])),
     ];
@@ -83,19 +109,37 @@ export async function GET(request: NextRequest) {
       ...new Set(systemEvents.flatMap((r) => r.source_card_ids || [])),
     ];
 
-    // Batch-fetch match status data
-    const matchMap = new Map<string, any>();
+    // Fetch referenced matches without season/age filters so wrong-scope references
+    // remain visible and can be diagnosed instead of looking like missing rows.
+    const matchMap = new Map<string, MonitoringMatch>();
     if (allServingIds.length > 0 || allTriggerIds.length > 0) {
       const allMatchIds = [...new Set([...allServingIds, ...allTriggerIds])];
-      const { data: matchRows } = await supabaseAdmin
+      const { data: matchRows, error: matchRowsError } = await supabaseAdmin
         .from('matches')
-        .select('id, status, season_id, age_group_id, home_team_id, away_team_id, match_date, matchday, trigger_match_id')
+        .select('id, status, season_id, age_group_id, home_team_id, away_team_id, match_date, match_time, matchday, match_code')
         .in('id', allMatchIds);
+      if (matchRowsError) {
+        return NextResponse.json({ error: matchRowsError.message }, { status: 500 });
+      }
       for (const m of matchRows || []) matchMap.set(m.id, m);
     }
 
+    // Separately load eligible-schedule candidates in the requested season scope.
+    // This is what lets monitoring prove that an empty/no-next assignment is stale.
+    let candidateQuery = supabaseAdmin
+      .from('matches')
+      .select('id, status, season_id, age_group_id, home_team_id, away_team_id, match_date, match_time, matchday, match_code')
+      .eq('season_id', seasonId);
+    if (ageGroupId) candidateQuery = candidateQuery.eq('age_group_id', ageGroupId);
+    if (teamId) candidateQuery = candidateQuery.or(`home_team_id.eq.${teamId},away_team_id.eq.${teamId}`);
+    const { data: candidateRows, error: candidateError } = await candidateQuery;
+    if (candidateError) {
+      return NextResponse.json({ error: candidateError.message }, { status: 500 });
+    }
+    const candidateMatches = candidateRows || [];
+
     // Batch-fetch source card data
-    const cardMap = new Map<string, any>();
+    const cardMap = new Map<string, MonitoringCard>();
     if (allSourceCardIds.length > 0) {
       const { data: cardRows } = await supabaseAdmin
         .from('cards')
@@ -200,7 +244,16 @@ export async function GET(request: NextRequest) {
 
       // serving_match_ids checks
       const triggerMatch = r.trigger_match_id ? matchMap.get(r.trigger_match_id) : null;
-      const triggerDate = triggerMatch?.match_date ?? null;
+
+      const isValidServingReference = (sm: MonitoringMatch | undefined) =>
+        Boolean(
+          sm &&
+            (sm.status === 'scheduled' || sm.status === 'finished') &&
+            sm.season_id === r.season_id &&
+            sm.age_group_id === r.age_group_id &&
+            (sm.home_team_id === r.team_id || sm.away_team_id === r.team_id) &&
+            (!triggerMatch || isSuspensionServingMatchAfterTrigger(sm, triggerMatch))
+        );
 
       for (const sId of r.serving_match_ids || []) {
         const sm = matchMap.get(sId);
@@ -214,8 +267,6 @@ export async function GET(request: NextRequest) {
           });
           continue;
         }
-        // finished = valid served slot; scheduled = valid remaining slot
-        // postponed/cancelled = stale, needs refresh
         if (sm.status === 'postponed') {
           issues.push({
             suspension_id: r.id, player_id: r.player_id, team_id: r.team_id,
@@ -224,8 +275,7 @@ export async function GET(request: NextRequest) {
             severity: 'warning',
             details: `Serving match ${sId} is postponed — refresh needed`,
           });
-        }
-        if (sm.status === 'cancelled') {
+        } else if (sm.status === 'cancelled') {
           issues.push({
             suspension_id: r.id, player_id: r.player_id, team_id: r.team_id,
             suspension_type: r.suspension_type, trigger_match_id: r.trigger_match_id,
@@ -233,20 +283,25 @@ export async function GET(request: NextRequest) {
             severity: 'warning',
             details: `Serving match ${sId} is cancelled — refresh needed`,
           });
+        } else if (sm.status !== 'scheduled' && sm.status !== 'finished') {
+          issues.push({
+            suspension_id: r.id, player_id: r.player_id, team_id: r.team_id,
+            suspension_type: r.suspension_type, trigger_match_id: r.trigger_match_id,
+            issue_code: 'SERVING_MATCH_INVALID_STATUS',
+            severity: 'error',
+            details: `Serving match ${sId} has invalid status ${sm.status}`,
+          });
         }
-        if (triggerDate && sm.match_date && sm.match_date <= triggerDate) {
+        if (triggerMatch && !isSuspensionServingMatchAfterTrigger(sm, triggerMatch)) {
           issues.push({
             suspension_id: r.id, player_id: r.player_id, team_id: r.team_id,
             suspension_type: r.suspension_type, trigger_match_id: r.trigger_match_id,
             issue_code: 'SERVING_MATCH_BEFORE_TRIGGER',
             severity: 'error',
-            details: `Serving match ${sId} (${sm.match_date}) is on/before trigger date (${triggerDate})`,
+            details: `Serving match ${sId} is not chronologically after trigger ${r.trigger_match_id}`,
           });
         }
-        if (
-          sm.home_team_id !== r.team_id &&
-          sm.away_team_id !== r.team_id
-        ) {
+        if (sm.home_team_id !== r.team_id && sm.away_team_id !== r.team_id) {
           issues.push({
             suspension_id: r.id, player_id: r.player_id, team_id: r.team_id,
             suspension_type: r.suspension_type, trigger_match_id: r.trigger_match_id,
@@ -255,35 +310,105 @@ export async function GET(request: NextRequest) {
             details: `Serving match ${sId} does not involve team ${r.team_id}`,
           });
         }
-        if (ageGroupId && sm.age_group_id !== ageGroupId) {
+        if (sm.season_id !== r.season_id) {
           issues.push({
             suspension_id: r.id, player_id: r.player_id, team_id: r.team_id,
             suspension_type: r.suspension_type, trigger_match_id: r.trigger_match_id,
             issue_code: 'SERVING_MATCH_WRONG_SEASON',
             severity: 'error',
-            details: `Serving match ${sId} is in a different age_group`,
+            details: `Serving match ${sId} is in season ${sm.season_id}, expected ${r.season_id}`,
+          });
+        }
+        if (sm.age_group_id !== r.age_group_id) {
+          issues.push({
+            suspension_id: r.id, player_id: r.player_id, team_id: r.team_id,
+            suspension_type: r.suspension_type, trigger_match_id: r.trigger_match_id,
+            issue_code: 'SERVING_MATCH_WRONG_AGE_GROUP',
+            severity: 'error',
+            details: `Serving match ${sId} is in age_group ${sm.age_group_id}, expected ${r.age_group_id}`,
           });
         }
       }
 
-      // Ban slot count mismatch
+      // Ban slot count and readiness checks
       if (r.ban_matches > 0) {
-        const totalServingSlots = (r.serving_match_ids || []).length;
-        const servedSlots = (r.serving_match_ids || []).filter(
-          (id: string) => matchMap.get(id)?.status === 'finished'
-        ).length;
-        const remainingSlots = totalServingSlots - servedSlots;
+        const servingIds: string[] = r.serving_match_ids || [];
+        const totalServingSlots = servingIds.length;
+        const validServingRows = servingIds
+          .map((id) => matchMap.get(id))
+          .filter((sm): sm is MonitoringMatch => isValidServingReference(sm));
+        const servedIds = validServingRows
+          .filter((sm) => sm.status === 'finished')
+          .map((sm) => sm.id as string);
+        const scheduledIds = validServingRows
+          .filter((sm) => sm.status === 'scheduled')
+          .map((sm) => sm.id as string);
+        const servedSlots = servedIds.length;
+        const remainingNeeded = Math.max(0, r.ban_matches - servedSlots);
         const isComplete = r.served_completed_at != null;
 
-        if (!isComplete && remainingSlots === 0 && servedSlots === 0) {
-          // Active ban with no serving matches at all
-          issues.push({
-            suspension_id: r.id, player_id: r.player_id, team_id: r.team_id,
-            suspension_type: r.suspension_type, trigger_match_id: r.trigger_match_id,
-            issue_code: 'ACTIVE_BAN_WITHOUT_REMAINING_SCHEDULED_MATCH',
-            severity: 'warning',
-            details: `ban_matches=${r.ban_matches} but serving_match_ids is empty and ban is not served`,
-          });
+        if (!isComplete && remainingNeeded > 0) {
+          if (scheduledIds.length === 0) {
+            issues.push({
+              suspension_id: r.id, player_id: r.player_id, team_id: r.team_id,
+              suspension_type: r.suspension_type, trigger_match_id: r.trigger_match_id,
+              issue_code: 'ACTIVE_BAN_WITHOUT_REMAINING_SCHEDULED_MATCH',
+              severity: 'warning',
+              details: `ban_matches=${r.ban_matches}, served=${servedSlots}, but no valid scheduled serving slot is assigned`,
+            });
+          }
+
+          if (triggerMatch) {
+            const eventCandidates = candidateMatches.filter(
+              (m: MonitoringMatch) =>
+                (m.status === 'scheduled' || m.status === 'finished') &&
+                m.season_id === r.season_id &&
+                m.age_group_id === r.age_group_id &&
+                (m.home_team_id === r.team_id || m.away_team_id === r.team_id)
+            );
+            const expectedFuture = selectNextSuspensionServingMatches(
+              eventCandidates,
+              triggerMatch,
+              remainingNeeded,
+              servedIds
+            );
+            const expectedIds = expectedFuture.map((m) => m.id);
+
+            if (scheduledIds.length === 0 && expectedIds.length > 0) {
+              issues.push({
+                suspension_id: r.id, player_id: r.player_id, team_id: r.team_id,
+                suspension_type: r.suspension_type, trigger_match_id: r.trigger_match_id,
+                issue_code: 'ACTIVE_BAN_STALE_NO_NEXT_MATCH',
+                severity: 'error',
+                details: `No valid serving slot is assigned, but eligible future fixture(s) exist: ${expectedIds.join(', ')}`,
+              });
+            }
+
+            const expectedAssignedPrefix = expectedIds.slice(0, scheduledIds.length);
+            const assignmentIsStale =
+              scheduledIds.length > 0 &&
+              expectedAssignedPrefix.length === scheduledIds.length &&
+              scheduledIds.some((id, index) => id !== expectedAssignedPrefix[index]);
+            if (assignmentIsStale) {
+              issues.push({
+                suspension_id: r.id, player_id: r.player_id, team_id: r.team_id,
+                suspension_type: r.suspension_type, trigger_match_id: r.trigger_match_id,
+                issue_code: 'ACTIVE_BAN_STALE_ASSIGNMENT',
+                severity: 'error',
+                details: `Assigned remaining serving slot(s) ${scheduledIds.join(', ')} are not the earliest eligible fixture(s); expected ${expectedAssignedPrefix.join(', ')}`,
+              });
+            }
+
+            if (expectedIds.length > scheduledIds.length) {
+              issues.push({
+                suspension_id: r.id, player_id: r.player_id, team_id: r.team_id,
+                suspension_type: r.suspension_type, trigger_match_id: r.trigger_match_id,
+                issue_code: 'ACTIVE_BAN_INCOMPLETE_ASSIGNMENT',
+                severity: 'error',
+                details: `Only ${scheduledIds.length}/${remainingNeeded} remaining serving slot(s) are assigned while eligible fixture(s) exist; expected ${expectedIds.join(', ')}`,
+              });
+            }
+          }
         }
 
         if (totalServingSlots > r.ban_matches) {
@@ -303,7 +428,7 @@ export async function GET(request: NextRequest) {
             suspension_type: r.suspension_type, trigger_match_id: r.trigger_match_id,
             issue_code: 'SERVED_COMPLETED_AT_INCONSISTENT',
             severity: 'warning',
-            details: `served_completed_at is set but only ${servedSlots}/${r.ban_matches} slots are finished`,
+            details: `served_completed_at is set but only ${servedSlots}/${r.ban_matches} valid slots are finished`,
           });
         }
         if (!isComplete && servedSlots >= r.ban_matches && r.ban_matches > 0) {
@@ -367,8 +492,9 @@ export async function GET(request: NextRequest) {
       issue_counts: issueCounts,
       issues,
     });
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error('[MONITORING] Error:', err);
-    return NextResponse.json({ error: err.message ?? 'Internal error' }, { status: 500 });
+    const message = err instanceof Error ? err.message : 'Internal error';
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }
