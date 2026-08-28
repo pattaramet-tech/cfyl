@@ -4,9 +4,17 @@ import { useEffect, useMemo, useState } from 'react';
 import { MatchCard } from '@/components/MatchCard';
 import { PublicSeasonNav } from '@/components/PublicSeasonNav';
 import { usePublicNav } from '@/lib/use-public-nav';
-import { buildFixturesPath, matchdayNumber } from '@/lib/public-slugs';
+import { buildFixturesPath, matchdayNumber, resolveSeasonSwitchPath } from '@/lib/public-slugs';
+import {
+  filterMatchesByFixturePhase,
+  getAvailableFixturePhaseOptions,
+  normalizeFixturePhaseFilter,
+  resolveAvailableFixturePhase,
+  withFixturePhase,
+  type FixturePhaseFilter,
+} from '@/lib/fixture-phase';
 import { getBangkokToday } from '@/lib/suspension-status';
-import type { Match } from '@/types/db';
+import type { AgeGroup, Match, Season } from '@/types/db';
 
 function getDateKey(match: Match): string {
   return match.match_date?.slice(0, 10) || '';
@@ -41,10 +49,22 @@ interface FixturesViewProps {
 export function FixturesView({ seasonId, ageGroupId, matchdayCode }: FixturesViewProps) {
   const [matches, setMatches] = useState<Match[]>([]);
   const [loading, setLoading] = useState(true);
+  const [selectedPhase, setSelectedPhase] = useState<FixturePhaseFilter>('all');
 
   const selectedMd = matchdayCode ? matchdayNumber(matchdayCode) : null;
 
-  const { router, seasons, ageGroups, seg, code, onSeasonChange, onAgeChange } = usePublicNav(
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const syncPhaseFromUrl = () => {
+      const phase = new URLSearchParams(window.location.search).get('phase');
+      setSelectedPhase(normalizeFixturePhaseFilter(phase));
+    };
+    syncPhaseFromUrl();
+    window.addEventListener('popstate', syncPhaseFromUrl);
+    return () => window.removeEventListener('popstate', syncPhaseFromUrl);
+  }, [seasonId, ageGroupId, matchdayCode]);
+
+  const { router, seasons, ageGroups, seg, code } = usePublicNav(
     'fixtures',
     seasonId,
     ageGroupId,
@@ -63,15 +83,31 @@ export function FixturesView({ seasonId, ageGroupId, matchdayCode }: FixturesVie
     };
   }, [seasonId, ageGroupId]);
 
-  // Unique matchday numbers (sorted)
-  const matchdays = useMemo(() => {
-    const nums = Array.from(new Set(matches.map((m) => matchdayNumber(m.matchday)).filter((n) => n > 0)));
-    return nums.sort((a, b) => a - b);
-  }, [matches]);
+  const phaseOptions = useMemo(() => getAvailableFixturePhaseOptions(matches), [matches]);
+  const effectivePhase = useMemo(
+    () => resolveAvailableFixturePhase(matches, selectedPhase),
+    [matches, selectedPhase]
+  );
+  const showPhaseFilter = phaseOptions.some(
+    (option) => option.value !== 'all' && option.value !== 'regular'
+  );
+  const phaseMatches = useMemo(
+    () => filterMatchesByFixturePhase(matches, effectivePhase),
+    [matches, effectivePhase]
+  );
 
-  const filtered = selectedMd != null
-    ? matches.filter((m) => matchdayNumber(m.matchday) === selectedMd)
-    : matches;
+  // Unique matchday numbers (sorted) within the selected competition phase.
+  const matchdays = useMemo(() => {
+    const nums = Array.from(
+      new Set(phaseMatches.map((m) => matchdayNumber(m.matchday)).filter((n) => n > 0))
+    );
+    return nums.sort((a, b) => a - b);
+  }, [phaseMatches]);
+
+  const filtered =
+    selectedMd != null
+      ? phaseMatches.filter((m) => matchdayNumber(m.matchday) === selectedMd)
+      : phaseMatches;
 
   const groupedMatches = useMemo(() => {
     const today = getBangkokToday();
@@ -90,14 +126,40 @@ export function FixturesView({ seasonId, ageGroupId, matchdayCode }: FixturesVie
   }, [filtered]);
 
   const canNav = !!seg && !!code;
-  const goAll = () => canNav && router.push(buildFixturesPath(seg!, code!));
-  const goMd = (n: number) => canNav && router.push(buildFixturesPath(seg!, code!, `md${n}`));
+  const onFixtureSeasonChange = async (season: Season) => {
+    const desiredAge = code || ageGroups[0]?.code || '';
+    const path = await resolveSeasonSwitchPath(
+      'fixtures',
+      season,
+      desiredAge,
+      selectedMd != null ? { kind: 'md', code: `md${selectedMd}` } : undefined
+    );
+    router.push(withFixturePhase(path, effectivePhase));
+  };
+  const onFixtureAgeChange = (ageGroup: AgeGroup) => {
+    if (!seg) return;
+    router.push(withFixturePhase(buildFixturesPath(seg, ageGroup.code), effectivePhase));
+  };
+  const goPhase = (phase: FixturePhaseFilter) => {
+    if (!canNav) return;
+    setSelectedPhase(phase);
+    router.push(withFixturePhase(buildFixturesPath(seg!, code!), phase));
+  };
+  const goAll = () => {
+    if (!canNav) return;
+    router.push(withFixturePhase(buildFixturesPath(seg!, code!), effectivePhase));
+  };
+  const goMd = (n: number) => {
+    if (!canNav) return;
+    router.push(withFixturePhase(buildFixturesPath(seg!, code!, `md${n}`), effectivePhase));
+  };
 
-  const copyPath = canNav
+  const baseCopyPath = canNav
     ? selectedMd != null
       ? buildFixturesPath(seg!, code!, `md${selectedMd}`)
       : buildFixturesPath(seg!, code!)
     : null;
+  const copyPath = baseCopyPath ? withFixturePhase(baseCopyPath, effectivePhase) : null;
 
   return (
     <div className="space-y-6">
@@ -106,10 +168,26 @@ export function FixturesView({ seasonId, ageGroupId, matchdayCode }: FixturesVie
         ageGroups={ageGroups}
         seasonId={seasonId}
         ageGroupId={ageGroupId}
-        onSeasonChange={onSeasonChange}
-        onAgeChange={onAgeChange}
+        onSeasonChange={onFixtureSeasonChange}
+        onAgeChange={onFixtureAgeChange}
         copyPath={copyPath}
       >
+        {showPhaseFilter && (
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-sm font-semibold text-slate-600 whitespace-nowrap">รอบการแข่งขัน</span>
+            {phaseOptions.map((option) => (
+              <button
+                key={option.value}
+                type="button"
+                onClick={() => goPhase(option.value)}
+                className={`cfyl-chip ${effectivePhase === option.value ? 'cfyl-chip-active' : ''}`}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+        )}
+
         {matchdays.length > 0 && (
           <div className="flex items-center gap-2 flex-wrap">
             <span className="text-sm font-semibold text-slate-600 whitespace-nowrap">MatchDay</span>
@@ -122,7 +200,7 @@ export function FixturesView({ seasonId, ageGroupId, matchdayCode }: FixturesVie
                 onClick={() => goMd(n)}
                 className={`cfyl-chip ${selectedMd === n ? 'cfyl-chip-active' : ''}`}
               >
-                MD{n}
+                {effectivePhase === 'champion_league' ? `CL${n}` : `MD${n}`}
               </button>
             ))}
           </div>

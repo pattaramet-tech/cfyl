@@ -32,6 +32,71 @@ function inactiveFixtureState(divisionId: string) {
   };
 }
 
+function activeFixtureState(homeTeamId = 'A', awayTeamId = 'D') {
+  const existingMatch = {
+    id: 'match-1',
+    match_code: 'CL-division-1-R1',
+    match_no: 101,
+    match_date: '2026-09-01',
+    match_time: '10:00:00',
+    venue: 'Dome 1',
+    status: 'scheduled',
+    league_phase: 'champion_league',
+    home_team_id: homeTeamId,
+    away_team_id: awayTeamId,
+  };
+  return {
+    scope: {
+      season_id: 'season-1',
+      age_group_id: 'age-1',
+      division_id: 'division-1',
+    },
+    active: true,
+    qualifiers: [
+      { team_id: 'A', league_rank: 1, team_name: 'A Team' },
+      { team_id: 'B', league_rank: 2, team_name: 'B Team' },
+      { team_id: 'C', league_rank: 3, team_name: 'C Team' },
+      { team_id: 'D', league_rank: 4, team_name: 'D Team' },
+    ],
+    round_robin: {
+      preview: [
+        {
+          slot: 1,
+          round_no: 1,
+          matchday: 'CL1',
+          match_code: 'CL-division-1-R1',
+          home_team_id: 'A',
+          away_team_id: 'D',
+          home_team: { team_id: 'A', league_rank: 1, team_name: 'A Team' },
+          away_team: { team_id: 'D', league_rank: 4, team_name: 'D Team' },
+          existing_match: existingMatch,
+        },
+      ],
+      structure: {
+        expected_matches: 6,
+        fixture_matches: 6,
+        unique_pairings: 6,
+        duplicate_pairings: 0,
+        invalid_pairings: 0,
+        missing_pairings: 0,
+        complete: true,
+      },
+      can_generate: false,
+      already_generated: true,
+    },
+    progress: {
+      complete: false,
+      finished_unique_matches: 0,
+    },
+    placement: {
+      can_generate: false,
+      pairings: null,
+      final_match: null,
+      third_place_match: null,
+    },
+  };
+}
+
 function response(payload: unknown, ok = true, status = 200): Response {
   return {
     ok,
@@ -211,6 +276,90 @@ describe('ChampionLeagueFixtureManager scope isolation', () => {
           entry.includes('divisionId=division-1')
       )
     ).toHaveLength(1);
+
+    act(() => {
+      renderer.unmount();
+    });
+  });
+
+  it('swaps a generated fixture through PATCH and renders the updated home-away orientation', async () => {
+    actEnvironment.IS_REACT_ACT_ENVIRONMENT = true;
+    vi.stubGlobal('window', {
+      setTimeout: vi.fn(() => 1),
+      clearTimeout: vi.fn(),
+    });
+    vi.stubGlobal('localStorage', {
+      getItem: vi.fn(() => 'admin-token'),
+    });
+
+    let currentState = activeFixtureState();
+    const patchBodies: unknown[] = [];
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method || 'GET';
+      if (method === 'GET' && url.startsWith('/api/admin/champion-league/fixtures?')) {
+        return response(currentState);
+      }
+      if (method === 'PATCH' && url === '/api/admin/champion-league/fixtures') {
+        patchBodies.push(JSON.parse(String(init?.body || '{}')));
+        currentState = activeFixtureState('D', 'A');
+        return response({
+          success: true,
+          match: currentState.round_robin.preview[0].existing_match,
+        });
+      }
+      throw new Error(`Unexpected fetch: ${method} ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const onChanged = vi.fn(async () => undefined);
+    let renderer!: ReactTestRenderer;
+    const flushMicrotasks = async () => {
+      for (let index = 0; index < 6; index += 1) await Promise.resolve();
+    };
+
+    await act(async () => {
+      renderer = create(
+        React.createElement(ChampionLeagueFixtureManager, {
+          seasonId: 'season-1',
+          ageGroupId: 'age-1',
+          divisionId: 'division-1',
+          onChanged,
+        })
+      );
+    });
+
+    const refreshButton = renderer.root
+      .findAllByType('button')
+      .find((node) => node.children.join('') === 'รีเฟรช');
+    expect(refreshButton).toBeDefined();
+    await act(async () => {
+      refreshButton!.props.onClick();
+      await flushMicrotasks();
+    });
+
+    expect(
+      renderer.root
+        .findAllByType('span')
+        .some((node) => node.children.join('').includes('A Team vs D Team'))
+    ).toBe(true);
+
+    const swapButton = renderer.root
+      .findAllByType('button')
+      .find((node) => node.children.join('') === '⇄ สลับเหย้า–เยือน');
+    expect(swapButton).toBeDefined();
+    await act(async () => {
+      swapButton!.props.onClick();
+      await flushMicrotasks();
+    });
+
+    expect(patchBodies).toEqual([{ match_id: 'match-1', swap_home_away: true }]);
+    expect(
+      renderer.root
+        .findAllByType('span')
+        .some((node) => node.children.join('').includes('D Team vs A Team'))
+    ).toBe(true);
+    expect(onChanged).toHaveBeenCalledTimes(1);
 
     act(() => {
       renderer.unmount();

@@ -547,10 +547,12 @@ export async function PATCH(request: NextRequest) {
   }
 
   const matchId = typeof body.match_id === 'string' ? body.match_id : '';
-  const schedule = normalizeSchedule(body.schedule);
-  if (!matchId || !schedule) {
+  const wantsSwap = body.swap_home_away === true;
+  const hasSchedule = Object.prototype.hasOwnProperty.call(body, 'schedule');
+  const schedule = hasSchedule ? normalizeSchedule(body.schedule) : null;
+  if (!matchId || (!wantsSwap && !schedule) || (hasSchedule && !schedule)) {
     return NextResponse.json(
-      { error: 'match_id and a valid schedule with match_date are required' },
+      { error: 'match_id plus a valid schedule or swap_home_away=true is required' },
       { status: 400 }
     );
   }
@@ -577,7 +579,7 @@ export async function PATCH(request: NextRequest) {
     );
   }
   if (match.status === 'finished') {
-    return NextResponse.json({ error: 'Finished generated fixtures are read-only for scheduling' }, { status: 409 });
+    return NextResponse.json({ error: 'Finished generated fixtures are read-only' }, { status: 409 });
   }
 
   const scope: Scope = {
@@ -628,50 +630,79 @@ export async function PATCH(request: NextRequest) {
     }
   }
 
-  const oldSchedule = {
-    match_no: match.match_no,
-    match_date: match.match_date,
-    match_time: match.match_time,
-    venue: match.venue,
+  const oldData: Record<string, unknown> = {};
+  const newData: Record<string, unknown> = {};
+  const updateValues: Record<string, unknown> = {
+    updated_at: new Date().toISOString(),
   };
-  const { data: updated, error: updateError } = await supabaseAdmin
-    .from('matches')
-    .update({
+
+  if (schedule) {
+    Object.assign(oldData, {
+      match_no: match.match_no,
+      match_date: match.match_date,
+      match_time: match.match_time,
+      venue: match.venue,
+    });
+    Object.assign(newData, {
       match_no: schedule.match_no,
       match_date: schedule.match_date,
       match_time: schedule.match_time,
       venue: schedule.venue,
-      updated_at: new Date().toISOString(),
-    })
+    });
+    Object.assign(updateValues, newData);
+  }
+
+  if (wantsSwap) {
+    Object.assign(oldData, {
+      home_team_id: match.home_team_id,
+      away_team_id: match.away_team_id,
+    });
+    Object.assign(newData, {
+      home_team_id: match.away_team_id,
+      away_team_id: match.home_team_id,
+    });
+    Object.assign(updateValues, {
+      home_team_id: match.away_team_id,
+      away_team_id: match.home_team_id,
+    });
+  }
+  const { data: updated, error: updateError } = await supabaseAdmin
+    .from('matches')
+    .update(updateValues)
     .eq('id', matchId)
+    .eq('home_team_id', match.home_team_id)
+    .eq('away_team_id', match.away_team_id)
+    .eq('updated_at', match.updated_at)
     .neq('status', 'finished')
     .select(SCOPE_MATCH_SELECT)
     .maybeSingle();
 
   if (updateError) {
     console.error('[CHAMPION_FIXTURES_PATCH] update error:', updateError);
-    return NextResponse.json({ error: 'Failed to update generated fixture schedule' }, { status: 500 });
+    return NextResponse.json({ error: 'Failed to update generated fixture' }, { status: 500 });
   }
   if (!updated) {
-    return NextResponse.json(
-      { error: 'Finished generated fixtures are read-only for scheduling' },
-      { status: 409 }
-    );
+    const { data: latest } = await supabaseAdmin
+      .from('matches')
+      .select('status, home_team_id, away_team_id')
+      .eq('id', matchId)
+      .maybeSingle();
+    const error = latest?.status === 'finished'
+      ? 'Finished generated fixtures are read-only'
+      : 'Generated fixture changed while editing; reload and retry';
+    return NextResponse.json({ error }, { status: 409 });
   }
 
   await logAdminAction({
     admin: { id: permission.auth.profile.id, email: permission.auth.profile.email },
-    action: 'champion_league.fixture.schedule_update',
+    action: wantsSwap
+      ? 'champion_league.fixture.home_away_swap'
+      : 'champion_league.fixture.schedule_update',
     entityType: 'match',
     entityId: matchId,
     entityLabel: match.match_code,
-    oldData: oldSchedule,
-    newData: {
-      match_no: schedule.match_no,
-      match_date: schedule.match_date,
-      match_time: schedule.match_time,
-      venue: schedule.venue,
-    },
+    oldData,
+    newData,
   });
 
   try {

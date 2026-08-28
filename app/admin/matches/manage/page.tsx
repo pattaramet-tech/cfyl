@@ -556,7 +556,13 @@ export default function MatchManagePage() {
         resultType,
       });
 
-      const payload: any = { ...basePayload, league_phase: leaguePhase };
+      const payload: any = {
+        ...basePayload,
+        league_phase: leaguePhase,
+        expected_home_team_id: selectedMatch.home_team_id,
+        expected_away_team_id: selectedMatch.away_team_id,
+        expected_updated_at: selectedMatch.updated_at,
+      };
 
       // Override for postponed status
       if (matchStatus === 'postponed') {
@@ -1001,7 +1007,7 @@ export default function MatchManagePage() {
   };
 
   const handleFinishMatch = async () => {
-    if (!selectedMatchId) {
+    if (!selectedMatchId || !selectedMatch) {
       setError('กรุณาเลือกแมตช์ก่อน');
       return;
     }
@@ -1040,7 +1046,13 @@ export default function MatchManagePage() {
         resultType,
       });
 
-      const payload: any = { ...basePayload, league_phase: leaguePhase };
+      const payload: any = {
+        ...basePayload,
+        league_phase: leaguePhase,
+        expected_home_team_id: selectedMatch.home_team_id,
+        expected_away_team_id: selectedMatch.away_team_id,
+        expected_updated_at: selectedMatch.updated_at,
+      };
 
       // Include date/time for all updates
       if (matchDate) {
