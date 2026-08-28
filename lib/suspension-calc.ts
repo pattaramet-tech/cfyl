@@ -13,7 +13,7 @@ import {
   getHighestThresholdCrossed,
   computeStaleEventIds,
   getTriggerEventText,
-  isEligibleSuspensionServingMatch,
+  selectNextSuspensionServingMatches,
   classifyServingMatchIds,
   servingArraysEqual,
 } from './suspension-shared';
@@ -30,14 +30,15 @@ import {
  * imports of `from '@/lib/suspension-calc'` keep working unchanged.
  *
  * REGRESSION TEST SCENARIO (P1 Fix):
- * When calculating suspension-serving matches, only scheduled matches should count.
- * Postponed/cancelled/finished matches must be skipped.
+ * Suspension serving follows chronological eligible team matches in the same
+ * season/age group. Scheduled matches are remaining slots, finished matches are
+ * preserved as already-served slots, and postponed/cancelled matches are skipped.
  *
  * Test case:
  * - Trigger: MD1 (finished, card triggered)
  * - Ban: 2 matches
- * - Future matches: MD2 (scheduled), MD3 (postponed), MD4 (cancelled), MD5 (scheduled)
- * - Expected serving: MD2, MD5
+ * - Future matches: MD2 (finished), MD3 (postponed), MD4 (cancelled), MD5 (scheduled)
+ * - Expected serving: MD2 (served), MD5 (remaining)
  * - Should skip: MD3 (postponed), MD4 (cancelled)
  */
 
@@ -228,9 +229,14 @@ export async function findNextMatchesForSuspension(
     .eq('id', triggerMatchId)
     .single();
 
-  if (triggerError || !triggerMatch) {
+  if (triggerError) {
     console.error('[SUSPENSION_CALC] Failed to fetch trigger match:', triggerError);
-    return [];
+    throw triggerError;
+  }
+  if (!triggerMatch) {
+    const missingTriggerError = new Error(`Trigger match ${triggerMatchId} was not found`);
+    console.error('[SUSPENSION_CALC] Failed to fetch trigger match:', missingTriggerError);
+    throw missingTriggerError;
   }
 
   const triggerMatchdayNum = parseMatchdayNumber(triggerMatch.matchday);
@@ -257,52 +263,23 @@ export async function findNextMatchesForSuspension(
 
   if (error) {
     console.error('[SUSPENSION_CALC] Error fetching team matches:', error);
-    return [];
+    throw error;
   }
 
   console.log(`[SUSPENSION_CALC] Total team matches found (excl. trigger): ${(allMatches || []).length}`);
 
-  // Build exclusion set from already-served IDs
-  const excludeSet = new Set(excludeMatchIds);
+  // Step 3: Select the next chronological serving slots. The helper intentionally
+  // ignores League phase, so Regular → Champion League → Placement remains one
+  // continuous suspension-serving sequence inside the same season/age group.
+  const candidates = selectNextSuspensionServingMatches(
+    allMatches || [],
+    triggerMatch,
+    count,
+    excludeMatchIds
+  );
 
-  // Step 3: Filter matches that come after the trigger and are eligible for suspension serving
-  const candidates = (allMatches || []).filter((m: any) => {
-    // Finished or scheduled — skip postponed/cancelled
-    if (!isEligibleSuspensionServingMatch(m)) {
-      return false;
-    }
-    // Skip already-accounted-for served matches
-    if (excludeSet.has(m.id)) {
-      return false;
-    }
-
-    const mMatchdayNum = parseMatchdayNumber(m.matchday);
-    const mDate = (m.match_date as string | null) || null;
-    const mTime = (m.match_time as string | null) || '23:59:59';
-
-    if (triggerDate && mDate) {
-      // Both have dates — use date comparison
-      if (mDate > triggerDate) return true;
-      if (mDate === triggerDate) return mTime > triggerTime;
-      return false;
-    }
-    // Fallback: matchday number comparison
-    return mMatchdayNum > triggerMatchdayNum;
-  });
-
-  // Step 4: Sort by match_date ASC → match_time ASC → matchday number ASC
-  candidates.sort((a: any, b: any) => {
-    const aDate = (a.match_date as string | null) || '';
-    const bDate = (b.match_date as string | null) || '';
-    if (aDate !== bDate) return aDate.localeCompare(bDate);
-    const aTime = (a.match_time as string | null) || '00:00:00';
-    const bTime = (b.match_time as string | null) || '00:00:00';
-    if (aTime !== bTime) return aTime.localeCompare(bTime);
-    return parseMatchdayNumber(a.matchday) - parseMatchdayNumber(b.matchday);
-  });
-
-  // Step 5: Take first `count` matches
-  const result = candidates.slice(0, count).map((m: any) => ({
+  // Step 4: Convert selected rows to serving details.
+  const result = candidates.map((m: any) => ({
     match_id: m.id,
     matchday: parseMatchdayNumber(m.matchday),
     match_date: m.match_date,
@@ -933,15 +910,20 @@ export async function refreshSuspensionServingMatches(params: {
     ...new Set(relevant.flatMap((e: any) => e.serving_match_ids || [])),
   ];
   const matchMap = new Map<string, any>();
+  const statusMap = new Map<string, string>();
 
   if (allCurrentServingIds.length > 0) {
-    const { data: matchRows } = await supabaseAdmin
+    const { data: matchRows, error: matchRowsError } = await supabaseAdmin
       .from('matches')
       .select(
         'id, status, match_date, match_time, matchday, match_code, home_team_id, away_team_id, home_team:home_team_id(name), away_team:away_team_id(name)'
       )
       .in('id', allCurrentServingIds);
-    for (const m of matchRows || []) matchMap.set(m.id, m);
+    if (matchRowsError) throw matchRowsError;
+    for (const m of matchRows || []) {
+      matchMap.set(m.id, m);
+      statusMap.set(m.id, m.status);
+    }
   }
 
   let refreshed = 0, skipped = 0, failed = 0;
@@ -951,7 +933,7 @@ export async function refreshSuspensionServingMatches(params: {
       const currentServingIds: string[] = event.serving_match_ids || [];
 
       // Split current serving matches into served (finished) and stale/invalid
-      const { servedIds } = classifyServingMatchIds(currentServingIds, matchMap);
+      const { servedIds } = classifyServingMatchIds(currentServingIds, statusMap);
       const remainingNeeded = Math.max(0, event.ban_matches - servedIds.length);
 
       // Find replacement serving slots for remaining slots.
@@ -991,13 +973,17 @@ export async function refreshSuspensionServingMatches(params: {
       // Fetch details for newly-assigned match IDs not yet in map
       const needFetch = newServingMatchIds.filter((id) => !matchMap.has(id));
       if (needFetch.length > 0) {
-        const { data: extra } = await supabaseAdmin
+        const { data: extra, error: extraError } = await supabaseAdmin
           .from('matches')
           .select(
             'id, status, match_date, match_time, matchday, match_code, home_team_id, away_team_id, home_team:home_team_id(name), away_team:away_team_id(name)'
           )
           .in('id', needFetch);
-        for (const m of extra || []) matchMap.set(m.id, m);
+        if (extraError) throw extraError;
+        for (const m of extra || []) {
+          matchMap.set(m.id, m);
+          statusMap.set(m.id, m.status);
+        }
       }
 
       // Rebuild suspension_details.suspended_matches from new serving list

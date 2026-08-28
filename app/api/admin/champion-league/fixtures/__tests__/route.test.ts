@@ -35,7 +35,7 @@ vi.mock('@/lib/audit-log', () => ({
 }));
 
 vi.mock('@/lib/suspension-calc', () => ({
-  refreshSuspensionServingMatches: vi.fn(async () => ({ updated: 0 })),
+  refreshSuspensionServingMatches: vi.fn(async () => ({ refreshed: 0, skipped: 0, failed: 0 })),
 }));
 
 vi.mock('@supabase/supabase-js', () => ({
@@ -156,6 +156,7 @@ vi.mock('@supabase/supabase-js', () => ({
 }));
 
 import { logAdminAction } from '@/lib/audit-log';
+import { refreshSuspensionServingMatches } from '@/lib/suspension-calc';
 import { GET, PATCH, POST } from '../route';
 import { PUT as PUT_MATCH } from '../../../matches/[matchId]/route';
 
@@ -253,6 +254,19 @@ function initializeDb(matches: Row[] = []) {
   };
 }
 
+function expectTop4SuspensionRefresh() {
+  const calls = vi.mocked(refreshSuspensionServingMatches).mock.calls;
+  expect(calls).toHaveLength(4);
+  expect(calls.map(([arg]) => arg.teamId).sort()).toEqual(['A', 'B', 'C', 'D']);
+  for (const [arg] of calls) {
+    expect(arg).toEqual({
+      seasonId: scope.season_id,
+      ageGroupId: scope.age_group_id,
+      teamId: expect.any(String),
+    });
+  }
+}
+
 describe('admin Champion League fixture generation', () => {
   beforeEach(() => {
     initializeDb();
@@ -261,6 +275,7 @@ describe('admin Champion League fixture generation', () => {
     state.swapBeforeResultUpdateOnce = false;
     state.touchBeforeFixtureUpdateOnce = false;
     vi.mocked(logAdminAction).mockClear();
+    vi.mocked(refreshSuspensionServingMatches).mockClear();
     state.auth = {
       authenticated: true,
       profile: { id: 'admin-1', email: 'admin@example.com', can_edit_matches: true },
@@ -314,15 +329,39 @@ describe('admin Champion League fixture generation', () => {
       {}
     );
     expect(teamCounts).toEqual({ A: 3, D: 3, C: 3, B: 3 });
+    expectTop4SuspensionRefresh();
   });
 
   it('is idempotent when generation is repeated after a complete six-fixture structure exists', async () => {
     await POST(requestBody({ action: 'generate_round_robin', ...scope, schedules: schedules() }));
+    vi.mocked(refreshSuspensionServingMatches).mockClear();
     const second = await POST(requestBody({ action: 'generate_round_robin', ...scope, schedules: schedules() }));
     const body = await second.json();
     expect(second.status).toBe(200);
     expect(body.idempotent).toBe(true);
     expect(state.db.matches.filter((row) => row.league_phase === 'champion_league')).toHaveLength(6);
+    expectTop4SuspensionRefresh();
+  });
+
+  it('can repair suspension serving on idempotent retry if refresh failed after fixture insertion', async () => {
+    vi.mocked(refreshSuspensionServingMatches).mockResolvedValueOnce({
+      refreshed: 0,
+      skipped: 0,
+      failed: 1,
+    });
+
+    const first = await POST(requestBody({ action: 'generate_round_robin', ...scope, schedules: schedules() }));
+    const firstBody = await first.json();
+    expect(first.status).toBe(500);
+    expect(firstBody.error).toMatch(/suspension serving refresh failed/i);
+    expect(state.db.matches.filter((row) => row.league_phase === 'champion_league')).toHaveLength(6);
+
+    vi.mocked(refreshSuspensionServingMatches).mockClear();
+    const retry = await POST(requestBody({ action: 'generate_round_robin', ...scope, schedules: schedules() }));
+    const retryBody = await retry.json();
+    expect(retry.status).toBe(200);
+    expect(retryBody.idempotent).toBe(true);
+    expectTop4SuspensionRefresh();
   });
 
   it('treats a DB unique race as idempotent success after the competing request commits all six rows', async () => {
@@ -379,13 +418,16 @@ describe('admin Champion League fixture generation', () => {
     expect(third).toHaveLength(1);
     expect(new Set([final[0].home_team_id, final[0].away_team_id])).toEqual(new Set(['A', 'B']));
     expect(new Set([third[0].home_team_id, third[0].away_team_id])).toEqual(new Set(['C', 'D']));
+    expectTop4SuspensionRefresh();
 
+    vi.mocked(refreshSuspensionServingMatches).mockClear();
     const second = await POST(request());
     const secondBody = await second.json();
     expect(second.status).toBe(200);
     expect(secondBody.idempotent).toBe(true);
     expect(state.db.matches.filter((row) => row.league_phase === 'final')).toHaveLength(1);
     expect(state.db.matches.filter((row) => row.league_phase === 'third_place')).toHaveLength(1);
+    expectTop4SuspensionRefresh();
   });
 
   it('PATCH swaps a generated placement fixture without breaking its rank-derived pair or schedule', async () => {

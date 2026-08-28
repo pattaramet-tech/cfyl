@@ -463,6 +463,61 @@ export function isEligibleSuspensionServingMatch(match: any): boolean {
   return match?.status === 'scheduled' || match?.status === 'finished';
 }
 
+export interface SuspensionServingCandidate {
+  id: string;
+  status?: string | null;
+  match_date?: string | null;
+  match_time?: string | null;
+  matchday?: string | number | null;
+}
+
+/**
+ * Select the next chronological suspension-serving slots from matches that are
+ * already scoped to one team + season + age group. League phase is deliberately
+ * irrelevant so a ban can continue from Regular League into Champion League and
+ * then into Final / Third Place without resetting.
+ */
+export function selectNextSuspensionServingMatches<T extends SuspensionServingCandidate>(
+  matches: T[],
+  triggerMatch: Pick<SuspensionServingCandidate, 'matchday' | 'match_date' | 'match_time'>,
+  count: number,
+  excludeMatchIds: string[] = []
+): T[] {
+  if (count <= 0) return [];
+
+  const triggerMatchdayNum = parseMatchdayNumber(triggerMatch.matchday);
+  const triggerDate = triggerMatch.match_date || null;
+  const triggerTime = triggerMatch.match_time || '23:59:59';
+  const excludeSet = new Set(excludeMatchIds);
+
+  return matches
+    .filter((match) => {
+      if (!isEligibleSuspensionServingMatch(match) || excludeSet.has(match.id)) {
+        return false;
+      }
+
+      const matchDate = match.match_date || null;
+      const matchTime = match.match_time || '23:59:59';
+      if (triggerDate && matchDate) {
+        if (matchDate > triggerDate) return true;
+        if (matchDate === triggerDate) return matchTime > triggerTime;
+        return false;
+      }
+
+      return parseMatchdayNumber(match.matchday) > triggerMatchdayNum;
+    })
+    .sort((a, b) => {
+      const aDate = a.match_date || '';
+      const bDate = b.match_date || '';
+      if (aDate !== bDate) return aDate.localeCompare(bDate);
+      const aTime = a.match_time || '00:00:00';
+      const bTime = b.match_time || '00:00:00';
+      if (aTime !== bTime) return aTime.localeCompare(bTime);
+      return parseMatchdayNumber(a.matchday) - parseMatchdayNumber(b.matchday);
+    })
+    .slice(0, count);
+}
+
 const EVENT_SUSPENSION_TYPES = [
   'accumulated_points',
   'second_yellow',
@@ -525,6 +580,53 @@ export function isSuspendedForMatch(
     return suspendedMatches.some((m: any) => m.match_id === matchId);
   }
   return false;
+}
+
+/**
+ * Public match-detail display semantics.
+ * Scheduled matches show active bans. Finished matches preserve historical
+ * serving assignments even after served_completed_at is stamped. Postponed or
+ * cancelled matches never display as consumed serving slots.
+ */
+export interface SuspensionMatchDisplayRecord {
+  suspension_type?: string | null;
+  serving_match_ids?: string[] | null;
+  served_completed_at?: string | null;
+  suspended_from_match_id?: string | null;
+  suspension_details?: {
+    suspended_matches?: Array<{ match_id?: string | null }>;
+  } | null;
+}
+
+export function shouldDisplaySuspensionForMatch(
+  suspension: SuspensionMatchDisplayRecord,
+  matchId: string,
+  currentMatchStatus: string
+): boolean {
+  if (currentMatchStatus === 'scheduled') {
+    return isSuspendedForMatch(suspension, matchId, currentMatchStatus);
+  }
+  if (currentMatchStatus !== 'finished') {
+    return false;
+  }
+
+  const type: string | null = suspension.suspension_type ?? null;
+  const isEventBased =
+    type !== null &&
+    (EVENT_SUSPENSION_TYPES as readonly string[]).includes(type);
+
+  if (isEventBased) {
+    const servingIds: string[] = Array.isArray(suspension.serving_match_ids)
+      ? suspension.serving_match_ids
+      : [];
+    return servingIds.includes(matchId);
+  }
+
+  if (suspension.suspended_from_match_id === matchId) return true;
+  const suspendedMatches = suspension.suspension_details?.suspended_matches;
+  return Array.isArray(suspendedMatches)
+    ? suspendedMatches.some((m) => m.match_id === matchId)
+    : false;
 }
 
 /**

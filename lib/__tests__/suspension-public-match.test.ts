@@ -4,7 +4,11 @@ vi.mock('@supabase/supabase-js', () => ({
   createClient: vi.fn(() => null),
 }));
 
-import { isSuspendedForMatch, calculateBanMatches } from '../suspension-calc';
+import {
+  isSuspendedForMatch,
+  shouldDisplaySuspensionForMatch,
+  calculateBanMatches,
+} from '../suspension-calc';
 import { getSuspensionStatus } from '../suspension-status';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -60,6 +64,27 @@ describe('served suspension → not shown on public match', () => {
       served_completed_at: null,
     });
     expect(isSuspendedForMatch(s, 'md6', 'scheduled')).toBe(true);
+  });
+});
+
+describe('public match detail suspension display semantics', () => {
+  it('scheduled serving match shows an active suspension', () => {
+    const suspension = eventSuspension({ serving_match_ids: ['cl1'] });
+    expect(shouldDisplaySuspensionForMatch(suspension, 'cl1', 'scheduled')).toBe(true);
+  });
+
+  it('finished serving match remains visible historically after the ban is completed', () => {
+    const suspension = eventSuspension({
+      serving_match_ids: ['cl1'],
+      served_completed_at: '2026-09-01T12:00:00Z',
+    });
+    expect(isSuspendedForMatch(suspension, 'cl1', 'finished')).toBe(false);
+    expect(shouldDisplaySuspensionForMatch(suspension, 'cl1', 'finished')).toBe(true);
+  });
+
+  it.each(['postponed', 'cancelled'])('%s match never displays as a consumed ban slot', (status) => {
+    const suspension = eventSuspension({ serving_match_ids: ['cl1'] });
+    expect(shouldDisplaySuspensionForMatch(suspension, 'cl1', status)).toBe(false);
   });
 });
 

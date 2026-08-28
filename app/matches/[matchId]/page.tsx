@@ -383,7 +383,11 @@ export default function MatchPage() {
         {/* Suspended Players */}
         {data.suspended_players && data.suspended_players.length > 0 && (
           <div className="cfyl-card p-6 border-l-4 border-red-500 bg-red-50">
-            <h2 className="cfyl-section-title mb-4 text-red-800">🚫 นักกีฬาติดโทษแบนในแมตช์นี้</h2>
+            <h2 className="cfyl-section-title mb-4 text-red-800">
+              {m.status === 'finished'
+                ? '🚫 นักกีฬาที่ชดใช้โทษแบนในแมตช์นี้'
+                : '🚫 นักกีฬาติดโทษแบนในแมตช์นี้'}
+            </h2>
 
             <div className="space-y-3">
               {data.suspended_players.map((susp) => (
