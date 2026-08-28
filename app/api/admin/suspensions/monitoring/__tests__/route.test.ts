@@ -166,6 +166,78 @@ describe('GET /api/admin/suspensions/monitoring readiness', () => {
     );
   });
 
+  it('flags an existing later assignment when a newly-earlier eligible fixture exists', async () => {
+    state.db.suspensions = [suspension({ serving_match_ids: ['later'] })];
+    state.db.matches.push(
+      match({ id: 'later', match_date: '2026-09-10', matchday: 'MD11', match_code: 'M11' }),
+      match({ id: 'earlier', match_date: '2026-09-05', matchday: 'CL1', match_code: 'CL1' })
+    );
+
+    const response = await GET(request() as never);
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          suspension_id: 'susp-1',
+          issue_code: 'ACTIVE_BAN_STALE_ASSIGNMENT',
+          severity: 'error',
+        }),
+      ])
+    );
+  });
+
+  it('flags an underfilled multi-match assignment when another eligible fixture exists', async () => {
+    state.db.suspensions = [
+      suspension({ ban_matches: 2, serving_match_ids: ['first'] }),
+    ];
+    state.db.matches.push(
+      match({ id: 'first', match_date: '2026-09-05', matchday: 'CL1', match_code: 'CL1' }),
+      match({ id: 'second', match_date: '2026-09-06', matchday: 'CL2', match_code: 'CL2' })
+    );
+
+    const response = await GET(request() as never);
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          suspension_id: 'susp-1',
+          issue_code: 'ACTIVE_BAN_INCOMPLETE_ASSIGNMENT',
+          severity: 'error',
+        }),
+      ])
+    );
+  });
+
+  it('accepts the correct earliest remaining assignment after preserving a finished served slot', async () => {
+    state.db.suspensions = [
+      suspension({ ban_matches: 2, serving_match_ids: ['served', 'next'] }),
+    ];
+    state.db.matches.push(
+      match({
+        id: 'served',
+        status: 'finished',
+        match_date: '2026-09-03',
+        matchday: 'MD10',
+        match_code: 'M10',
+      }),
+      match({ id: 'next', match_date: '2026-09-05', matchday: 'CL1', match_code: 'CL1' }),
+      match({ id: 'later', match_date: '2026-09-10', matchday: 'CL2', match_code: 'CL2' })
+    );
+
+    const response = await GET(request() as never);
+    const body = await response.json();
+    const codes = new Set(body.issues.map((issue: { issue_code: string }) => issue.issue_code));
+
+    expect(response.status).toBe(200);
+    expect(codes.has('ACTIVE_BAN_STALE_ASSIGNMENT')).toBe(false);
+    expect(codes.has('ACTIVE_BAN_INCOMPLETE_ASSIGNMENT')).toBe(false);
+    expect(codes.has('ACTIVE_BAN_STALE_NO_NEXT_MATCH')).toBe(false);
+  });
+
   it('reports wrong team, season, age group, status and chronology on referenced serving matches', async () => {
     state.db.suspensions = [
       suspension({

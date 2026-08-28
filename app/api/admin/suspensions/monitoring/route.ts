@@ -347,14 +347,16 @@ export async function GET(request: NextRequest) {
         const remainingNeeded = Math.max(0, r.ban_matches - servedSlots);
         const isComplete = r.served_completed_at != null;
 
-        if (!isComplete && remainingNeeded > 0 && scheduledIds.length === 0) {
-          issues.push({
-            suspension_id: r.id, player_id: r.player_id, team_id: r.team_id,
-            suspension_type: r.suspension_type, trigger_match_id: r.trigger_match_id,
-            issue_code: 'ACTIVE_BAN_WITHOUT_REMAINING_SCHEDULED_MATCH',
-            severity: 'warning',
-            details: `ban_matches=${r.ban_matches}, served=${servedSlots}, but no valid scheduled serving slot is assigned`,
-          });
+        if (!isComplete && remainingNeeded > 0) {
+          if (scheduledIds.length === 0) {
+            issues.push({
+              suspension_id: r.id, player_id: r.player_id, team_id: r.team_id,
+              suspension_type: r.suspension_type, trigger_match_id: r.trigger_match_id,
+              issue_code: 'ACTIVE_BAN_WITHOUT_REMAINING_SCHEDULED_MATCH',
+              severity: 'warning',
+              details: `ban_matches=${r.ban_matches}, served=${servedSlots}, but no valid scheduled serving slot is assigned`,
+            });
+          }
 
           if (triggerMatch) {
             const eventCandidates = candidateMatches.filter(
@@ -364,19 +366,46 @@ export async function GET(request: NextRequest) {
                 m.age_group_id === r.age_group_id &&
                 (m.home_team_id === r.team_id || m.away_team_id === r.team_id)
             );
-            const eligibleFuture = selectNextSuspensionServingMatches(
+            const expectedFuture = selectNextSuspensionServingMatches(
               eventCandidates,
               triggerMatch,
               remainingNeeded,
               servedIds
             );
-            if (eligibleFuture.length > 0) {
+            const expectedIds = expectedFuture.map((m) => m.id);
+
+            if (scheduledIds.length === 0 && expectedIds.length > 0) {
               issues.push({
                 suspension_id: r.id, player_id: r.player_id, team_id: r.team_id,
                 suspension_type: r.suspension_type, trigger_match_id: r.trigger_match_id,
                 issue_code: 'ACTIVE_BAN_STALE_NO_NEXT_MATCH',
                 severity: 'error',
-                details: `No valid serving slot is assigned, but eligible future fixture(s) exist: ${eligibleFuture.map((m) => m.id).join(', ')}`,
+                details: `No valid serving slot is assigned, but eligible future fixture(s) exist: ${expectedIds.join(', ')}`,
+              });
+            }
+
+            const expectedAssignedPrefix = expectedIds.slice(0, scheduledIds.length);
+            const assignmentIsStale =
+              scheduledIds.length > 0 &&
+              expectedAssignedPrefix.length === scheduledIds.length &&
+              scheduledIds.some((id, index) => id !== expectedAssignedPrefix[index]);
+            if (assignmentIsStale) {
+              issues.push({
+                suspension_id: r.id, player_id: r.player_id, team_id: r.team_id,
+                suspension_type: r.suspension_type, trigger_match_id: r.trigger_match_id,
+                issue_code: 'ACTIVE_BAN_STALE_ASSIGNMENT',
+                severity: 'error',
+                details: `Assigned remaining serving slot(s) ${scheduledIds.join(', ')} are not the earliest eligible fixture(s); expected ${expectedAssignedPrefix.join(', ')}`,
+              });
+            }
+
+            if (expectedIds.length > scheduledIds.length) {
+              issues.push({
+                suspension_id: r.id, player_id: r.player_id, team_id: r.team_id,
+                suspension_type: r.suspension_type, trigger_match_id: r.trigger_match_id,
+                issue_code: 'ACTIVE_BAN_INCOMPLETE_ASSIGNMENT',
+                severity: 'error',
+                details: `Only ${scheduledIds.length}/${remainingNeeded} remaining serving slot(s) are assigned while eligible fixture(s) exist; expected ${expectedIds.join(', ')}`,
               });
             }
           }
