@@ -5,6 +5,11 @@ import { useParams } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import { TeamLogo } from '@/components/TeamLogo';
 import { getCurrentDisciplinaryPoints } from '@/lib/suspension-shared';
+import {
+  buildPlayerCardBreakdown,
+  createEmptyPlayerCardBreakdown,
+  getVisiblePlayerCardBadges,
+} from '@/lib/team-player-card-breakdown';
 
 interface TeamProfile {
   team: {
@@ -277,10 +282,7 @@ export default function TeamProfilePage() {
     })
     .slice(0, 5);
 
-  const playerCardsMap = new Map<string, number>();
-  cards.forEach((c) => {
-    playerCardsMap.set(c.player_id, (playerCardsMap.get(c.player_id) ?? 0) + 1);
-  });
+  const playerCardsMap = buildPlayerCardBreakdown(cards);
 
   const getPlayerBanStatus = (playerId: string): string => {
     const suspension = suspensions.find((s) => s.player_id === playerId);
@@ -446,7 +448,8 @@ export default function TeamProfilePage() {
           <div className="space-y-2">
             {players.map((player) => {
               const playerGoals = playerGoalsMap.get(player.id) ?? 0;
-              const playerCards = playerCardsMap.get(player.id) ?? 0;
+              const playerCards = playerCardsMap.get(player.id) ?? createEmptyPlayerCardBreakdown();
+              const playerCardBadges = getVisiblePlayerCardBadges(playerCards);
               const banStatus = getPlayerBanStatus(player.id);
               return (
                 <div key={player.id} className="cfyl-card p-3 sm:p-4">
@@ -464,10 +467,14 @@ export default function TeamProfilePage() {
                     </div>
                     <div className="shrink-0 text-right">
                       <div className="text-sm font-semibold">⚽ {playerGoals}</div>
-                      <div className="text-sm text-gray-600">
-                        🟨 {playerCards}
+                      <div className="flex flex-wrap justify-end gap-x-2 text-sm text-gray-600">
+                        {playerCardBadges.map((badge) => (
+                          <span key={badge.cardType}>
+                            {badge.icon} {badge.count}
+                          </span>
+                        ))}
                         {banStatus !== '-' && (
-                          <span className="ml-2 text-red-600 font-semibold">🚨 ติดโทษแบน</span>
+                          <span className="text-red-600 font-semibold">🚨 ติดโทษแบน</span>
                         )}
                       </div>
                     </div>
