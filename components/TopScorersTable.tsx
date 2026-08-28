@@ -1,3 +1,5 @@
+import Link from 'next/link';
+
 interface TopScorer {
   player_id: string;
   player_code: string;
@@ -32,12 +34,12 @@ export function TopScorersTable({ scorers }: TopScorersTableProps) {
             </span>
 
             <div className="min-w-0 flex-1">
-              <p className="font-semibold text-slate-800 truncate">
+              <Link href={`/players/${scorer.player_id}`} className="block font-semibold text-slate-800 truncate hover:text-blue-700 hover:underline">
                 {scorer.full_name}
                 {scorer.shirt_no ? (
                   <span className="ml-1.5 text-xs text-slate-400 font-normal">#{scorer.shirt_no}</span>
                 ) : null}
-              </p>
+              </Link>
               <p className="text-xs text-slate-500 truncate">{scorer.team_name}</p>
             </div>
 

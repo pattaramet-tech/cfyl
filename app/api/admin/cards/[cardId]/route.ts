@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { verifyAdminAuth } from '@/lib/admin-middleware';
 import { logAdminAction } from '@/lib/audit-log';
 import { recalculatePlayerSuspensionEventBased, getMatchDetails } from '@/lib/suspension-calc';
+import { normalizeOptionalCardNote } from '@/lib/card-note-presets';
 import { createClient } from '@supabase/supabase-js';
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -149,7 +150,7 @@ export async function PUT(
         ...(newTeamId && { team_id: newTeamId }),
         ...(cardType && { card_type: cardType }),
         ...(minute !== undefined && { minute: minute ?? null }),
-        ...(note !== undefined && { note: note ?? null }),
+        ...(note !== undefined && { note: normalizeOptionalCardNote(note) }),
         updated_at: new Date().toISOString(),
       })
       .eq('id', cardId)

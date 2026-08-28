@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { verifyAdminAuth } from '@/lib/admin-middleware';
 import { logAdminAction } from '@/lib/audit-log';
 import { recalculatePlayerSuspensionEventBased } from '@/lib/suspension-calc';
+import { normalizeOptionalCardNote } from '@/lib/card-note-presets';
 import { createClient } from '@supabase/supabase-js';
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -132,7 +133,7 @@ export async function POST(request: NextRequest) {
         team_id: player.team_id,
         card_type: item.cardType,
         minute: item.minute != null ? Number(item.minute) : null,
-        note: item.reason?.trim() || null,
+        note: normalizeOptionalCardNote(item.reason),
         created_at: new Date().toISOString(),
       };
     });

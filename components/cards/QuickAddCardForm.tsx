@@ -2,11 +2,14 @@
 
 import { useState } from 'react';
 import { PlayerSelector } from '@/components/PlayerSelector';
+import { CardNoteInput } from '@/components/cards/CardNoteInput';
+import type { CardNotePreset } from '@/lib/card-note-presets';
 
 interface QuickAddCardFormProps {
   matchId: string;
   homeTeamId: string;
   awayTeamId: string;
+  notePresets: CardNotePreset[];
   onSuccess?: () => void;
 }
 
@@ -20,6 +23,7 @@ export function QuickAddCardForm({
   matchId,
   homeTeamId,
   awayTeamId,
+  notePresets,
   onSuccess,
 }: QuickAddCardFormProps) {
   const [playerId, setPlayerId] = useState('');
@@ -133,37 +137,31 @@ export function QuickAddCardForm({
         </div>
       </div>
 
-      {/* Minute + Note */}
-      <div className="grid grid-cols-2 gap-3">
-        <div>
-          <label className="block text-sm font-semibold text-gray-700 mb-1">
-            นาที <span className="text-gray-400 font-normal text-xs">(ถ้ามี)</span>
-          </label>
-          <input
-            type="number"
-            min={0}
-            max={90}
-            value={minute}
-            onChange={(e) => setMinute(e.target.value)}
-            disabled={isSaving}
-            placeholder="—"
-            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm text-center focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100"
-          />
-        </div>
-        <div>
-          <label className="block text-sm font-semibold text-gray-700 mb-1">
-            เหตุผล <span className="text-gray-400 font-normal text-xs">(ถ้ามี)</span>
-          </label>
-          <input
-            type="text"
-            value={note}
-            onChange={(e) => setNote(e.target.value)}
-            disabled={isSaving}
-            placeholder="เช่น เตะคู่แข่ง..."
-            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100"
-          />
-        </div>
+      {/* Minute */}
+      <div>
+        <label className="block text-sm font-semibold text-gray-700 mb-1">
+          นาที <span className="text-gray-400 font-normal text-xs">(ถ้ามี)</span>
+        </label>
+        <input
+          type="number"
+          min={0}
+          max={90}
+          value={minute}
+          onChange={(e) => setMinute(e.target.value)}
+          disabled={isSaving}
+          placeholder="—"
+          className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm text-center focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100"
+        />
       </div>
+
+      <CardNoteInput
+        value={note}
+        onChange={setNote}
+        presets={notePresets}
+        disabled={isSaving}
+        label="เหตุผล / หมายเหตุ"
+        placeholder="เช่น เตะคู่แข่ง... หรือพิมพ์เหตุผลอื่นเอง"
+      />
 
       <button
         type="submit"

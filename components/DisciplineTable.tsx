@@ -1,3 +1,4 @@
+import Link from 'next/link';
 import type { PointSource, SuspensionDetails, SuspendedMatchDetail } from '@/lib/suspension-shared';
 import { getCurrentDisciplinaryPoints } from '@/lib/suspension-shared';
 import { getSuspensionStatus, getBangkokToday } from '@/lib/suspension-status';
@@ -150,12 +151,12 @@ export function DisciplineTable({ records }: DisciplineTableProps) {
             <div key={record.id} className="cfyl-card p-4">
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
-                  <p className="font-semibold text-slate-800">
+                  <Link href={`/players/${record.player_id}`} className="block font-semibold text-slate-800 hover:text-blue-700 hover:underline">
                     {record.full_name}
                     {record.shirt_no ? (
                       <span className="ml-1.5 text-xs text-slate-400 font-normal">#{record.shirt_no}</span>
                     ) : null}
-                  </p>
+                  </Link>
                   <p className="text-xs text-slate-500 truncate">{record.team_name}</p>
                 </div>
                 <span className={`shrink-0 ${pointColorClass(currentPoints)} text-white rounded-full px-2.5 py-0.5 font-bold text-xs`}>
@@ -244,7 +245,11 @@ export function DisciplineTable({ records }: DisciplineTableProps) {
                   key={record.id}
                   className={`transition hover:bg-slate-50 ${isEvenRow ? 'bg-white' : 'bg-slate-50/50'}`}
                 >
-                  <td className="px-3 py-3 font-semibold text-slate-800">{record.full_name}</td>
+                  <td className="px-3 py-3 font-semibold text-slate-800">
+                    <Link href={`/players/${record.player_id}`} className="hover:text-blue-700 hover:underline">
+                      {record.full_name}
+                    </Link>
+                  </td>
                   <td className="px-3 py-3 text-slate-600 text-xs">{record.team_name}</td>
                   <td className="px-3 py-3 text-center text-slate-500">{record.shirt_no || '—'}</td>
                   <td className="px-3 py-3 text-center">

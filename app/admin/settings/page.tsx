@@ -1,6 +1,8 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
+import { CardNotePresetManager } from '@/components/cards/CardNotePresetManager';
+import type { CardNotePreset } from '@/lib/card-note-presets';
 
 type Banner = { type: 'success' | 'error'; text: string } | null;
 
@@ -11,11 +13,60 @@ export default function AdminSettingsPage() {
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [banner, setBanner] = useState<Banner>(null);
+  const [notePresets, setNotePresets] = useState<CardNotePreset[]>([]);
+  const [notePresetError, setNotePresetError] = useState<string | null>(null);
 
   const authHeader = (): Record<string, string> => {
     const token = localStorage.getItem('admin_token');
     return token ? { Authorization: `Bearer ${token}` } : {};
   };
+
+  const loadNotePresets = useCallback(async () => {
+    try {
+      const token = localStorage.getItem('admin_token');
+      const res = await fetch('/api/admin/settings/card-note-presets', {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      const data = await res.json().catch(() => []);
+      if (!res.ok) {
+        setNotePresetError(data?.error || 'โหลดหมายเหตุสำเร็จรูปไม่สำเร็จ');
+        setNotePresets([]);
+        return;
+      }
+      setNotePresets(Array.isArray(data) ? data : []);
+      setNotePresetError(null);
+    } catch (err) {
+      setNotePresetError(err instanceof Error ? err.message : 'โหลดหมายเหตุสำเร็จรูปไม่สำเร็จ');
+      setNotePresets([]);
+    }
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    const token = localStorage.getItem('admin_token');
+    fetch('/api/admin/settings/card-note-presets', {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    })
+      .then(async (res) => ({ res, data: await res.json().catch(() => []) }))
+      .then(({ res, data }) => {
+        if (!active) return;
+        if (!res.ok) {
+          setNotePresetError(data?.error || 'โหลดหมายเหตุสำเร็จรูปไม่สำเร็จ');
+          setNotePresets([]);
+          return;
+        }
+        setNotePresets(Array.isArray(data) ? data : []);
+        setNotePresetError(null);
+      })
+      .catch((err) => {
+        if (!active) return;
+        setNotePresetError(err instanceof Error ? err.message : 'โหลดหมายเหตุสำเร็จรูปไม่สำเร็จ');
+        setNotePresets([]);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   useEffect(() => {
     fetch('/api/admin/settings/notifications', { headers: authHeader() })
@@ -124,6 +175,15 @@ export default function AdminSettingsPage() {
             </div>
           </>
         )}
+      </div>
+
+      <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5">
+        {notePresetError && (
+          <div className="mb-3 rounded border border-amber-200 bg-amber-50 p-2 text-xs text-amber-800">
+            ⚠️ {notePresetError}
+          </div>
+        )}
+        <CardNotePresetManager presets={notePresets} onChanged={loadNotePresets} />
       </div>
     </div>
   );

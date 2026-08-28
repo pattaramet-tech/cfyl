@@ -176,6 +176,60 @@ describe('refreshSuspensionServingMatches integration safety', () => {
     state.candidateLookupError = false;
   });
 
+  it('backfills an empty MD14 suspension to the team Champion League CL1 after fixtures exist', async () => {
+    state.db.matches = [
+      match({
+        id: 'md14-trigger',
+        matchday: 'MatchDay 14',
+        match_date: '2026-08-16',
+        match_time: '13:00:00',
+        away_team_id: 'B',
+        away_team: { name: 'B' },
+        status: 'finished',
+      }),
+      match({
+        id: 'cl1-generated',
+        matchday: 'CL1',
+        match_date: '2026-08-22',
+        match_time: '13:00:00',
+        away_team_id: 'C',
+        away_team: { name: 'C' },
+        status: 'scheduled',
+        match_code: 'CL-D1-R1',
+      }),
+    ];
+    state.db.suspensions = [
+      suspension({
+        trigger_match_id: 'md14-trigger',
+        serving_match_ids: [],
+        suspended_from_match_id: null,
+        suspension_details: {
+          trigger_match_id: 'md14-trigger',
+          suspended_matches: [],
+          ban_matches_count: 1,
+        },
+        suspension_reason: 'accumulated_points - แบน 1 นัด (ไม่พบโปรแกรมนัดถัดไป)',
+      }),
+    ];
+
+    const result = await refreshSuspensionServingMatches(scope);
+
+    expect(result).toEqual({ refreshed: 1, skipped: 0, failed: 0 });
+    expect(state.db.suspensions[0].serving_match_ids).toEqual(['cl1-generated']);
+    expect(state.db.suspensions[0].suspended_from_match_id).toBe('cl1-generated');
+    expect(state.db.suspensions[0].served_completed_at).toBeNull();
+    expect(state.db.suspensions[0].suspension_reason).toContain('MD1');
+    expect(
+      (state.db.suspensions[0].suspension_details as { suspended_matches: Row[] }).suspended_matches[0]
+    ).toEqual(
+      expect.objectContaining({
+        match_id: 'cl1-generated',
+        matchday: 1,
+        status: 'scheduled',
+      })
+    );
+  });
+
   it('keeps a completed suspension completed when generated Champion League fixtures trigger refresh', async () => {
     const completedAt = '2026-09-01T12:00:00Z';
     state.db.matches = [
