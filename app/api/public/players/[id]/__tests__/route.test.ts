@@ -75,8 +75,8 @@ function initializeDb() {
         team_id: 'A',
         shirt_no: 9,
         full_name: 'ผู้เล่นทดสอบ',
-        birth_date: null,
-        remarks: null,
+        birth_date: '2012-03-04',
+        remarks: 'ข้อมูลภายในสำหรับเจ้าหน้าที่',
         active: true,
       },
     ],
@@ -199,6 +199,9 @@ describe('GET /api/public/players/[id]', () => {
         division: expect.objectContaining({ name: 'ดิวิชั่น 1' }),
       })
     );
+    expect(body.player).not.toHaveProperty('birth_date');
+    expect(body.player).not.toHaveProperty('remarks');
+    expect(body.player).not.toHaveProperty('player_code');
     expect(body.summary).toEqual({
       goals: 2,
       yellow: 1,

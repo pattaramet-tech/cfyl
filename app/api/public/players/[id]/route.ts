@@ -110,7 +110,7 @@ export async function GET(
     const { data: player, error: playerError } = await supabaseAdmin
       .from('players')
       .select(
-        'id, player_code, season_id, age_group_id, division_id, team_id, shirt_no, full_name, birth_date, remarks, active'
+        'id, season_id, age_group_id, division_id, team_id, shirt_no, full_name, active'
       )
       .eq('id', id)
       .maybeSingle();
@@ -256,7 +256,11 @@ export async function GET(
 
     return NextResponse.json({
       player: {
-        ...player,
+        id: player.id,
+        full_name: player.full_name,
+        shirt_no: player.shirt_no ?? null,
+        active: player.active,
+        team_id: player.team_id,
         team: teamResult.data || null,
         season: seasonResult.data || null,
         age_group: ageGroupResult.data || null,
