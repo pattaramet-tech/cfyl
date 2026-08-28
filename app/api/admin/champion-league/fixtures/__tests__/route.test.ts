@@ -249,6 +249,7 @@ function finishedRoundRobin(): Row[] {
 
 function initializeDb(matches: Row[] = []) {
   state.db = {
+    seasons: [{ id: scope.season_id, year: 2026 }],
     league_champion_league_snapshots: [snapshot()],
     matches: [...matches],
   };
@@ -332,6 +333,43 @@ describe('admin Champion League fixture generation', () => {
     expectTop4SuspensionRefresh();
   });
 
+  it('rejects a Buddhist year accidentally supplied as Gregorian before creating fixtures', async () => {
+    const invalidSchedules = schedules();
+    invalidSchedules[0] = { ...invalidSchedules[0], match_date: '2569-09-01' };
+
+    const response = await POST(
+      requestBody({ action: 'generate_round_robin', ...scope, schedules: invalidSchedules })
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(body.error).toContain('ค.ศ. 2026');
+    expect(state.db.matches).toHaveLength(0);
+    expect(refreshSuspensionServingMatches).not.toHaveBeenCalled();
+  });
+
+  it('repairs suspension serving for pre-existing generated fixtures without regenerating matches', async () => {
+    const generated = await POST(
+      requestBody({ action: 'generate_round_robin', ...scope, schedules: schedules() })
+    );
+    expect(generated.status).toBe(201);
+    const beforeIds = state.db.matches.map((row) => row.id);
+    vi.mocked(refreshSuspensionServingMatches).mockClear();
+    vi.mocked(logAdminAction).mockClear();
+
+    const response = await POST(requestBody({ action: 'repair_suspensions', ...scope }));
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.success).toBe(true);
+    expect(body.repaired).toBe(true);
+    expect(state.db.matches.map((row) => row.id)).toEqual(beforeIds);
+    expectTop4SuspensionRefresh();
+    expect(logAdminAction).toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'champion_league.fixtures.repair_suspensions' })
+    );
+  });
+
   it('is idempotent when generation is repeated after a complete six-fixture structure exists', async () => {
     await POST(requestBody({ action: 'generate_round_robin', ...scope, schedules: schedules() }));
     vi.mocked(refreshSuspensionServingMatches).mockClear();
@@ -396,6 +434,26 @@ describe('admin Champion League fixture generation', () => {
     );
     expect(response.status).toBe(409);
     expect(state.db.matches.some((row) => row.league_phase === 'final')).toBe(false);
+  });
+
+  it('rejects a placement schedule whose Gregorian year does not match the season', async () => {
+    initializeDb(finishedRoundRobin());
+    const response = await POST(
+      requestBody({
+        action: 'generate_placements',
+        ...scope,
+        schedules: {
+          final: { match_date: '2569-10-01', match_time: '14:00', venue: 'Dome 1' },
+          third_place: { match_date: '2026-10-01', match_time: '12:00', venue: 'Dome 1' },
+        },
+      })
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(body.error).toContain('ค.ศ. 2026');
+    expect(state.db.matches.some((row) => row.league_phase === 'final')).toBe(false);
+    expect(state.db.matches.some((row) => row.league_phase === 'third_place')).toBe(false);
   });
 
   it('generates Final rank 1-2 and Third Place rank 3-4 exactly once after completion', async () => {
@@ -642,6 +700,24 @@ describe('admin Champion League fixture generation', () => {
     expect(generated.home_score).toBeNull();
     expect(generated.away_score).toBeNull();
     expect(generated.status).toBe('scheduled');
+  });
+
+  it('PATCH rejects a generated fixture schedule in the wrong Gregorian year', async () => {
+    await POST(requestBody({ action: 'generate_round_robin', ...scope, schedules: schedules() }));
+    const generated = state.db.matches.find((row) => row.match_code === 'CL-division-1-R1')!;
+    const originalDate = generated.match_date;
+
+    const response = await PATCH(
+      requestBody({
+        match_id: generated.id,
+        schedule: { match_no: 999, match_date: '2569-11-01', match_time: '18:30', venue: 'Dome 2' },
+      })
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(body.error).toContain('ค.ศ. 2026');
+    expect(generated.match_date).toBe(originalDate);
   });
 
   it('PATCH updates schedule metadata only for a generated non-finished fixture', async () => {

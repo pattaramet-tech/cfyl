@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { GoalsList } from '@/components/GoalsList';
+import { CardNoteInput } from '@/components/cards/CardNoteInput';
+import type { CardNotePreset } from '@/lib/card-note-presets';
 import {
   ChampionLeagueFixtureManager,
   getChampionLeagueFixtureScopeKey,
@@ -204,6 +206,7 @@ export default function MatchManagePage() {
   // Card form states
   const [cardRows, setCardRows] = useState<CardRow[]>([createCardRow()]);
   const [addingCard, setAddingCard] = useState(false);
+  const [cardNotePresets, setCardNotePresets] = useState<CardNotePreset[]>([]);
 
   // Staff discipline states
   const [staffs, setStaffs] = useState<any[]>([]);
@@ -221,6 +224,16 @@ export default function MatchManagePage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+
+  useEffect(() => {
+    const token = localStorage.getItem('admin_token');
+    fetch('/api/admin/settings/card-note-presets', {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    })
+      .then((res) => (res.ok ? res.json() : []))
+      .then((data) => setCardNotePresets(Array.isArray(data) ? data : []))
+      .catch(() => setCardNotePresets([]));
+  }, []);
 
   // Card row helpers
   const addCardRow = () => {
@@ -1658,14 +1671,15 @@ export default function MatchManagePage() {
                     </div>
 
                     <div>
-                      <label className="block text-xs font-semibold text-gray-600 mb-1">หมายเหตุ</label>
-                      <input
-                        type="text"
+                      <label className="block text-xs font-semibold text-gray-600 mb-1">หมายเหตุ (ไม่บังคับ)</label>
+                      <CardNoteInput
                         value={row.note}
-                        onChange={(e) => updateCardRow(row.rowId, 'note', e.target.value)}
+                        onChange={(value) => updateCardRow(row.rowId, 'note', value)}
+                        presets={cardNotePresets}
                         disabled={addingCard}
-                        placeholder="ไม่บังคับ"
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-600 text-sm"
+                        label="หมายเหตุใบ"
+                        compact
+                        placeholder="หรือพิมพ์เอง"
                       />
                     </div>
 

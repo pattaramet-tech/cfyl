@@ -1,6 +1,8 @@
 'use client';
 
 import { useState } from 'react';
+import { CardNoteInput } from '@/components/cards/CardNoteInput';
+import type { CardNotePreset } from '@/lib/card-note-presets';
 
 interface Card {
   id: string;
@@ -18,6 +20,7 @@ interface Card {
 
 interface CardsInMatchPanelProps {
   cards: Card[];
+  notePresets: CardNotePreset[];
   isLoading?: boolean;
   onCardsChanged?: () => void;
 }
@@ -51,6 +54,7 @@ const CARD_EDIT_OPTIONS = [
 
 export function CardsInMatchPanel({
   cards,
+  notePresets,
   isLoading = false,
   onCardsChanged,
 }: CardsInMatchPanelProps) {
@@ -319,19 +323,14 @@ export function CardsInMatchPanel({
             </div>
 
             {/* Note */}
-            <div>
-              <label className="block text-sm font-semibold text-gray-700 mb-1">
-                เหตุผล <span className="text-gray-400 font-normal text-xs">(ถ้ามี)</span>
-              </label>
-              <input
-                type="text"
-                value={editNote}
-                onChange={(e) => setEditNote(e.target.value)}
-                disabled={isEditSaving}
-                placeholder="เช่น เตะคู่แข่ง..."
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100"
-              />
-            </div>
+            <CardNoteInput
+              value={editNote}
+              onChange={setEditNote}
+              presets={notePresets}
+              disabled={isEditSaving}
+              label="เหตุผล / หมายเหตุ"
+              placeholder="เช่น เตะคู่แข่ง... หรือพิมพ์เหตุผลอื่นเอง"
+            />
 
             {editError && (
               <div className="p-2 bg-red-50 border border-red-200 rounded text-sm text-red-700">

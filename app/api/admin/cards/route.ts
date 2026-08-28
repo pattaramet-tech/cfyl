@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { verifyAdminAuth } from '@/lib/admin-middleware';
 import { logAdminAction } from '@/lib/audit-log';
 import { recalculatePlayerSuspensionEventBased, getMatchDetails } from '@/lib/suspension-calc';
+import { normalizeOptionalCardNote } from '@/lib/card-note-presets';
 import { createClient } from '@supabase/supabase-js';
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -116,7 +117,7 @@ export async function POST(request: NextRequest) {
     const playerId = body.playerId ?? body.player_id;
     const cardType = body.cardType ?? body.card_type;
     const minute = body.minute;
-    const note = body.note;
+    const note = normalizeOptionalCardNote(body.note);
 
     // Validation — minute is optional (null allowed)
     if (!matchId || !playerId || !cardType) {
@@ -237,7 +238,7 @@ export async function POST(request: NextRequest) {
       entityType: 'card',
       entityId: card?.id,
       entityLabel: cardType,
-      newData: { match_id: matchId, player_id: playerId, team_id: playerTeamId, card_type: cardType, minute: minute ?? null },
+      newData: { match_id: matchId, player_id: playerId, team_id: playerTeamId, card_type: cardType, minute: minute ?? null, note },
     });
 
     console.timeEnd(timerTotal);

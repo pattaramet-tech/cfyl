@@ -391,6 +391,41 @@ function ChampionLeagueFixtureManagerScope({
     }
   };
 
+  const repairSuspensions = async () => {
+    const epoch = lifecycleEpochRef.current;
+    if (!data?.active || !isLifecycleCurrent(epoch)) return;
+    setBusy(true);
+    setError(null);
+    setSuccess(null);
+    try {
+      const token = localStorage.getItem('admin_token');
+      const res = await fetch('/api/admin/champion-league/fixtures', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          action: 'repair_suspensions',
+          season_id: seasonId,
+          age_group_id: ageGroupId,
+          division_id: divisionId,
+        }),
+      });
+      if (!isLifecycleCurrent(epoch)) return;
+      const payload = await res.json().catch(() => ({}));
+      if (!isLifecycleCurrent(epoch)) return;
+      if (!res.ok) throw new Error(payload.error || 'ตรวจและซ่อมการผูกโทษแบนไม่สำเร็จ');
+      setSuccess('ตรวจและซ่อมการผูกโทษแบนกับโปรแกรมที่มีอยู่แล้ว');
+      await notifyChanged(epoch);
+    } catch (err) {
+      if (!isLifecycleCurrent(epoch)) return;
+      setError(err instanceof Error ? err.message : 'ตรวจและซ่อมการผูกโทษแบนไม่สำเร็จ');
+    } finally {
+      if (isLifecycleCurrent(epoch)) setBusy(false);
+    }
+  };
+
   const saveExistingSchedule = async (match: FixtureMatch, draft: ScheduleDraft) => {
     const epoch = lifecycleEpochRef.current;
     if (!isLifecycleCurrent(epoch)) return;
@@ -641,8 +676,21 @@ function ChampionLeagueFixtureManagerScope({
               </button>
             )}
             {data.round_robin.already_generated && (
-              <div className="mt-3 rounded border border-green-200 bg-green-50 p-3 text-xs font-semibold text-green-700">
-                ✓ โครงสร้าง Champion League ครบ 6 unique pairings แล้ว ทีมของแต่ละคู่ถูกล็อก
+              <div className="mt-3 space-y-2 rounded border border-green-200 bg-green-50 p-3">
+                <p className="text-xs font-semibold text-green-700">
+                  ✓ โครงสร้าง Champion League ครบ 6 unique pairings แล้ว ทีมของแต่ละคู่ถูกล็อก
+                </p>
+                <button
+                  type="button"
+                  onClick={() => void repairSuspensions()}
+                  disabled={busy}
+                  className="rounded border border-green-300 bg-white px-3 py-2 text-xs font-semibold text-green-800 disabled:opacity-50"
+                >
+                  {busy ? 'กำลังตรวจ...' : 'ตรวจและซ่อมการผูกโทษแบน'}
+                </button>
+                <p className="text-[11px] font-normal text-green-700/80">
+                  ใช้กรณีโทษแบนถูกสร้างก่อนมีโปรแกรม Champion League หรือ Final / ชิงอันดับที่ 3
+                </p>
               </div>
             )}
           </div>

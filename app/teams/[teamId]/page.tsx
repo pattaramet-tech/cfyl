@@ -452,14 +452,14 @@ export default function TeamProfilePage() {
               const playerCardBadges = getVisiblePlayerCardBadges(playerCards);
               const banStatus = getPlayerBanStatus(player.id);
               return (
-                <div key={player.id} className="cfyl-card p-3 sm:p-4">
+                <Link key={player.id} href={`/players/${player.id}`} className="cfyl-card block p-3 transition hover:shadow-md sm:p-4">
                   <div className="flex items-center justify-between gap-2 sm:gap-4">
                     <div className="flex items-center gap-2 sm:gap-3 flex-1 min-w-0">
                       <div className="w-10 h-10 sm:w-12 sm:h-12 bg-gray-200 rounded-full flex items-center justify-center shrink-0">
                         <span className="font-bold text-sm text-gray-600">{player.shirt_no || '-'}</span>
                       </div>
                       <div className="flex-1 min-w-0">
-                        <div className="font-semibold text-gray-900 text-sm sm:text-base truncate">
+                        <div className="font-semibold text-gray-900 text-sm sm:text-base truncate hover:text-blue-700">
                           {player.full_name}
                         </div>
                         <div className="text-xs text-gray-500">{player.position || '-'}</div>
@@ -479,7 +479,7 @@ export default function TeamProfilePage() {
                       </div>
                     </div>
                   </div>
-                </div>
+                </Link>
               );
             })}
           </div>
@@ -494,14 +494,14 @@ export default function TeamProfilePage() {
         ) : (
           <div className="space-y-2">
             {topScorers.map((scorer, index) => (
-              <div key={scorer.playerId} className="cfyl-card p-3 sm:p-4">
+              <Link key={scorer.playerId} href={`/players/${scorer.playerId}`} className="cfyl-card block p-3 transition hover:shadow-md sm:p-4">
                 <div className="flex items-center justify-between gap-3">
                   <div className="flex items-center gap-3 flex-1">
                     <div className="w-8 h-8 sm:w-10 sm:h-10 bg-yellow-100 rounded-full flex items-center justify-center shrink-0">
                       <span className="font-bold text-yellow-600 text-sm sm:text-base">{index + 1}</span>
                     </div>
                     <div className="flex-1 min-w-0">
-                      <div className="font-semibold text-gray-900 text-sm sm:text-base">
+                      <div className="font-semibold text-gray-900 text-sm sm:text-base hover:text-blue-700">
                         {scorer.playerName}
                       </div>
                       <div className="text-xs text-gray-500">#{scorer.shirtNo || '-'}</div>
@@ -511,7 +511,7 @@ export default function TeamProfilePage() {
                     <div className="text-lg sm:text-xl font-bold text-orange-600">⚽ {scorer.goals}</div>
                   </div>
                 </div>
-              </div>
+              </Link>
             ))}
           </div>
         )}
@@ -575,9 +575,12 @@ export default function TeamProfilePage() {
                     <div className="flex items-center gap-3 flex-1 min-w-0">
                       <div className="text-xl shrink-0">🚨</div>
                       <div className="flex-1 min-w-0">
-                        <div className="font-semibold text-gray-900 text-sm sm:text-base">
+                        <Link
+                          href={`/players/${susp.player_id}`}
+                          className="font-semibold text-gray-900 text-sm sm:text-base hover:text-blue-700 hover:underline"
+                        >
                           {susp.player_name || playersById.get(susp.player_id)?.full_name || 'ไม่ทราบชื่อ'}
-                        </div>
+                        </Link>
                         <div className="text-xs text-gray-500">
                           #{susp.shirt_no ?? playersById.get(susp.player_id)?.shirt_no ?? '-'} • คะแนนสะสม: {getCurrentDisciplinaryPoints({ total_points: susp.total_points, point_sources: susp.point_sources })}
                         </div>

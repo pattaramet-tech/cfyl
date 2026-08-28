@@ -1,6 +1,8 @@
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
+import { CardNoteInput } from '@/components/cards/CardNoteInput';
+import type { CardNotePreset } from '@/lib/card-note-presets';
 
 interface Player {
   id: string;
@@ -22,6 +24,7 @@ interface BulkAddCardFormProps {
   matchId: string;
   homeTeamId: string;
   awayTeamId: string;
+  notePresets: CardNotePreset[];
   onSuccess?: () => void;
 }
 
@@ -39,6 +42,7 @@ export function BulkAddCardForm({
   matchId,
   homeTeamId,
   awayTeamId,
+  notePresets,
   onSuccess,
 }: BulkAddCardFormProps) {
   const [players, setPlayers] = useState<Player[]>([]);
@@ -264,14 +268,15 @@ export function BulkAddCardForm({
 
                   {/* Note */}
                   <div>
-                    <label className="block text-xs text-gray-500 mb-1 lg:hidden">เหตุผล (ถ้ามี)</label>
-                    <input
-                      type="text"
+                    <label className="block text-xs text-gray-500 mb-1 lg:hidden">เหตุผล / หมายเหตุ (ไม่บังคับ)</label>
+                    <CardNoteInput
                       value={row.note}
-                      onChange={(e) => updateRow(row.rowId, 'note', e.target.value)}
+                      onChange={(value) => updateRow(row.rowId, 'note', value)}
+                      presets={notePresets}
                       disabled={isSaving}
-                      placeholder="เหตุผล (ถ้ามี)"
-                      className="w-full px-2 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 disabled:bg-gray-100"
+                      label="เหตุผล / หมายเหตุ"
+                      compact
+                      placeholder="หรือพิมพ์เอง"
                     />
                   </div>
 

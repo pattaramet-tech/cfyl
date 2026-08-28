@@ -6,6 +6,8 @@ import { QuickAddCardForm } from '@/components/cards/QuickAddCardForm';
 import { BulkAddCardForm } from '@/components/cards/BulkAddCardForm';
 import { CardsInMatchPanel } from '@/components/cards/CardsInMatchPanel';
 import { SuspensionImpactPanel } from '@/components/cards/SuspensionImpactPanel';
+import { CardNotePresetManager } from '@/components/cards/CardNotePresetManager';
+import type { CardNotePreset } from '@/lib/card-note-presets';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -95,6 +97,55 @@ export default function CardsPage() {
   const [isLoadingCards, setIsLoadingCards] = useState(false);
 
   const [cards, setCards] = useState<Card[]>([]);
+  const [notePresets, setNotePresets] = useState<CardNotePreset[]>([]);
+  const [notePresetError, setNotePresetError] = useState<string | null>(null);
+
+  const fetchNotePresets = useCallback(async () => {
+    try {
+      const token = localStorage.getItem('admin_token');
+      const res = await fetch('/api/admin/settings/card-note-presets', {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      const data = await res.json().catch(() => []);
+      if (!res.ok) {
+        setNotePresetError(data?.error || 'โหลดหมายเหตุสำเร็จรูปไม่สำเร็จ');
+        setNotePresets([]);
+        return;
+      }
+      setNotePresets(Array.isArray(data) ? data : []);
+      setNotePresetError(null);
+    } catch (err) {
+      setNotePresetError(err instanceof Error ? err.message : 'โหลดหมายเหตุสำเร็จรูปไม่สำเร็จ');
+      setNotePresets([]);
+    }
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    const token = localStorage.getItem('admin_token');
+    fetch('/api/admin/settings/card-note-presets', {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    })
+      .then(async (res) => ({ res, data: await res.json().catch(() => []) }))
+      .then(({ res, data }) => {
+        if (!active) return;
+        if (!res.ok) {
+          setNotePresetError(data?.error || 'โหลดหมายเหตุสำเร็จรูปไม่สำเร็จ');
+          setNotePresets([]);
+          return;
+        }
+        setNotePresets(Array.isArray(data) ? data : []);
+        setNotePresetError(null);
+      })
+      .catch((err) => {
+        if (!active) return;
+        setNotePresetError(err instanceof Error ? err.message : 'โหลดหมายเหตุสำเร็จรูปไม่สำเร็จ');
+        setNotePresets([]);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   // ── Load seasons ──────────────────────────────────────────────────────────
 
@@ -277,6 +328,19 @@ export default function CardsPage() {
         </div>
       </div>
 
+      <div className="bg-white rounded-lg shadow p-4">
+        {notePresetError && (
+          <div className="mb-3 rounded border border-amber-200 bg-amber-50 p-2 text-xs text-amber-800">
+            ⚠️ {notePresetError}
+          </div>
+        )}
+        <CardNotePresetManager
+          presets={notePresets}
+          onChanged={fetchNotePresets}
+          compact
+        />
+      </div>
+
       {/* ── Content (only when match selected) ─────────────────────────── */}
       {!selectedMatch && selectedDivision && (
         <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 text-blue-700 text-sm">
@@ -299,6 +363,7 @@ export default function CardsPage() {
                   matchId={selectedMatch}
                   homeTeamId={selectedMatchData.home_team_id}
                   awayTeamId={selectedMatchData.away_team_id}
+                  notePresets={notePresets}
                   onSuccess={refreshCards}
                 />
               </div>
@@ -309,6 +374,7 @@ export default function CardsPage() {
                   matchId={selectedMatch}
                   homeTeamId={selectedMatchData.home_team_id}
                   awayTeamId={selectedMatchData.away_team_id}
+                  notePresets={notePresets}
                   onSuccess={refreshCards}
                 />
               </div>
@@ -320,6 +386,7 @@ export default function CardsPage() {
               <div className="bg-white rounded-lg shadow p-4">
                 <CardsInMatchPanel
                   cards={cards}
+                  notePresets={notePresets}
                   isLoading={isLoadingCards}
                   onCardsChanged={refreshCards}
                 />

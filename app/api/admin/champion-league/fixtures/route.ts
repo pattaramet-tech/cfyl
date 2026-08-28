@@ -3,6 +3,7 @@ import { createClient } from '@supabase/supabase-js';
 import { verifyAdminAuth } from '@/lib/admin-middleware';
 import { logAdminAction } from '@/lib/audit-log';
 import { refreshSuspensionServingMatches } from '@/lib/suspension-calc';
+import { getLeagueFixtureDateErrorMessage } from '@/lib/league-fixture-date';
 import {
   calculateChampionLeagueStandings,
   getChampionLeagueFixtureStructureStatus,
@@ -127,9 +128,10 @@ async function loadChampionScope(scope: Scope): Promise<{
   qualifiers: ChampionLeagueQualifier[] | null;
   matches: Match[];
   snapshot: { id: string; activated_at: string | null } | null;
+  seasonYear: number | null;
   error: unknown | null;
 }> {
-  const [snapshotResult, matchesResult] = await Promise.all([
+  const [snapshotResult, matchesResult, seasonResult] = await Promise.all([
     supabaseAdmin
       .from('league_champion_league_snapshots')
       .select('id, qualifiers, activated_at')
@@ -145,13 +147,27 @@ async function loadChampionScope(scope: Scope): Promise<{
       .eq('division_id', scope.divisionId)
       .order('match_date', { ascending: true })
       .order('match_time', { ascending: true }),
+    supabaseAdmin
+      .from('seasons')
+      .select('id, year')
+      .eq('id', scope.seasonId)
+      .maybeSingle(),
   ]);
 
   if (snapshotResult.error) {
-    return { qualifiers: null, matches: [], snapshot: null, error: snapshotResult.error };
+    return { qualifiers: null, matches: [], snapshot: null, seasonYear: null, error: snapshotResult.error };
   }
   if (matchesResult.error) {
-    return { qualifiers: null, matches: [], snapshot: null, error: matchesResult.error };
+    return { qualifiers: null, matches: [], snapshot: null, seasonYear: null, error: matchesResult.error };
+  }
+  if (seasonResult.error || !seasonResult.data || !Number.isInteger(Number(seasonResult.data.year))) {
+    return {
+      qualifiers: null,
+      matches: [],
+      snapshot: null,
+      seasonYear: null,
+      error: seasonResult.error || new Error('Season year is unavailable'),
+    };
   }
 
   const snapshot = snapshotResult.data
@@ -164,6 +180,7 @@ async function loadChampionScope(scope: Scope): Promise<{
     qualifiers,
     matches: (matchesResult.data || []) as Match[],
     snapshot,
+    seasonYear: Number(seasonResult.data.year),
     error: null,
   };
 }
@@ -340,7 +357,11 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'season_id, age_group_id and division_id are required' }, { status: 400 });
   }
   const action = typeof body.action === 'string' ? body.action : '';
-  if (action !== 'generate_round_robin' && action !== 'generate_placements') {
+  if (
+    action !== 'generate_round_robin' &&
+    action !== 'generate_placements' &&
+    action !== 'repair_suspensions'
+  ) {
     return NextResponse.json({ error: 'Invalid action' }, { status: 400 });
   }
 
@@ -351,9 +372,40 @@ export async function POST(request: NextRequest) {
   }
   if (!loaded.snapshot || !loaded.qualifiers) {
     return NextResponse.json(
-      { error: 'Champion League must be activated with a valid frozen Top 4 before generating fixtures' },
+      { error: 'Champion League must be activated with a valid frozen Top 4 before using fixture actions' },
       { status: 409 }
     );
+  }
+  if (loaded.seasonYear == null) {
+    return NextResponse.json({ error: 'Season year is unavailable' }, { status: 500 });
+  }
+
+  if (action === 'repair_suspensions') {
+    const generatedMatches = loaded.matches.filter((match) =>
+      isGeneratedLeaguePostMatchCode(match.match_code)
+    );
+    if (generatedMatches.length === 0) {
+      return NextResponse.json(
+        { error: 'No generated Champion League / placement fixtures exist to repair against' },
+        { status: 409 }
+      );
+    }
+    if (!(await refreshGeneratedFixtureSuspensions(scope, loaded.qualifiers))) {
+      return suspensionRefreshFailureResponse();
+    }
+    await logAdminAction({
+      admin: { id: permission.auth.profile.id, email: permission.auth.profile.email },
+      action: 'champion_league.fixtures.repair_suspensions',
+      entityType: 'division',
+      entityId: scope.divisionId,
+      entityLabel: `Champion League suspension repair ${scope.seasonId}/${scope.ageGroupId}/${scope.divisionId}`,
+      newData: { generated_match_count: generatedMatches.length },
+    });
+    return NextResponse.json({
+      success: true,
+      repaired: true,
+      ...buildState(scope, loaded.qualifiers, loaded.matches),
+    });
   }
 
   if (action === 'generate_round_robin') {
@@ -387,6 +439,13 @@ export async function POST(request: NextRequest) {
       if (!normalized) {
         return NextResponse.json(
           { error: `Invalid schedule for Champion League slot ${slot}; match_date is required` },
+          { status: 400 }
+        );
+      }
+      const dateError = getLeagueFixtureDateErrorMessage(normalized.match_date, loaded.seasonYear);
+      if (dateError) {
+        return NextResponse.json(
+          { error: `Champion League slot ${slot}: ${dateError}` },
           { status: 400 }
         );
       }
@@ -487,6 +546,14 @@ export async function POST(request: NextRequest) {
   const thirdSchedule = normalizeSchedule(scheduleObject.third_place);
   if (!finalSchedule || !thirdSchedule) {
     return NextResponse.json({ error: 'Valid match_date is required for Final and Third Place schedules' }, { status: 400 });
+  }
+  const finalDateError = getLeagueFixtureDateErrorMessage(finalSchedule.match_date, loaded.seasonYear);
+  const thirdDateError = getLeagueFixtureDateErrorMessage(thirdSchedule.match_date, loaded.seasonYear);
+  if (finalDateError || thirdDateError) {
+    return NextResponse.json(
+      { error: finalDateError ? `Final: ${finalDateError}` : `Third Place: ${thirdDateError}` },
+      { status: 400 }
+    );
   }
 
   const existingFinal = loaded.matches.find((match) => match.league_phase === 'final') || null;
@@ -644,8 +711,14 @@ export async function PATCH(request: NextRequest) {
     divisionId: match.division_id,
   };
   const loaded = await loadChampionScope(scope);
-  if (loaded.error || !loaded.snapshot || !loaded.qualifiers) {
-    return NextResponse.json({ error: 'Valid frozen Champion League snapshot is required' }, { status: 409 });
+  if (loaded.error || !loaded.snapshot || !loaded.qualifiers || loaded.seasonYear == null) {
+    return NextResponse.json({ error: 'Valid frozen Champion League snapshot and season year are required' }, { status: 409 });
+  }
+  if (schedule) {
+    const dateError = getLeagueFixtureDateErrorMessage(schedule.match_date, loaded.seasonYear);
+    if (dateError) {
+      return NextResponse.json({ error: dateError }, { status: 400 });
+    }
   }
 
   const qualifierIds = new Set(loaded.qualifiers.map((row) => row.team_id));

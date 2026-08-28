@@ -397,9 +397,13 @@ export default function MatchPage() {
                 >
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
-                      <p className="font-bold text-slate-900">
-                        #{susp.player?.shirt_no ?? '—'} {susp.player?.full_name || 'ไม่ระบุชื่อ'}
-                      </p>
+                      {susp.player?.id ? (
+                        <Link href={`/players/${susp.player.id}`} className="font-bold text-slate-900 hover:text-blue-700 hover:underline">
+                          #{susp.player.shirt_no ?? '—'} {susp.player.full_name || 'ไม่ระบุชื่อ'}
+                        </Link>
+                      ) : (
+                        <p className="font-bold text-slate-900">#— ไม่ระบุชื่อ</p>
+                      )}
                       <p className="text-sm text-slate-600">
                         ทีม: {susp.team?.name || susp.team?.short_name || '—'}
                       </p>
@@ -485,9 +489,13 @@ export default function MatchPage() {
                               ⚽ Own Goal
                             </span>
                           ) : (
-                            <span className="font-semibold text-slate-800">
-                              #{data.player?.shirt_no || '?'} {data.player?.full_name || 'ไม่ระบุ'}
-                            </span>
+                            data.player?.id ? (
+                              <Link href={`/players/${data.player.id}`} className="font-semibold text-slate-800 hover:text-blue-700 hover:underline">
+                                #{data.player.shirt_no || '?'} {data.player.full_name || 'ไม่ระบุ'}
+                              </Link>
+                            ) : (
+                              <span className="font-semibold text-slate-800">#? ไม่ระบุ</span>
+                            )
                           )}
                           {isGoal && Number(data.goals || 1) > 1 && (
                             <span className="ml-2 text-xs font-bold text-blue-700 bg-blue-50 px-2 py-0.5 rounded-full">
