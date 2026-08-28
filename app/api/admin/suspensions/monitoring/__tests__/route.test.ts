@@ -238,6 +238,58 @@ describe('GET /api/admin/suspensions/monitoring readiness', () => {
     expect(codes.has('ACTIVE_BAN_STALE_NO_NEXT_MATCH')).toBe(false);
   });
 
+  it('flags a later scheduled assignment when an omitted earlier eligible fixture is already finished', async () => {
+    state.db.suspensions = [suspension({ serving_match_ids: ['later'] })];
+    state.db.matches.push(
+      match({
+        id: 'finished-earlier',
+        status: 'finished',
+        match_date: '2026-09-05',
+        matchday: 'CL1',
+        match_code: 'CL1',
+      }),
+      match({ id: 'later', match_date: '2026-09-10', matchday: 'CL2', match_code: 'CL2' })
+    );
+
+    const response = await GET(request() as never);
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          suspension_id: 'susp-1',
+          issue_code: 'ACTIVE_BAN_STALE_ASSIGNMENT',
+          severity: 'error',
+        }),
+      ])
+    );
+  });
+
+  it('flags a multi-match assignment when an omitted finished fixture changes the expected remaining slots', async () => {
+    state.db.suspensions = [
+      suspension({ ban_matches: 2, serving_match_ids: ['later'] }),
+    ];
+    state.db.matches.push(
+      match({
+        id: 'finished-earlier',
+        status: 'finished',
+        match_date: '2026-09-05',
+        matchday: 'CL1',
+        match_code: 'CL1',
+      }),
+      match({ id: 'later', match_date: '2026-09-10', matchday: 'CL2', match_code: 'CL2' })
+    );
+
+    const response = await GET(request() as never);
+    const body = await response.json();
+    const codes = new Set(body.issues.map((issue: { issue_code: string }) => issue.issue_code));
+
+    expect(response.status).toBe(200);
+    expect(codes.has('ACTIVE_BAN_STALE_ASSIGNMENT')).toBe(true);
+    expect(codes.has('ACTIVE_BAN_INCOMPLETE_ASSIGNMENT')).toBe(true);
+  });
+
   it('reports wrong team, season, age group, status and chronology on referenced serving matches', async () => {
     state.db.suspensions = [
       suspension({

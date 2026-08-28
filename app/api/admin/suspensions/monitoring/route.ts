@@ -361,7 +361,7 @@ export async function GET(request: NextRequest) {
           if (triggerMatch) {
             const eventCandidates = candidateMatches.filter(
               (m: MonitoringMatch) =>
-                m.status === 'scheduled' &&
+                (m.status === 'scheduled' || m.status === 'finished') &&
                 m.season_id === r.season_id &&
                 m.age_group_id === r.age_group_id &&
                 (m.home_team_id === r.team_id || m.away_team_id === r.team_id)
