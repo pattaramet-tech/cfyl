@@ -288,6 +288,42 @@ async function resolveConcurrentSuccess(scope: Scope, action: string) {
   return null;
 }
 
+async function refreshGeneratedFixtureSuspensions(
+  scope: Scope,
+  qualifiers: ChampionLeagueQualifier[]
+): Promise<boolean> {
+  try {
+    const teamIds = [...new Set(qualifiers.map((row) => row.team_id))];
+    const results = await Promise.all(
+      teamIds.map((teamId) =>
+        refreshSuspensionServingMatches({
+          seasonId: scope.seasonId,
+          ageGroupId: scope.ageGroupId,
+          teamId,
+        })
+      )
+    );
+    const failed = results.reduce((sum, result) => sum + Number(result.failed || 0), 0);
+    if (failed > 0) {
+      console.error(`[CHAMPION_FIXTURES_POST] suspension serving refresh reported ${failed} failed event(s)`);
+      return false;
+    }
+    return true;
+  } catch (error) {
+    console.error('[CHAMPION_FIXTURES_POST] suspension serving refresh error:', error);
+    return false;
+  }
+}
+
+function suspensionRefreshFailureResponse() {
+  return NextResponse.json(
+    {
+      error: 'Fixtures exist but suspension serving refresh failed; retry fixture generation to repair assignments',
+    },
+    { status: 500 }
+  );
+}
+
 export async function POST(request: NextRequest) {
   const permission = await requireMatchEditor(request);
   if (permission.response || !permission.auth?.profile) return permission.response!;
@@ -323,6 +359,9 @@ export async function POST(request: NextRequest) {
   if (action === 'generate_round_robin') {
     const structure = getChampionLeagueFixtureStructureStatus(loaded.qualifiers, loaded.matches);
     if (structure.complete) {
+      if (!(await refreshGeneratedFixtureSuspensions(scope, loaded.qualifiers))) {
+        return suspensionRefreshFailureResponse();
+      }
       return NextResponse.json({ success: true, idempotent: true, ...buildState(scope, loaded.qualifiers, loaded.matches) });
     }
     if (structure.fixture_matches > 0) {
@@ -388,6 +427,9 @@ export async function POST(request: NextRequest) {
       if (insertError.code === '23505') {
         const concurrentState = await resolveConcurrentSuccess(scope, action);
         if (concurrentState) {
+          if (!(await refreshGeneratedFixtureSuspensions(scope, loaded.qualifiers))) {
+            return suspensionRefreshFailureResponse();
+          }
           return NextResponse.json({ success: true, idempotent: true, concurrent: true, ...concurrentState });
         }
         return NextResponse.json({ error: 'Champion League fixtures conflict with existing generated data' }, { status: 409 });
@@ -413,6 +455,10 @@ export async function POST(request: NextRequest) {
       entityLabel: `Champion League fixtures ${scope.seasonId}/${scope.ageGroupId}/${scope.divisionId}`,
       newData: { rows: rows.map(({ match_code, matchday, match_no, match_date, match_time, venue }) => ({ match_code, matchday, match_no, match_date, match_time, venue })) },
     });
+
+    if (!(await refreshGeneratedFixtureSuspensions(scope, after.qualifiers))) {
+      return suspensionRefreshFailureResponse();
+    }
 
     return NextResponse.json({ success: true, idempotent: false, ...state }, { status: 201 });
   }
@@ -446,6 +492,9 @@ export async function POST(request: NextRequest) {
   const existingFinal = loaded.matches.find((match) => match.league_phase === 'final') || null;
   const existingThird = loaded.matches.find((match) => match.league_phase === 'third_place') || null;
   if (existingFinal && existingThird) {
+    if (!(await refreshGeneratedFixtureSuspensions(scope, loaded.qualifiers))) {
+      return suspensionRefreshFailureResponse();
+    }
     return NextResponse.json({ success: true, idempotent: true, ...buildState(scope, loaded.qualifiers, loaded.matches) });
   }
 
@@ -500,6 +549,9 @@ export async function POST(request: NextRequest) {
     if (placementError.code === '23505') {
       const concurrentState = await resolveConcurrentSuccess(scope, action);
       if (concurrentState) {
+        if (!(await refreshGeneratedFixtureSuspensions(scope, loaded.qualifiers))) {
+          return suspensionRefreshFailureResponse();
+        }
         return NextResponse.json({ success: true, idempotent: true, concurrent: true, ...concurrentState });
       }
       return NextResponse.json({ error: 'Placement fixtures conflict with existing generated data' }, { status: 409 });
@@ -531,6 +583,10 @@ export async function POST(request: NextRequest) {
       generated_match_codes: placementRows.map((row) => row.match_code),
     },
   });
+
+  if (!(await refreshGeneratedFixtureSuspensions(scope, after.qualifiers))) {
+    return suspensionRefreshFailureResponse();
+  }
 
   return NextResponse.json({ success: true, idempotent: false, ...buildState(scope, after.qualifiers, after.matches) }, { status: 201 });
 }

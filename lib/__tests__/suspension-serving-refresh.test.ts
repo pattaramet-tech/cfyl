@@ -10,6 +10,7 @@ import {
   servingArraysEqual,
   getSuspensionServingState,
   isEligibleSuspensionServingMatch,
+  selectNextSuspensionServingMatches,
 } from '../suspension-calc';
 import { getSuspensionStatus } from '../suspension-status';
 
@@ -367,5 +368,75 @@ describe('FIX: finished match must remain the serving slot (not drift to later s
       },
     }, '2026-07-11');
     expect(status.key).toBe('served');
+  });
+});
+
+describe('League suspension serving continues across generated phases', () => {
+  it('regular League last-match trigger assigns the next Champion League fixture', () => {
+    const selected = selectNextSuspensionServingMatches(
+      [
+        {
+          id: 'cl1',
+          status: 'scheduled',
+          match_date: '2026-09-05',
+          match_time: '10:00:00',
+          matchday: 'CL1',
+          league_phase: 'champion_league',
+        },
+        {
+          id: 'cl2',
+          status: 'scheduled',
+          match_date: '2026-09-12',
+          match_time: '10:00:00',
+          matchday: 'CL2',
+          league_phase: 'champion_league',
+        },
+      ],
+      { match_date: '2026-08-30', match_time: '10:00:00', matchday: 9 },
+      1
+    );
+
+    expect(selected.map((match) => match.id)).toEqual(['cl1']);
+  });
+
+  it('Champion League CL3 trigger assigns the next eligible placement fixture', () => {
+    const selected = selectNextSuspensionServingMatches(
+      [
+        {
+          id: 'third-postponed',
+          status: 'postponed',
+          match_date: '2026-10-01',
+          match_time: '12:00:00',
+          matchday: 'THIRD',
+          league_phase: 'third_place',
+        },
+        {
+          id: 'third-place',
+          status: 'scheduled',
+          match_date: '2026-10-08',
+          match_time: '12:00:00',
+          matchday: 'THIRD',
+          league_phase: 'third_place',
+        },
+      ],
+      { match_date: '2026-09-26', match_time: '10:00:00', matchday: 'CL3' },
+      1
+    );
+
+    expect(selected.map((match) => match.id)).toEqual(['third-place']);
+  });
+
+  it('postponed and cancelled post-League fixtures do not consume serving slots', () => {
+    const selected = selectNextSuspensionServingMatches(
+      [
+        { id: 'cl1', status: 'postponed', match_date: '2026-09-05', match_time: '10:00:00', matchday: 'CL1' },
+        { id: 'cl2', status: 'cancelled', match_date: '2026-09-12', match_time: '10:00:00', matchday: 'CL2' },
+        { id: 'cl3', status: 'scheduled', match_date: '2026-09-19', match_time: '10:00:00', matchday: 'CL3' },
+      ],
+      { match_date: '2026-08-30', match_time: '10:00:00', matchday: 9 },
+      1
+    );
+
+    expect(selected.map((match) => match.id)).toEqual(['cl3']);
   });
 });

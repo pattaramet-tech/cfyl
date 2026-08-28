@@ -1,7 +1,7 @@
 import { supabase } from '@/lib/supabase';
 import { createClient } from '@supabase/supabase-js';
 import { NextRequest, NextResponse } from 'next/server';
-import { isSuspendedForMatch } from '@/lib/suspension-calc';
+import { shouldDisplaySuspensionForMatch } from '@/lib/suspension-calc';
 
 export const dynamic = 'force-dynamic';
 
@@ -22,12 +22,11 @@ const SYSTEM_SUSPENSION_TYPES = [
 ] as const;
 
 /**
- * Deduplicate suspension records by player_id + team_id.
- * When a player has both legacy (null type) and event-based records,
- * only use event-based records to determine active suspension.
- * Prevents a stale legacy record from overriding a correctly-served event record.
+ * Deduplicate suspension records by player_id + team_id for public match detail.
+ * Event-based records remain authoritative over legacy records. Scheduled matches
+ * show active bans, while finished matches preserve historical serving records.
  */
-function filterActiveSuspendedPlayers(
+function filterSuspendedPlayersForMatch(
   suspensions: any[],
   matchId: string,
   matchStatus: string
@@ -49,11 +48,11 @@ function filterActiveSuspendedPlayers(
     );
     const toCheck = eventBased.length > 0 ? eventBased : records;
 
-    // Use the first record that makes the player actively suspended for this match
-    const active = toCheck.find((r) =>
-      isSuspendedForMatch(r, matchId, matchStatus)
+    // Use the first authoritative record relevant to this match's public display.
+    const relevant = toCheck.find((r) =>
+      shouldDisplaySuspensionForMatch(r, matchId, matchStatus)
     );
-    if (active) result.push(active);
+    if (relevant) result.push(relevant);
   }
 
   return result;
@@ -210,7 +209,7 @@ export async function GET(
     // Filter and deduplicate suspended players for this match.
     // Uses event-based records as source of truth; ignores legacy fallback when
     // an event-based record exists for the same player+team combination.
-    const suspendedPlayers = filterActiveSuspendedPlayers(
+    const suspendedPlayers = filterSuspendedPlayersForMatch(
       suspensions || [],
       match.id,
       match.status ?? 'scheduled'
