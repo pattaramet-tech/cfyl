@@ -893,9 +893,12 @@ export async function refreshSuspensionServingMatches(params: {
   if (eventsError) throw eventsError;
   if (!events?.length) return { refreshed: 0, skipped: 0, failed: 0 };
 
-  // 2. Filter to events referencing the changed match (if specified)
+  // 2. Team-scoped refreshes must reconsider every active system event for that team.
+  // A newly-rescheduled fixture can become the earliest eligible serving slot even when it
+  // was never referenced by trigger_match_id/serving_match_ids before the edit. Only the
+  // unscoped maintenance path may use changedMatchId as a narrowing hint.
   let relevant = events as any[];
-  if (changedMatchId) {
+  if (!teamId && changedMatchId) {
     relevant = events.filter(
       (e: any) =>
         e.trigger_match_id === changedMatchId ||
@@ -931,6 +934,13 @@ export async function refreshSuspensionServingMatches(params: {
   for (const event of relevant) {
     try {
       const currentServingIds: string[] = event.serving_match_ids || [];
+
+      // Historical completion is authoritative. Schedule/status edits must never
+      // reactivate a suspension that was already fully served.
+      if (event.served_completed_at) {
+        skipped++;
+        continue;
+      }
 
       // Split current serving matches into served (finished) and stale/invalid
       const { servedIds } = classifyServingMatchIds(currentServingIds, statusMap);
@@ -1033,9 +1043,6 @@ export async function refreshSuspensionServingMatches(params: {
       };
       if (newServedCompletedAt !== null) {
         patch.served_completed_at = newServedCompletedAt;
-      } else if (event.served_completed_at) {
-        // Clear previously-set completion timestamp (suspension reactivated)
-        patch.served_completed_at = null;
       }
 
       const { error: updateError } = await supabaseAdmin

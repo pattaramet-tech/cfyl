@@ -303,4 +303,67 @@ describe('refreshSuspensionServingMatches integration safety', () => {
     expect(state.updates).toHaveLength(0);
     expect(state.db.suspensions[0].serving_match_ids).toEqual([]);
   });
+
+  it('reassigns to a newly-earlier fixture even when changedMatchId was never referenced', async () => {
+    state.db.matches = [
+      match({ id: 'regular-last', matchday: 'MD9', match_date: '2026-08-30' }),
+      match({
+        id: 'new-earlier',
+        matchday: 'CL1',
+        match_date: '2026-09-05',
+        status: 'scheduled',
+      }),
+      match({
+        id: 'old-later',
+        matchday: 'CL2',
+        match_date: '2026-09-10',
+        status: 'scheduled',
+      }),
+    ];
+    state.db.suspensions = [
+      suspension({
+        serving_match_ids: ['old-later'],
+        suspended_from_match_id: 'old-later',
+        suspension_details: {
+          suspended_matches: [{ match_id: 'old-later', status: 'scheduled' }],
+          ban_matches_count: 1,
+        },
+      }),
+    ];
+
+    const result = await refreshSuspensionServingMatches({
+      ...scope,
+      changedMatchId: 'new-earlier',
+    });
+
+    expect(result).toEqual({ refreshed: 1, skipped: 0, failed: 0 });
+    expect(state.db.suspensions[0].serving_match_ids).toEqual(['new-earlier']);
+    expect(state.db.suspensions[0].suspended_from_match_id).toBe('new-earlier');
+  });
+
+  it('never reactivates a suspension that already has served_completed_at', async () => {
+    const completedAt = '2026-09-02T12:00:00Z';
+    state.db.matches = [
+      match({ id: 'regular-last', matchday: 'MD9', match_date: '2026-08-30' }),
+      match({ id: 'served-match', matchday: 'CL1', match_date: '2026-09-01', status: 'scheduled' }),
+      match({ id: 'replacement', matchday: 'CL2', match_date: '2026-09-05', status: 'scheduled' }),
+    ];
+    state.db.suspensions = [
+      suspension({
+        serving_match_ids: ['served-match'],
+        served_completed_at: completedAt,
+        suspended_from_match_id: null,
+      }),
+    ];
+
+    const result = await refreshSuspensionServingMatches({
+      ...scope,
+      changedMatchId: 'replacement',
+    });
+
+    expect(result).toEqual({ refreshed: 0, skipped: 1, failed: 0 });
+    expect(state.updates).toHaveLength(0);
+    expect(state.db.suspensions[0].serving_match_ids).toEqual(['served-match']);
+    expect(state.db.suspensions[0].served_completed_at).toBe(completedAt);
+  });
 });
