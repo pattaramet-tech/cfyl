@@ -3,6 +3,8 @@ import { NextRequest, NextResponse } from 'next/server';
 
 export const dynamic = 'force-dynamic';
 
+const GOAL_PAGE_SIZE = 500;
+
 interface PlayerRelation {
   player_code?: string | null;
   full_name?: string | null;
@@ -52,6 +54,56 @@ function relationOne<T>(value: T | T[] | null | undefined): T | null {
   return value ?? null;
 }
 
+async function fetchScopedGoalRecords(
+  seasonId: string | null,
+  ageGroupId: string | null,
+  divisionId: string | null
+): Promise<GoalRecord[]> {
+  const records: GoalRecord[] = [];
+  let offset = 0;
+
+  while (true) {
+    let query = supabase
+      .from('goals')
+      .select(
+        `
+        player_id,
+        is_own_goal,
+        player:player_id(player_code, full_name, shirt_no, team_id),
+        team:team_id(name, short_name),
+        match:match_id!inner(season_id, age_group_id, division_id),
+        goals
+      `,
+        { count: 'exact' }
+      )
+      .eq('is_own_goal', false)
+      .not('player_id', 'is', null);
+
+    if (seasonId) query = query.eq('match.season_id', seasonId);
+    if (ageGroupId) query = query.eq('match.age_group_id', ageGroupId);
+    if (divisionId) query = query.eq('match.division_id', divisionId);
+
+    const { data, error, count } = await query
+      .order('id', { ascending: true })
+      .range(offset, offset + GOAL_PAGE_SIZE - 1);
+
+    if (error) throw error;
+
+    const page = (data || []) as unknown as GoalRecord[];
+    records.push(...page);
+
+    if (page.length === 0 || (typeof count === 'number' && records.length >= count)) {
+      break;
+    }
+
+    // Advance by the rows actually returned instead of the requested range size.
+    // This stays safe even if PostgREST enforces a lower server-side max row cap.
+    offset += page.length;
+  }
+
+  return records;
+}
+
 export async function GET(request: NextRequest) {
   try {
     const searchParams = request.nextUrl.searchParams;
@@ -60,29 +112,13 @@ export async function GET(request: NextRequest) {
     const divisionId = searchParams.get('divisionId');
     const limit = parseInt(searchParams.get('limit') || '50', 10);
 
-    const query = supabase
-      .from('goals')
-      .select(
-        `
-        player_id,
-        is_own_goal,
-        player:player_id(player_code, full_name, shirt_no, team_id),
-        team:team_id(name, short_name),
-        match:match_id(season_id, age_group_id, division_id),
-        goals
-      `
-      )
-      .eq('is_own_goal', false)
-      .not('player_id', 'is', null);
-
-    const { data: rawData, error } = await query;
-
-    if (error) throw error;
+    const rawData = await fetchScopedGoalRecords(seasonId, ageGroupId, divisionId);
 
     // Scope scoring events by the match that owns each goal, not mutable player metadata.
-    // This keeps historical totals correct even when players.division_id is null/stale.
+    // Database filters reduce the result set before pagination; these checks remain as a
+    // defensive guard so response semantics stay exact even if relation data is malformed.
     const filteredRecords: ScopedGoalRecord[] = [];
-    for (const record of (rawData || []) as unknown as GoalRecord[]) {
+    for (const record of rawData) {
       const player = relationOne(record.player);
       const team = relationOne(record.team);
       const match = relationOne(record.match);

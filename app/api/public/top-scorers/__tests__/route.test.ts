@@ -3,37 +3,60 @@ import type { NextRequest } from 'next/server';
 
 type Row = Record<string, unknown>;
 
-function createMockClient(rows: Row[]) {
-  const filters: Array<(row: Row) => boolean> = [];
+function relationOne(value: unknown): Row | null {
+  if (Array.isArray(value)) return (value[0] as Row | undefined) ?? null;
+  if (value && typeof value === 'object') return value as Row;
+  return null;
+}
 
-  const api = {
-    select() {
-      return api;
-    },
-    eq(column: string, value: unknown) {
-      filters.push((row) => row[column] === value);
-      return api;
-    },
-    not(column: string, operator: string, value: unknown) {
-      if (operator === 'is' && value === null) {
-        filters.push((row) => row[column] !== null && row[column] !== undefined);
-      }
-      return api;
-    },
-    then(
-      resolve: (value: { data: Row[]; error: null }) => unknown,
-      reject?: (reason: unknown) => unknown
-    ) {
-      return Promise.resolve({ data: rows.filter((row) => filters.every((filter) => filter(row))), error: null }).then(
-        resolve,
-        reject
-      );
-    },
-  };
-
+function createMockClient(rows: Row[], serverCap = Number.POSITIVE_INFINITY) {
   return {
     from(table: string) {
       if (table !== 'goals') throw new Error(`Unexpected table: ${table}`);
+
+      const filters: Array<(row: Row) => boolean> = [];
+      let rangeStart = 0;
+      let rangeEnd = Number.POSITIVE_INFINITY;
+
+      const api = {
+        select() {
+          return api;
+        },
+        eq(column: string, value: unknown) {
+          if (column.startsWith('match.')) {
+            const field = column.slice('match.'.length);
+            filters.push((row) => relationOne(row.match)?.[field] === value);
+          } else {
+            filters.push((row) => row[column] === value);
+          }
+          return api;
+        },
+        not(column: string, operator: string, value: unknown) {
+          if (operator === 'is' && value === null) {
+            filters.push((row) => row[column] !== null && row[column] !== undefined);
+          }
+          return api;
+        },
+        order() {
+          return api;
+        },
+        range(from: number, to: number) {
+          rangeStart = from;
+          rangeEnd = to;
+          return api;
+        },
+        then(
+          resolve: (value: { data: Row[]; error: null; count: number }) => unknown,
+          reject?: (reason: unknown) => unknown
+        ) {
+          const filtered = rows.filter((row) => filters.every((filter) => filter(row)));
+          const requestedLength = Math.max(0, rangeEnd - rangeStart + 1);
+          const returnedLength = Math.min(requestedLength, serverCap);
+          const data = filtered.slice(rangeStart, rangeStart + returnedLength);
+          return Promise.resolve({ data, error: null, count: filtered.length }).then(resolve, reject);
+        },
+      };
+
       return api;
     },
   };
@@ -110,6 +133,20 @@ describe('GET /api/public/top-scorers', () => {
         total_goals: 3,
       }),
     ]);
+  });
+
+  it('paginates until all scoped rows are included when the server caps each response', async () => {
+    state.client = createMockClient(
+      Array.from({ length: 6 }, () => goal({ full_name: 'พีรเดช บุญที' })),
+      2
+    );
+
+    const response = await GET(makeRequest());
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body).toHaveLength(1);
+    expect(body[0].total_goals).toBe(6);
   });
 
   it('continues to exclude own goals and rows without a player id', async () => {
