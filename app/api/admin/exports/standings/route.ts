@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { verifyAdminAuth } from '@/lib/admin-middleware';
 import { calculateStandings } from '@/lib/calculations';
-import { parseMatchdayNumber } from '@/lib/suspension-calc';
+import { selectRegularLeagueExportMatches } from '@/lib/standings-export';
 import type { Match } from '@/types/db';
 
 export const dynamic = 'force-dynamic';
@@ -98,13 +98,18 @@ export async function GET(request: NextRequest) {
         continue;
       }
 
-      const safeMatches = divMatches || [];
+      const safeMatches = (divMatches || []) as Match[];
       totalMatches += safeMatches.length;
+      const { regularMatches, scoredMatches } = selectRegularLeagueExportMatches(
+        safeMatches,
+        matchdayFilter
+      );
 
-      // Derive team ids from matches
+      // Derive team ids only from regular-league matches. Post-league fixtures must not
+      // pull teams into the regular League table/export.
       const teamIdsFromMatches = Array.from(
         new Set(
-          (safeMatches as Match[])
+          regularMatches
             .flatMap((m) => [m.home_team_id, m.away_team_id])
             .filter(Boolean)
         )
@@ -119,7 +124,7 @@ export async function GET(request: NextRequest) {
         .eq('division_id', div.id)
         .eq('active', true);
 
-      // Fetch teams from match ids (handles division_id = null case) - filter active teams only
+      // Fetch teams from regular-match ids (handles division_id = null case) - active only
       let teamsByMatchIds: any[] = [];
       if (teamIdsFromMatches.length > 0) {
         const { data: matchTeams } = await supabaseAdmin
@@ -140,8 +145,8 @@ export async function GET(request: NextRequest) {
       });
       const safeTeams = Array.from(teamMap.values());
 
-      // Skip only if no teams AND no matches
-      if (safeTeams.length === 0 && safeMatches.length === 0) {
+      // Skip only if no teams AND no regular-league matches.
+      if (safeTeams.length === 0 && regularMatches.length === 0) {
         continue;
       }
 
@@ -149,22 +154,7 @@ export async function GET(request: NextRequest) {
       safeTeams.forEach((t) => usedTeamIds.add(t.id));
       totalTeams += safeTeams.length;
 
-      // Filter: status=finished AND both scores not null
-      let scoredMatches = (safeMatches as Match[]).filter(
-        (m) =>
-          m.status === 'finished' &&
-          m.home_score !== null &&
-          m.away_score !== null
-      );
-
-      // Apply matchday filter
-      if (matchdayFilter !== null && !isNaN(matchdayFilter)) {
-        scoredMatches = scoredMatches.filter(
-          (m) => parseMatchdayNumber(m.matchday) <= matchdayFilter
-        );
-      }
-
-      // Calculate standings
+      // Calculate standings using regular-league finished/scored matches only.
       const standings = safeTeams.map((team) => {
         const stats = calculateStandings(scoredMatches, team.id);
         return {
@@ -216,6 +206,8 @@ export async function GET(request: NextRequest) {
           teamsFromMatchesCount: teamsByMatchIds.length,
           finalTeamsCount: safeTeams.length,
           allMatchesCount: safeMatches.length,
+          regularMatchesCount: regularMatches.length,
+          postLeagueMatchesExcluded: safeMatches.length - regularMatches.length,
           scoredMatchesCount: scoredMatches.length,
           totalGoalsFromScore,
         });
@@ -223,7 +215,7 @@ export async function GET(request: NextRequest) {
     }
 
     // ─── Process no-division data (division_id = null) ───
-    // Only add if this age group has no divisions or has extra no-division data
+    // Only add if this age group has no divisions or has extra no-division League data.
     const hasDivisionsInAg = (divisions || []).length > 0;
 
     const { data: noDivTeams } = await supabaseAdmin
@@ -242,36 +234,26 @@ export async function GET(request: NextRequest) {
 
     // Filter out teams already used in divisions
     const unusedNoDivTeams = (noDivTeams || []).filter((t) => !usedTeamIds.has(t.id));
-    const safeNoDivMatches = noDivMatches || [];
+    const safeNoDivMatches = (noDivMatches || []) as Match[];
+    const {
+      regularMatches: regularNoDivMatches,
+      scoredMatches: scoredNoDivMatches,
+    } = selectRegularLeagueExportMatches(safeNoDivMatches, matchdayFilter);
 
     // Only create no-division group if:
     // 1. No divisions exist for this age group, OR
-    // 2. There are unused no-division teams/matches
-    if (!hasDivisionsInAg || unusedNoDivTeams.length > 0 || safeNoDivMatches.length > 0) {
-      if (unusedNoDivTeams.length === 0 && safeNoDivMatches.length === 0) {
+    // 2. There are unused no-division teams/regular-league matches.
+    if (!hasDivisionsInAg || unusedNoDivTeams.length > 0 || regularNoDivMatches.length > 0) {
+      if (unusedNoDivTeams.length === 0 && regularNoDivMatches.length === 0) {
         continue;
       }
 
       totalTeams += unusedNoDivTeams.length;
       totalMatches += safeNoDivMatches.length;
 
-      // Filter scored matches
-      let scoredMatches = (safeNoDivMatches as Match[]).filter(
-        (m) =>
-          m.status === 'finished' &&
-          m.home_score !== null &&
-          m.away_score !== null
-      );
-
-      if (matchdayFilter !== null && !isNaN(matchdayFilter)) {
-        scoredMatches = scoredMatches.filter(
-          (m) => parseMatchdayNumber(m.matchday) <= matchdayFilter
-        );
-      }
-
-      // Calculate standings
+      // Calculate standings from regular-league finished/scored matches only.
       const standings = unusedNoDivTeams.map((team) => {
-        const stats = calculateStandings(scoredMatches, team.id);
+        const stats = calculateStandings(scoredNoDivMatches, team.id);
         return {
           teamId: team.id,
           teamName: team.name,
@@ -304,7 +286,7 @@ export async function GET(request: NextRequest) {
       });
 
       if (debug) {
-        const totalGoalsFromScore = scoredMatches.reduce(
+        const totalGoalsFromScore = scoredNoDivMatches.reduce(
           (sum, m) => sum + Number(m.home_score || 0) + Number(m.away_score || 0),
           0
         );
@@ -312,7 +294,9 @@ export async function GET(request: NextRequest) {
           label: `${agLabel} รวม`,
           finalTeamsCount: unusedNoDivTeams.length,
           allMatchesCount: safeNoDivMatches.length,
-          scoredMatchesCount: scoredMatches.length,
+          regularMatchesCount: regularNoDivMatches.length,
+          postLeagueMatchesExcluded: safeNoDivMatches.length - regularNoDivMatches.length,
+          scoredMatchesCount: scoredNoDivMatches.length,
           totalGoalsFromScore,
         });
       }
